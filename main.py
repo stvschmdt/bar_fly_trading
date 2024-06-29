@@ -2,7 +2,7 @@
 
 from collector import alpha_client
 from parser import parse_historical_data, parse_technical_indicator, parse_treasury_yield
-from storage import create_database, store_data
+from storage import create_database, store_data, test_connection
 import pandas as pd
 
 def main():
@@ -17,21 +17,21 @@ def main():
     
     # Fetch and parse technical indicators
     try:
-        sma_data = alpha_client.fetch_technical_indicator(symbol, 'SMA', time_period=20)
+        sma_data = alpha_client.fetch_technical_indicator(symbol, 'SMA', time_period=20, series_type='open')
         df_sma = parse_technical_indicator(sma_data, 'SMA')
     except ValueError as e:
         print(f"Error fetching SMA data: {e}")
         df_sma = None
     
     try:
-        macd_data = alpha_client.fetch_technical_indicator(symbol, 'MACD')
+        macd_data = alpha_client.fetch_technical_indicator(symbol, 'MACD', series_type='open')
         df_macd = parse_technical_indicator(macd_data, 'MACD')
     except ValueError as e:
         print(f"Error fetching MACD data: {e}")
         df_macd = None
     
     try:
-        rsi_data = alpha_client.fetch_technical_indicator(symbol, 'RSI', time_period=14)
+        rsi_data = alpha_client.fetch_technical_indicator(symbol, 'RSI', time_period=14, series_type='open')
         df_rsi = parse_technical_indicator(rsi_data, 'RSI')
     except ValueError as e:
         print(f"Error fetching RSI data: {e}")
@@ -59,19 +59,17 @@ def main():
     if df_treasury_10year is not None:
         df_merged = df_merged.join(df_treasury_10year, how='left')
     
-    # Create database and store data
-    engine = create_database()
-    store_data(df_merged, engine, table_name=f'{symbol}_historical')
+    store_data(df_merged, table_name=f'{symbol}_historical')
     if df_sma is not None:
-        store_data(df_sma, engine, table_name=f'{symbol}_sma')
+        store_data(df_sma, table_name=f'{symbol}_sma')
     if df_macd is not None:
-        store_data(df_macd, engine, table_name=f'{symbol}_macd')
+        store_data(df_macd, table_name=f'{symbol}_macd')
     if df_rsi is not None:
-        store_data(df_rsi, engine, table_name=f'{symbol}_rsi')
+        store_data(df_rsi, table_name=f'{symbol}_rsi')
     if df_treasury_2year is not None:
-        store_data(df_treasury_2year, engine, table_name='treasury_2year')
+        store_data(df_treasury_2year, table_name='treasury_2year')
     if df_treasury_10year is not None:
-        store_data(df_treasury_10year, engine, table_name='treasury_10year')
+        store_data(df_treasury_10year, table_name='treasury_10year')
     
     # Print the first few rows and columns of the dataframe
     print("Historical Data Columns:")
@@ -108,6 +106,7 @@ def main():
         print(df_treasury_10year.columns)
         print("\n10-Year Treasury Yield Data First Few Rows:")
         print(df_treasury_10year.head())
+
 
 if __name__ == "__main__":
     main()
