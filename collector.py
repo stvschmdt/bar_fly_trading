@@ -19,12 +19,13 @@ class AlphaVantageClient:
         response.raise_for_status()
         return response.json()
 
-    def fetch_technical_indicator(self, symbol, indicator, interval='daily', time_period=20):
+    def fetch_technical_indicator(self, symbol, indicator, interval='daily', time_period=20, series_type='open'):
         params = {
             'function': indicator,
             'symbol': symbol,
             'interval': interval,
             'time_period': time_period,
+            'series_type': series_type,
             'apikey': self.api_key
         }
         response = requests.get(self.base_url, params=params)
@@ -43,7 +44,8 @@ class AlphaVantageClient:
         return response.json()
 
 
-# Replace 'YOUR_API_KEY' with your actual AlphaVantage API key.
-api_key = os.getenv('ALPHAVANTAGE_API_KEY', '6MVEDYTAIMZD62H9')
+api_key = os.getenv('ALPHAVANTAGE_API_KEY', None)
+if not api_key:
+    raise Exception('Must set ALPHAVANTAGE_API_KEY environment variable')
 alpha_client = AlphaVantageClient(api_key)
 
