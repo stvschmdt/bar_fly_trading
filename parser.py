@@ -13,16 +13,6 @@ def parse_historical_data(data):
     df = df.apply(pd.to_numeric)
     return df
 
-def parse_technical_indicator(data, indicator):
-    key = f'Technical Analysis: {indicator}'
-    if key not in data:
-        raise ValueError(f"Unexpected response format: '{key}' key not found")
-    
-    df = pd.DataFrame.from_dict(data[key], orient='index')
-    df.index = pd.to_datetime(df.index)
-    df = df.apply(pd.to_numeric)
-    return df
-
 def parse_treasury_yield(data, maturity):
     if 'data' not in data:
         raise ValueError("Unexpected response format: 'data' key not found")
