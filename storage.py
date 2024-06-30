@@ -17,6 +17,7 @@ def create_database():
 
 
 def store_data(df, table_name):
+    # TODO: Add an option to append instead of replace for incremental updates
     df.to_sql(table_name, engine, if_exists='replace', index_label='date')
 
 
