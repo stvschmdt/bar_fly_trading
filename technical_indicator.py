@@ -2,6 +2,7 @@ from enum import Enum
 from functools import reduce
 
 from collector import AlphaVantageClient
+from storage import store_data
 
 import pandas as pd
 
@@ -21,6 +22,8 @@ TYPE_TIME_PERIODS = {
     TechnicalIndicatorType.RSI: [14],
     TechnicalIndicatorType.BBANDS: [20],
 }
+
+TECHNICAL_INDICATORS_TABLE_NAME = 'technical_indicators'
 
 
 def fetch_technical_data(api_client: AlphaVantageClient, symbol: str, indicator_type: TechnicalIndicatorType, time_period: int, **kwargs):
@@ -98,3 +101,7 @@ def get_all_technical_indicators(api_client: AlphaVantageClient, symbol: str):
     merged_df['symbol'] = symbol
     return merged_df
 
+
+def update_all_technical_indicators(api_client: AlphaVantageClient, symbol: str):
+    technical_indicators_df = get_all_technical_indicators(api_client, symbol)
+    store_data(technical_indicators_df, table_name=TECHNICAL_INDICATORS_TABLE_NAME)

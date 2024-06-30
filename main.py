@@ -1,9 +1,7 @@
 from collector import alpha_client
 from parser import parse_historical_data, parse_treasury_yield
 from storage import store_data
-from technical_indicator import get_all_technical_indicators
-
-TECHNICAL_INDICATORS_TABLE_NAME = 'technical_indicators'
+from technical_indicator import update_all_technical_indicators
 
 
 def main():
@@ -16,12 +14,11 @@ def main():
         print(f"Error fetching historical data: {e}")
         return
     
-    # Fetch and parse technical indicators
+    # Update technical indicators
     try:
-        technical_indicators_df = get_all_technical_indicators(alpha_client, symbol)
-        store_data(technical_indicators_df, table_name=TECHNICAL_INDICATORS_TABLE_NAME)
-    except ValueError as e:
-        print(f"Error fetching technical indicator data: {e}")
+        update_all_technical_indicators(alpha_client, symbol)
+    except Exception as e:
+        print(f"Error updating technical indicator data: {e}")
     
     # Fetch and parse treasury yield data
     try:
