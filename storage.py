@@ -16,9 +16,9 @@ def create_database():
     return create_engine(connection_string)
 
 
-def store_data(df, table_name):
+def store_data(df, table_name, index=True):
     # TODO: Add an option to append instead of replace for incremental updates
-    df.to_sql(table_name, engine, if_exists='replace', index_label='date')
+    df.to_sql(table_name, engine, if_exists='replace', index=index)
 
 
 def test_connection():
