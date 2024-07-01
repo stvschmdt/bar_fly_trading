@@ -1,4 +1,6 @@
 from collector import alpha_client
+from core_stock import update_core_stock_data
+from fundamental_data import update_all_fundamental_data
 from parser import parse_historical_data, parse_treasury_yield
 from storage import store_data
 from technical_indicator import update_all_technical_indicators
@@ -7,18 +9,27 @@ from technical_indicator import update_all_technical_indicators
 def main():
     # Fetch data for NVDA
     symbol = 'NVDA'
+
+    # Update core stock data
     try:
-        historical_data = alpha_client.fetch_historical_data(symbol)
-        df_historical = parse_historical_data(historical_data)
+        # TODO: Add incremental flag to only fetch new data
+        update_core_stock_data(alpha_client, symbol, incremental=False)
     except ValueError as e:
         print(f"Error fetching historical data: {e}")
         return
-    
+
     # Update technical indicators
     try:
         update_all_technical_indicators(alpha_client, symbol)
     except Exception as e:
         print(f"Error updating technical indicator data: {e}")
+
+    # Update all fundamental data
+    try:
+        update_all_fundamental_data(alpha_client, symbol)
+    except ValueError as e:
+        print(f"Error fetching fundamental data: {e}")
+        return
     
     # Fetch and parse treasury yield data
     try:
@@ -36,23 +47,10 @@ def main():
         df_treasury_10year = None
     
     # Merge historical data with treasury yields
-    df_merged = df_historical.copy()
-    if df_treasury_2year is not None:
-        df_merged = df_merged.join(df_treasury_2year, how='left')
-    if df_treasury_10year is not None:
-        df_merged = df_merged.join(df_treasury_10year, how='left')
-    
-    store_data(df_merged, table_name=f'{symbol}_historical')
     if df_treasury_2year is not None:
         store_data(df_treasury_2year, table_name='treasury_2year')
     if df_treasury_10year is not None:
         store_data(df_treasury_10year, table_name='treasury_10year')
-    
-    # Print the first few rows and columns of the dataframe
-    print("Historical Data Columns:")
-    print(df_merged.columns)
-    print("\nHistorical Data First Few Rows:")
-    print(df_merged.head())
     
     if df_treasury_2year is not None:
         print("\n2-Year Treasury Yield Data Columns:")
