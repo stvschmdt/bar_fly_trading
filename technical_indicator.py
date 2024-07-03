@@ -60,9 +60,9 @@ def get_bbands(api_client: AlphaVantageClient, symbol: str, time_period: int):
     df = parse_technical_data(response, TechnicalIndicatorType.BBANDS)
     df.reset_index()
     df = df.rename(columns={
-        'Real Upper Band': f'{TechnicalIndicatorType.BBANDS.value}_Upper_{time_period}',
-        'Real Middle Band': f'{TechnicalIndicatorType.BBANDS.value}_Middle_{time_period}',
-        'Real Lower Band': f'{TechnicalIndicatorType.BBANDS.value}_Lower_{time_period}',
+        'Real Upper Band': f'{TechnicalIndicatorType.BBANDS.value.lower()}_upper_{time_period}',
+        'Real Middle Band': f'{TechnicalIndicatorType.BBANDS.value.lower()}_middle_{time_period}',
+        'Real Lower Band': f'{TechnicalIndicatorType.BBANDS.value.lower()}_lower_{time_period}',
     })
     df.index.name = 'date'
     print(f'{TechnicalIndicatorType.BBANDS} {time_period}')
@@ -88,7 +88,7 @@ def get_all_technical_indicators(api_client: AlphaVantageClient, symbol: str):
             print(df.head())
             df.reset_index()
             # Add time period into column name
-            df.columns = [f'{indicator_type.value}_{time_period}' if time_period else indicator_type.value]
+            df.columns = [f'{indicator_type.value.lower()}_{time_period}' if time_period else indicator_type.value.lower()]
             dfs.append(df)
 
     for time_period in TYPE_TIME_PERIODS[TechnicalIndicatorType.BBANDS]:
