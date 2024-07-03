@@ -2,6 +2,8 @@ import os
 
 from sqlalchemy import create_engine, MetaData, text
 
+import pandas as pd
+
 username = 'root'
 password = os.getenv('MYSQL_PASSWORD', None)
 host = '127.0.0.1'
@@ -21,22 +23,14 @@ def store_data(df, table_name, index=True):
     df.to_sql(table_name, engine, if_exists='replace', index=index)
 
 
-def test_connection():
-    metadata = MetaData()
-    metadata.reflect(bind=engine)
-
-    # Example custom query
-    custom_query = """
-    SELECT * from test;
+def select_all_from_table(table_name: str, order_by: str, limit: int = 10):
+    query = f"""
+    SELECT * from {table_name} {f'ORDER BY {order_by} desc' if order_by else ''} LIMIT {limit};
     """
-
-    # Execute the query
-    with engine.connect() as connection:
-        result = connection.execute(text(custom_query))
-
-        # Fetch and print results
-        for row in result:
-            print(row)
+    df = pd.read_sql_query(query, engine)
+    print(f'First {limit} rows from {table_name}:')
+    pd.set_option('display.max_columns', None)
+    print(df)
 
 
 connection_string = f'mysql+pymysql://{username}:{password}@{host}:{port}/{dbname}'

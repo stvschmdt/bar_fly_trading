@@ -13,28 +13,6 @@ class AlphaVantageClient:
         response.raise_for_status()
         return response.json()
 
-    def fetch_historical_data(self, symbol, outputsize='compact'):
-        params = {
-            'function': 'TIME_SERIES_DAILY_ADJUSTED',
-            'symbol': symbol,
-            'outputsize': outputsize,
-            'apikey': self.api_key
-        }
-        response = requests.get(self.base_url, params=params)
-        response.raise_for_status()
-        return response.json()
-
-    def fetch_treasury_yield(self, interval='daily', maturity='2year'):
-        params = {
-            'function': 'TREASURY_YIELD',
-            'interval': interval,
-            'maturity': maturity,
-            'apikey': self.api_key
-        }
-        response = requests.get(self.base_url, params=params)
-        response.raise_for_status()
-        return response.json()
-
 
 api_key = os.getenv('ALPHAVANTAGE_API_KEY', None)
 if not api_key:
