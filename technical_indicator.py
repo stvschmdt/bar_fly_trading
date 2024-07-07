@@ -3,6 +3,7 @@ from functools import reduce
 
 from collector import AlphaVantageClient
 from storage import store_data
+from util import drop_existing_rows, get_table_write_option
 
 import pandas as pd
 
@@ -24,6 +25,7 @@ TYPE_TIME_PERIODS = {
 }
 
 TECHNICAL_INDICATORS_TABLE_NAME = 'technical_indicators'
+DATE_COL = 'date'
 
 
 def fetch_technical_data(api_client: AlphaVantageClient, symbol: str, indicator_type: TechnicalIndicatorType, time_period: int, **kwargs):
@@ -46,10 +48,10 @@ def parse_technical_data(data: dict, indicator_type: TechnicalIndicatorType):
 
     df = pd.DataFrame.from_dict(data[key], orient='index')
     df.index = pd.to_datetime(df.index)
-    df.index.name = 'date'
+    df.index.name = DATE_COL
+    # All data in the df is numeric at this stage (no symbol yet), so we can just blindly apply numeric to the whole df.
     df = df.apply(pd.to_numeric)
 
-    # TODO: Trim data if incremental
     return df
 
 
@@ -64,7 +66,7 @@ def get_bbands(api_client: AlphaVantageClient, symbol: str, time_period: int):
         'Real Middle Band': f'{TechnicalIndicatorType.BBANDS.value.lower()}_middle_{time_period}',
         'Real Lower Band': f'{TechnicalIndicatorType.BBANDS.value.lower()}_lower_{time_period}',
     })
-    df.index.name = 'date'
+    df.index.name = DATE_COL
     print(f'{TechnicalIndicatorType.BBANDS} {time_period}')
     print(df.head())
     return df
@@ -95,13 +97,18 @@ def get_all_technical_indicators(api_client: AlphaVantageClient, symbol: str):
         dfs.append(get_bbands(api_client, symbol, time_period))
 
     # Merge all dfs on date column
-    merged_df = reduce(lambda left, right: pd.merge(left, right, on='date', how='outer'), dfs)
+    merged_df = reduce(lambda left, right: pd.merge(left, right, on=DATE_COL, how='outer'), dfs)
 
     # Add symbol to every row
     merged_df['symbol'] = symbol
     return merged_df
 
 
-def update_all_technical_indicators(api_client: AlphaVantageClient, symbol: str):
-    technical_indicators_df = get_all_technical_indicators(api_client, symbol)
-    store_data(technical_indicators_df, table_name=TECHNICAL_INDICATORS_TABLE_NAME)
+def update_all_technical_indicators(api_client: AlphaVantageClient, symbol: str, incremental: bool = True):
+    df = get_all_technical_indicators(api_client, symbol)
+    if incremental:
+        df = drop_existing_rows(df, TECHNICAL_INDICATORS_TABLE_NAME, DATE_COL, symbol)
+
+    print('technical_indicator data')
+    print(df.head())
+    store_data(df, table_name=TECHNICAL_INDICATORS_TABLE_NAME, write_option=get_table_write_option(incremental))
