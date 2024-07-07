@@ -4,6 +4,7 @@ import inflection
 
 from collector import AlphaVantageClient
 from storage import store_data
+from util import drop_existing_rows, get_table_write_option, graceful_df_to_numeric
 
 import numpy as np
 import pandas as pd
@@ -37,6 +38,7 @@ TYPE_OVERRIDES = {
     },
 }
 ECONOMIC_INDICATOR_TABLE_NAME = 'economic_indicators'
+DATE_COL = 'date'
 
 
 def fetch_economic_data(api_client: AlphaVantageClient, indicator_type: EconomicIndicatorType, **kwargs):
@@ -54,7 +56,7 @@ def parse_economic_data(data: dict, indicator_type: EconomicIndicatorType):
         raise ValueError(f"Unexpected response format: '{key}' key not found")
 
     df = pd.DataFrame(data[key])
-    df.set_index('date', inplace=True)
+    df.set_index(DATE_COL, inplace=True)
     df.index = pd.to_datetime(df.index)
 
     column_name = TYPE_OVERRIDES.get(indicator_type, {}).get('column_name', inflection.underscore(indicator_type.value))
@@ -78,7 +80,7 @@ def get_treasury_yields(api_client: AlphaVantageClient):
         df.rename(columns={df.columns[0]: df.columns[0].format(maturity)}, inplace=True)
         dfs.append(df)
 
-    df = reduce(lambda left, right: pd.merge(left, right, on='date', how='outer'), dfs)
+    df = reduce(lambda left, right: pd.merge(left, right, on=DATE_COL, how='outer'), dfs)
     return df
 
 
@@ -97,8 +99,13 @@ def update_all_economic_indicators(api_client: AlphaVantageClient, incremental: 
         df = parse_economic_data(response, data_type)
         dfs.append(df)
 
-    df = reduce(lambda left, right: pd.merge(left, right, on='date', how='outer'), dfs)
+    df = reduce(lambda left, right: pd.merge(left, right, on=DATE_COL, how='outer'), dfs)
+    df = graceful_df_to_numeric(df)
+
+    if incremental:
+        df = drop_existing_rows(df, ECONOMIC_INDICATOR_TABLE_NAME, DATE_COL)
+
     print('economic_indicator data')
     pd.set_option('display.max_columns', None)
     print(df.head())
-    store_data(df, table_name=ECONOMIC_INDICATOR_TABLE_NAME)
+    store_data(df, table_name=ECONOMIC_INDICATOR_TABLE_NAME, write_option=get_table_write_option(incremental))

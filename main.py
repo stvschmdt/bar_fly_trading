@@ -6,35 +6,36 @@ from fundamental_data import update_all_fundamental_data
 from technical_indicator import update_all_technical_indicators
 
 
+INCREMENTAL = False
+
+
 def main():
     # Fetch data for NVDA
     symbol = 'NVDA'
 
     # Update core stock data
     try:
-        # TODO: Add incremental flag to only fetch new data
-        update_core_stock_data(alpha_client, symbol, incremental=False)
+        update_core_stock_data(alpha_client, symbol, incremental=INCREMENTAL)
     except Exception as e:
         print(f"Error fetching historical data: {e}")
         return
 
     # Update technical indicators
     try:
-        update_all_technical_indicators(alpha_client, symbol)
+        update_all_technical_indicators(alpha_client, symbol, incremental=INCREMENTAL)
     except Exception as e:
         print(f"Error updating technical indicator data: {e}")
 
     # Update all fundamental data
     try:
-        update_all_fundamental_data(alpha_client, symbol)
+        update_all_fundamental_data(alpha_client, symbol, incremental=INCREMENTAL)
     except Exception as e:
         print(f"Error fetching fundamental data: {e}")
         return
 
     # Fetch and parse economic indicators
     try:
-        # TODO: Add incremental flag to only fetch new data
-        update_all_economic_indicators(alpha_client, incremental=False)
+        update_all_economic_indicators(alpha_client, incremental=INCREMENTAL)
     except Exception as e:
         print(f"Error updating economic indicators: {e}")
 
