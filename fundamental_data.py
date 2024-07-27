@@ -2,7 +2,7 @@ import pandas as pd
 import inflection
 
 from collector import AlphaVantageClient
-from storage import store_data, TableWriteOption
+from storage import delete_company_overview_row, store_data, TableWriteOption
 from util import drop_existing_rows, get_table_write_option, graceful_df_to_numeric
 
 from enum import Enum
@@ -76,10 +76,14 @@ def update_all_fundamental_data(api_client: AlphaVantageClient, symbol: str, inc
         response = fetch_fundamental_data(api_client, symbol, data_type)
         df = DATA_TYPE_PARSERS[data_type](response, symbol)
 
-        # Currently, company_overview is just a snapshot, so it doesn't support incremental updates.
-        write_option = get_table_write_option(incremental) if data_type == FundamentalDataType.EARNINGS else TableWriteOption.REPLACE
-        if write_option == TableWriteOption.APPEND:
-            df = drop_existing_rows(df, DATA_TYPE_TABLES[data_type]['table_name'], EARNINGS_DATE_COL, symbol)
+        write_option = get_table_write_option(incremental)
+        if incremental:
+            if data_type == FundamentalDataType.EARNINGS:
+                df = drop_existing_rows(df, DATA_TYPE_TABLES[data_type]['table_name'], EARNINGS_DATE_COL, symbol)
+            else:
+                # We need to delete the company_overview row for this symbol
+                # before inserting a new row because the symbol is the PK.
+                delete_company_overview_row(symbol)
 
         print(f'{data_type.value} data')
         print(df.head())
