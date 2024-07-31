@@ -3,10 +3,11 @@ from core_stock import update_core_stock_data
 from economic_indicator import update_all_economic_indicators
 from fundamental_data import update_all_fundamental_data
 from technical_indicator import update_all_technical_indicators
+import pandas as pd
 
 
 incremental = False
-SYMBOLS = ['NVDA', 'AAPL']
+#SYMBOLS = ['NVDA', 'AAPL']
 
 
 def main():
@@ -46,5 +47,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        # read in csv file of watch list
+        SYMBOLS = pd.read_csv('watchlist.csv')['Symbol'].tolist()
+        # ticker symbol is first token after comma separation
+        SYMBOLS = [symbol.split(',')[0] for symbol in SYMBOLS]
+        SYMBOLS = [symbol.upper() for symbol in SYMBOLS][:3]
+        print(SYMBOLS)
+        main()
+    except Exception as e:
+        print(f"Error: {e}")
 
