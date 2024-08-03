@@ -60,10 +60,16 @@ def parse_historical_options_data(data: list[dict]):
     return df
 
 
-def fetch_historical_options_data(api_client: AlphaVantageClient, symbol: str, start_date: str):
+def fetch_historical_options_data(api_client: AlphaVantageClient, symbol: str, start_date: str) -> dict:
     params = {
         'function': 'HISTORICAL_OPTIONS',
         'symbol': symbol,
         'date': start_date,
     }
     return api_client.fetch(**params)
+
+
+class MarketClosedError(Exception):
+    def __init__(self, message="Market is closed on this date - probably weekend or holiday"):
+        self.message = message
+        super().__init__(self.message)
