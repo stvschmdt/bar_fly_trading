@@ -1,3 +1,4 @@
+from storage import write_all_table_joins
 from collector import alpha_client
 from core_stock import update_core_stock_data
 from economic_indicator import update_all_economic_indicators
@@ -44,6 +45,7 @@ def main():
         # To avoid dropping the tables on every iteration, we set incremental to True after the first iteration.
         if not incremental:
             incremental = True
+    write_all_table_joins()
 
 
 if __name__ == "__main__":
@@ -52,7 +54,7 @@ if __name__ == "__main__":
         SYMBOLS = pd.read_csv('watchlist.csv')['Symbol'].tolist()
         # ticker symbol is first token after comma separation
         SYMBOLS = [symbol.split(',')[0] for symbol in SYMBOLS]
-        SYMBOLS = [symbol.upper() for symbol in SYMBOLS][:3]
+        SYMBOLS = [symbol.upper() for symbol in SYMBOLS][0:6]
         print(SYMBOLS)
         main()
     except Exception as e:

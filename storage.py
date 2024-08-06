@@ -58,7 +58,7 @@ def select_all_from_table(table_name: str, order_by: str, limit: int = 10):
     df = pd.read_sql_query(query, engine)
     print(f'First {limit} rows from {table_name}:')
     pd.set_option('display.max_columns', None)
-    print(df)
+#    print(df)
 
 
 def get_last_updated_date(table_name: str, date_col: str, symbol: str):
@@ -93,6 +93,14 @@ def delete_company_overview_row(symbol: str):
             connection.execute(query, {'symbol': symbol})
             transaction.commit()
 
+def write_all_table_joins(limit: int = 50000):
+    # This query joins all tables together on the date column. It's a way to see all the data we have in one place.
+    # core_stock, company_overview, economic_indicators, technical_indicators, quarterly_earnings are the tables and
+    # where core_stock date > '01-01-2016' is a filter to reduce the number of rows returned. This is useful for testing
+    query = f"""SELECT core.*, company.*, econ.*, tech.*, quart.* from core_stock as core left join company_overview as company on core.symbol = company.symbol left join economic_indicators as econ on core.date = econ.date left join technical_indicators as tech on core.date= tech.date left join quarterly_earnings as quart on core.date = quart.fiscal_date_ending where core.date > '2016-01-01' LIMIT {limit};"""
+    #query = f"""SELECT a.*, b.*, c.*, d.*, h.*, f.*, g.* from core_stock as a left join NVDA_macd as b on a.date = b.date left join NVDA_rsi as c on a.date = c.date left join NVDA_macd as d on a.date= d.date left join treasury_10year as f on a.date = f.date left join treasury_2year as g on a.date = g.date left join quarterly_earnings as h on a.date = h.fiscal_date_ending LIMIT {limit};"""
+    df = pd.read_sql_query(query, engine)
+    df.to_csv('all_data.csv')
 
 connection_string = f'mysql+pymysql://{username}:{password}@{host}:{port}/{dbname}'
 engine = create_database()
