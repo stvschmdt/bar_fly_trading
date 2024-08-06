@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import inflection
 
 from collector import AlphaVantageClient
@@ -41,6 +42,11 @@ def parse_overview(data: dict, symbol: str):
     df = pd.DataFrame(data)
     df.columns = [inflection.underscore(col) for col in df.columns]
     df = df.filter(items=DATA_TYPE_TABLES[FundamentalDataType.OVERVIEW]['columns'])
+    # replace df['dividend_yield'] values with 0 if it is None
+    df['dividend_yield'] = df['dividend_yield'].replace('None', 0)
+    # replace price_to_book_ratio values with 0 if it is None
+    df['price_to_book_ratio'] = df['price_to_book_ratio'].replace('None', 0)
+    df['price_to_book_ratio'] = df['price_to_book_ratio'].replace('-', np.nan)
     df = graceful_df_to_numeric(df)
     # We add in the symbol after converting to numeric because it's not a numeric column.
     df['symbol'] = symbol
@@ -67,7 +73,7 @@ def parse_earnings(data: dict, symbol: str):
     # We add in the symbol after converting to numeric because it's not a numeric column.
     df['symbol'] = symbol
 
-    print(df.head())
+    #print(df.head())
     return df
 
 
@@ -85,8 +91,8 @@ def update_all_fundamental_data(api_client: AlphaVantageClient, symbol: str, inc
                 # before inserting a new row because the symbol is the PK.
                 delete_company_overview_row(symbol)
 
-        print(f'{data_type.value} data')
-        print(df.head())
+        #print(f'{data_type.value} data')
+        #print(df.head())
 
         store_data(
             df,

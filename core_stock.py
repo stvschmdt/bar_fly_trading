@@ -51,5 +51,5 @@ def update_core_stock_data(api_client: AlphaVantageClient, symbol: str, incremen
         core_stock_df = drop_existing_rows(core_stock_df, CORE_STOCK_TABLE_NAME, DATE_COL, symbol)
 
     print(f'{symbol} core data')
-    print(core_stock_df.head())
+#    print(core_stock_df.head())
     store_data(core_stock_df, table_name=CORE_STOCK_TABLE_NAME, write_option=get_table_write_option(incremental))

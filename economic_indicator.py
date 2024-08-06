@@ -63,7 +63,7 @@ def parse_economic_data(data: dict, indicator_type: EconomicIndicatorType):
     df = df.rename(columns={'value': column_name})
     df[column_name] = df[column_name].replace('.', np.nan)
     print(f'{indicator_type.value} data')
-    print(df.head())
+    #print(df.head())
     return df
 
 
@@ -107,5 +107,5 @@ def update_all_economic_indicators(api_client: AlphaVantageClient, incremental: 
 
     print('economic_indicator data')
     pd.set_option('display.max_columns', None)
-    print(df.head())
+    #print(df.head())
     store_data(df, table_name=ECONOMIC_INDICATOR_TABLE_NAME, write_option=get_table_write_option(incremental))
