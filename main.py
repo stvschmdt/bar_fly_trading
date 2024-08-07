@@ -1,6 +1,7 @@
 from storage import write_all_table_joins
 from collector import alpha_client
 from core_stock import update_core_stock_data
+from logger import Logging
 from economic_indicator import update_all_economic_indicators
 from fundamental_data import update_all_fundamental_data
 from technical_indicator import update_all_technical_indicators
@@ -8,6 +9,7 @@ import pandas as pd
 import argparse
 
 incremental = False
+logger = Logging()
 #SYMBOLS = ['NVDA', 'AAPL']
 
 
@@ -53,14 +55,15 @@ if __name__ == "__main__":
     parser.add_argument("-w", "--watchlist", help="file containing symbols to fetch and store data in db", type=str, default='watchlist.csv')
     parser.add_argument("-t", "--test", help="number of symbols for testing functionality", type=int, default=5)
     args = parser.parse_args()
-    print(args)
+    logger.info(f"Watchlist file: {args.watchlist}")
+    logger.info(f"Test Size: {args.test}")
     try:
         # read in csv file of watch list
         SYMBOLS = pd.read_csv(args.watchlist)['Symbol'].tolist()
         # ticker symbol is first token after comma separation
         SYMBOLS = [symbol.split(',')[0] for symbol in SYMBOLS]
         SYMBOLS = [symbol.upper() for symbol in SYMBOLS][0:args.test]
-        print(SYMBOLS)
+        logger.info(f"Symbols: {SYMBOLS}")
         main()
     except Exception as e:
         print(f"Error: {e}")

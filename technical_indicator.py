@@ -67,7 +67,7 @@ def get_bbands(api_client: AlphaVantageClient, symbol: str, time_period: int):
         'Real Lower Band': f'{TechnicalIndicatorType.BBANDS.value.lower()}_lower_{time_period}',
     })
     df.index.name = DATE_COL
-    print(f'{TechnicalIndicatorType.BBANDS} {time_period}')
+    #print(f'{TechnicalIndicatorType.BBANDS} {time_period}')
     #print(df.head())
     return df
 
@@ -86,7 +86,7 @@ def get_all_technical_indicators(api_client: AlphaVantageClient, symbol: str):
 
             # Filter out any fields we don't need (just grabbing indicator type, like SMA, EMA, etc.)
             df = df.filter(items=[indicator_type.value])
-            print(f'{indicator_type} {time_period}')
+            #print(f'{indicator_type} {time_period}')
             #print(df.head())
             df.reset_index()
             # Add time period into column name
@@ -109,6 +109,6 @@ def update_all_technical_indicators(api_client: AlphaVantageClient, symbol: str,
     if incremental:
         df = drop_existing_rows(df, TECHNICAL_INDICATORS_TABLE_NAME, DATE_COL, symbol)
 
-    print('technical_indicator data')
+    #print('technical_indicator data')
     #print(df.head())
     store_data(df, table_name=TECHNICAL_INDICATORS_TABLE_NAME, write_option=get_table_write_option(incremental))

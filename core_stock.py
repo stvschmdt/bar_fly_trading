@@ -3,12 +3,13 @@ import pandas as pd
 from collector import AlphaVantageClient
 from storage import store_data
 from util import drop_existing_rows, get_last_updated_date, get_table_write_option
+from logger import Logging
 
 
 CORE_STOCK_TABLE_NAME = 'core_stock'
 CORE_STOCK_COLUMNS = ['open', 'high', 'low', 'adjusted_close', 'volume']
 DATE_COL = 'date'
-
+logger = Logging()
 
 def fetch_daily_adjusted_data(api_client: AlphaVantageClient, symbol: str, fetch_compact_data: bool = True):
     params = {
@@ -50,6 +51,6 @@ def update_core_stock_data(api_client: AlphaVantageClient, symbol: str, incremen
     if incremental:
         core_stock_df = drop_existing_rows(core_stock_df, CORE_STOCK_TABLE_NAME, DATE_COL, symbol)
 
-    print(f'{symbol} core data')
+    logger.info(f'{symbol} core data')
 #    print(core_stock_df.head())
     store_data(core_stock_df, table_name=CORE_STOCK_TABLE_NAME, write_option=get_table_write_option(incremental))
