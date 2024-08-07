@@ -24,8 +24,8 @@ mysql -h 127.0.0.1 -P 3306 -u root -p
 ```
 - Set your MySQL password in `MYSQL_PASSWORD` environment variable so the script can access it.
 ```
-EXPORT MYSQL_ROOT_PASSWORD=my-secret-pw
-EXPORT MYSQL_PASSWORD=my-secret-pw
+export MYSQL_ROOT_PASSWORD=my-secret-pw
+export MYSQL_PASSWORD=my-secret-pw
 ```
 
 Alphavantage:

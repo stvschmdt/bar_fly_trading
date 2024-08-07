@@ -1,0 +1,9 @@
+pandas
+sqlalchemy
+requests
+inflection
+matplotlib
+pymysql
+jupyter
+scipy
+gym
