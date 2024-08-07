@@ -5,7 +5,7 @@ from economic_indicator import update_all_economic_indicators
 from fundamental_data import update_all_fundamental_data
 from technical_indicator import update_all_technical_indicators
 import pandas as pd
-
+import argparse
 
 incremental = False
 #SYMBOLS = ['NVDA', 'AAPL']
@@ -49,12 +49,17 @@ def main():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-w", "--watchlist", help="file containing symbols to fetch and store data in db", type=str, default='watchlist.csv')
+    parser.add_argument("-t", "--test", help="number of symbols for testing functionality", type=int, default=5)
+    args = parser.parse_args()
+    print(args)
     try:
         # read in csv file of watch list
-        SYMBOLS = pd.read_csv('watchlist.csv')['Symbol'].tolist()
+        SYMBOLS = pd.read_csv(args.watchlist)['Symbol'].tolist()
         # ticker symbol is first token after comma separation
         SYMBOLS = [symbol.split(',')[0] for symbol in SYMBOLS]
-        SYMBOLS = [symbol.upper() for symbol in SYMBOLS][0:6]
+        SYMBOLS = [symbol.upper() for symbol in SYMBOLS][0:args.test]
         print(SYMBOLS)
         main()
     except Exception as e:
