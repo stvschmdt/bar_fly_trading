@@ -109,6 +109,7 @@ def write_all_table_joins(limit: int = 50000):
             tech.sma_20, 
             tech.sma_50, 
             tech.sma_200, 
+            tech.ema_20,
             tech.ema_50,
             tech.ema_200,
             tech.macd,
