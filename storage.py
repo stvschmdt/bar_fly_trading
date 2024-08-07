@@ -93,14 +93,74 @@ def delete_company_overview_row(symbol: str):
             connection.execute(query, {'symbol': symbol})
             transaction.commit()
 
+
 def write_all_table_joins(limit: int = 50000):
     # This query joins all tables together on the date column. It's a way to see all the data we have in one place.
     # core_stock, company_overview, economic_indicators, technical_indicators, quarterly_earnings are the tables and
     # where core_stock date > '01-01-2016' is a filter to reduce the number of rows returned. This is useful for testing
-    query = f"""SELECT core.*, company.*, econ.*, tech.*, quart.* from core_stock as core left join company_overview as company on core.symbol = company.symbol left join economic_indicators as econ on core.date = econ.date left join technical_indicators as tech on core.date= tech.date left join quarterly_earnings as quart on core.date = quart.fiscal_date_ending where core.date > '2016-01-01' LIMIT {limit};"""
-    #query = f"""SELECT a.*, b.*, c.*, d.*, h.*, f.*, g.* from core_stock as a left join NVDA_macd as b on a.date = b.date left join NVDA_rsi as c on a.date = c.date left join NVDA_macd as d on a.date= d.date left join treasury_10year as f on a.date = f.date left join treasury_2year as g on a.date = g.date left join quarterly_earnings as h on a.date = h.fiscal_date_ending LIMIT {limit};"""
+    query = f"""
+        SELECT core.date, 
+            core.symbol, 
+            core.open, 
+            core.high, 
+            core.low,
+            core.adjusted_close, 
+            core.volume, 
+            tech.sma_20, 
+            tech.sma_50, 
+            tech.sma_200, 
+            tech.ema_50,
+            tech.ema_200,
+            tech.macd,
+            tech.rsi_14,
+            tech.bbands_upper_20,
+            tech.bbands_middle_20,
+            tech.bbands_lower_20,
+            econ.treasury_yield_2year,
+            econ.treasury_yield_2year,
+            econ.treasury_yield_10year,
+            econ.ffer,
+            econ.cpi,
+            econ.inflation,
+            econ.retail_sales,
+            econ.durables,
+            econ.unemployment,
+            econ.nonfarm_payroll,
+            quart.fiscal_date_ending,
+            quart.reported_eps,
+            quart.estimated_eps,
+            quart.surprise,
+            quart.surprise_percentage,
+            comp.exchange,
+            comp.country,
+            comp.sector,
+            comp.industry,
+            comp.market_capitalization,
+            comp.book_value,
+            comp.dividend_yield,
+            comp.eps,
+            comp.price_to_book_ratio,
+            comp.beta,
+            comp.52_week_high,
+            comp.52_week_low,
+            comp.forward_pe
+        FROM core_stock as core 
+        LEFT JOIN technical_indicators as tech
+        ON core.date = tech.date
+        AND core.symbol = tech.symbol
+        LEFT JOIN economic_indicators as econ
+        ON core.date = econ.date
+        LEFT JOIN quarterly_earnings as quart
+        ON core.date = quart.fiscal_date_ending
+        AND core.symbol = quart.symbol
+        LEFT JOIN company_overview as comp
+        ON core.symbol = comp.symbol
+        WHERE core.date > '2016-01-01' 
+        LIMIT {limit};
+    """
     df = pd.read_sql_query(query, engine)
     df.to_csv('all_data.csv')
+
 
 connection_string = f'mysql+pymysql://{username}:{password}@{host}:{port}/{dbname}'
 engine = create_database()
