@@ -26,6 +26,14 @@ def check_missing_daily_values(data):
         logger.error(f'{missing_values} missing values found, {missing_values/data.shape[0]*100} percent of data, please check the data.')
     return missing_values, missing_values/data.shape[0]*100
 
+def check_any_nulls(data):
+    nulls = data.isnull().sum().sum()
+    if nulls == 0:
+        logger.info('No missing values found')
+    else:
+        logger.error(f'{nulls} missing values found, please check the data.')
+    return nulls
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--csv", help="flat file to validate data", type=str, default='all_data.csv')
@@ -33,4 +41,4 @@ if __name__ == '__main__':
     data = pd.read_csv(args.csv)
     check_duplicate_rows(data)
     check_missing_daily_values(data)
-
+    check_any_nulls(data)
