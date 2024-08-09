@@ -3,9 +3,9 @@ import pandas as pd
 from collector import AlphaVantageClient
 from storage import store_data
 from util import drop_existing_rows, get_last_updated_date, get_table_write_option
-from logger import Logging
+import logging
 
-logger = Logging()
+logger = logging.getLogger()
 
 
 CORE_STOCK_TABLE_NAME = 'core_stock'

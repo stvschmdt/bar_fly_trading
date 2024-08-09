@@ -5,9 +5,7 @@ from storage import select_all_by_symbol
 from fundamental_data import FundamentalDataType, fetch_fundamental_data, DATA_TYPE_TABLES
 from collector import alpha_client
 
-from logger import Logging
-
-logger = Logging()
+logger = logging.getLogger()
 
 
 class ColumnValidator:
