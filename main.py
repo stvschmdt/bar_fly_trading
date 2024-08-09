@@ -7,6 +7,7 @@ from fundamental_data import update_all_fundamental_data
 from technical_indicator import update_all_technical_indicators
 import pandas as pd
 import argparse
+import time
 
 incremental = False
 logger = Logging()
@@ -16,13 +17,19 @@ logger = Logging()
 def main():
     global incremental
 
+    # Fetch and parse economic indicators. This data is not symbol-specific, so we only need to do this once.
+    try:
+        update_all_economic_indicators(alpha_client, incremental=incremental)
+    except Exception as e:
+        print(f"Error updating economic indicators: {e}")
+    timer = 0
     for symbol in SYMBOLS:
+        timer += 1
         # Update core stock data
         try:
             update_core_stock_data(alpha_client, symbol, incremental=incremental)
         except Exception as e:
             print(f"Error fetching historical data: {e}")
-            return
 
         # # Update technical indicators
         try:
@@ -35,18 +42,15 @@ def main():
             update_all_fundamental_data(alpha_client, symbol, incremental=incremental)
         except Exception as e:
             print(f"Error fetching fundamental data: {e}")
-            return
-
-        # Fetch and parse economic indicators
-        try:
-            update_all_economic_indicators(alpha_client, incremental=incremental)
-        except Exception as e:
-            print(f"Error updating economic indicators: {e}")
 
         # If incremental is False, that means we want to drop the existing tables and re-insert all the data.
         # To avoid dropping the tables on every iteration, we set incremental to True after the first iteration.
         if not incremental:
             incremental = True
+        # add a counter for api hits, sleep for 1 minute to reset the counter
+        if timer >= 9:
+            time.sleep(60)
+            timer = 0
     write_all_table_joins()
 
 

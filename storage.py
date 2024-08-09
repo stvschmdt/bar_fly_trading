@@ -14,7 +14,7 @@ dbname = 'bar_fly_trading'
 
 TABLE_CREATES = {
     'core_stock': 'CREATE TABLE core_stock(date DATETIME, open DOUBLE, high DOUBLE, low DOUBLE, adjusted_close DOUBLE, volume BIGINT, symbol VARCHAR(5), PRIMARY KEY (date, symbol));',
-    'company_overview': 'CREATE TABLE company_overview(exchange VARCHAR(10), country VARCHAR(20), sector VARCHAR(30), industry VARCHAR(50), market_capitalization bigint, book_value DOUBLE, dividend_yield DOUBLE, eps DOUBLE, price_to_book_ratio DOUBLE, beta DOUBLE, 52_week_high DOUBLE, 52_week_low DOUBLE, forward_pe DOUBLE, symbol VARCHAR(5), PRIMARY KEY (symbol));',
+    'company_overview': 'CREATE TABLE company_overview(exchange VARCHAR(10), country VARCHAR(20), sector VARCHAR(30), industry VARCHAR(60), market_capitalization bigint, book_value DOUBLE, dividend_yield DOUBLE, eps DOUBLE, price_to_book_ratio DOUBLE, beta DOUBLE, 52_week_high DOUBLE, 52_week_low DOUBLE, forward_pe DOUBLE, symbol VARCHAR(5), PRIMARY KEY (symbol));',
     'quarterly_earnings': 'CREATE TABLE quarterly_earnings(fiscal_date_ending DATETIME, reported_eps DOUBLE, estimated_eps DOUBLE, surprise DOUBLE, surprise_percentage DOUBLE, symbol VARCHAR(5), PRIMARY KEY (fiscal_date_ending, symbol));',
     'economic_indicators': 'CREATE TABLE economic_indicators(date DATETIME, treasury_yield_2year DOUBLE, treasury_yield_10year DOUBLE, ffer DOUBLE, cpi DOUBLE, inflation DOUBLE, retail_sales DOUBLE, durables DOUBLE, unemployment DOUBLE, nonfarm_payroll DOUBLE, PRIMARY KEY (date));',
     'technical_indicators': 'CREATE TABLE technical_indicators(date DATETIME, sma_20 DOUBLE, sma_50 DOUBLE, sma_200 DOUBLE, ema_20 DOUBLE, ema_50 DOUBLE, ema_200 DOUBLE, macd DOUBLE, rsi_14 DOUBLE, bbands_upper_20 DOUBLE, bbands_middle_20 DOUBLE, bbands_lower_20 DOUBLE, symbol VARCHAR(5), PRIMARY KEY (date, symbol));',
@@ -59,6 +59,13 @@ def select_all_from_table(table_name: str, order_by: str, limit: int = 10):
     print(f'First {limit} rows from {table_name}:')
     pd.set_option('display.max_columns', None)
 #    print(df)
+
+
+def select_all_by_symbol(table_name: str, symbol: str, order_by: str = None):
+    query = f"""
+    SELECT * from {table_name} WHERE symbol = '{symbol}' {f'ORDER BY {order_by} desc' if order_by else ''};
+    """
+    return pd.read_sql_query(query, engine)
 
 
 def get_last_updated_date(table_name: str, date_col: str, symbol: str):
