@@ -167,6 +167,9 @@ def gold_table_processing(limit: int = 50000):
     """
     df = pd.read_sql_query(query, engine)
 
+    # Derive adjusted_close_pct from adjusted_close in core_stock
+    df['adjusted_close_pct'] = df.groupby('symbol')['adjusted_close'].pct_change(1)
+
     # quarterly_earnings filldown
     df['fiscal_date_ending'] = df.groupby('symbol')['fiscal_date_ending'].ffill()
     df['reported_eps'] = df.groupby('symbol')['reported_eps'].ffill()
