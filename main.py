@@ -16,6 +16,12 @@ logger = Logging()
 def main():
     global incremental
 
+    # Fetch and parse economic indicators. This data is not symbol-specific, so we only need to do this once.
+    try:
+        update_all_economic_indicators(alpha_client, incremental=incremental)
+    except Exception as e:
+        print(f"Error updating economic indicators: {e}")
+
     for symbol in SYMBOLS:
         # Update core stock data
         try:
@@ -36,12 +42,6 @@ def main():
         except Exception as e:
             print(f"Error fetching fundamental data: {e}")
             return
-
-        # Fetch and parse economic indicators
-        try:
-            update_all_economic_indicators(alpha_client, incremental=incremental)
-        except Exception as e:
-            print(f"Error updating economic indicators: {e}")
 
         # If incremental is False, that means we want to drop the existing tables and re-insert all the data.
         # To avoid dropping the tables on every iteration, we set incremental to True after the first iteration.
