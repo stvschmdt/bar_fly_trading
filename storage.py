@@ -61,6 +61,13 @@ def select_all_from_table(table_name: str, order_by: str, limit: int = 10):
 #    print(df)
 
 
+def select_all_by_symbol(table_name: str, symbol: str, order_by: str = None):
+    query = f"""
+    SELECT * from {table_name} WHERE symbol = '{symbol}' {f'ORDER BY {order_by} desc' if order_by else ''};
+    """
+    return pd.read_sql_query(query, engine)
+
+
 def get_last_updated_date(table_name: str, date_col: str, symbol: str):
     # Get the most recent date in the table with an optional symbol filter (not all tables have symbols)
     query = text(f"SELECT MAX({date_col}) FROM {table_name}{' WHERE symbol = :symbol' if symbol else ''};")
