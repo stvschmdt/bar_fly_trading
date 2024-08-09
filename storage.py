@@ -169,6 +169,15 @@ def gold_table_processing(limit: int = 50000):
 
     # Derive adjusted_close_pct from adjusted_close in core_stock
     df['adjusted_close_pct'] = df.groupby('symbol')['adjusted_close'].pct_change(1)
+    # Derive volume_pct from volume in core_stock
+    df['volume_pct'] = df.groupby('symbol')['volume'].pct_change(1)
+    # Derive open_pct from open in core_stock
+    df['open_pct'] = df.groupby('symbol')['open'].pct_change(1)
+    # Derive high_pct from high in core_stock
+    df['high_pct'] = df.groupby('symbol')['high'].pct_change(1)
+    # Derive low_pct from low in core_stock
+    df['low_pct'] = df.groupby('symbol')['low'].pct_change(1)
+
 
     # quarterly_earnings filldown
     df['fiscal_date_ending'] = df.groupby('symbol')['fiscal_date_ending'].ffill()
