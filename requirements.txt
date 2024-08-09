@@ -7,4 +7,3 @@ pymysql
 jupyter
 scipy
 gym
-logger
