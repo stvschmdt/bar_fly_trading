@@ -5,8 +5,7 @@ from storage import store_data
 from util import drop_existing_rows, get_last_updated_date, get_table_write_option
 import logging
 
-logger = logging.getLogger()
-
+logger = logging.getLogger(__name__)
 
 CORE_STOCK_TABLE_NAME = 'core_stock'
 CORE_STOCK_COLUMNS = ['open', 'high', 'low', 'adjusted_close', 'volume']
