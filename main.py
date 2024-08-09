@@ -24,6 +24,7 @@ def main():
         print(f"Error updating economic indicators: {e}")
     timer = 0
     for symbol in SYMBOLS:
+        timer += 1
         # Update core stock data
         try:
             update_core_stock_data(alpha_client, symbol, incremental=incremental)
@@ -50,7 +51,6 @@ def main():
         if timer >= 10:
             time.sleep(60)
             timer = 0
-        timer += 1
     write_all_table_joins()
 
 
