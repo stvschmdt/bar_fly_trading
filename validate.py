@@ -1,8 +1,8 @@
 import pandas as pd
-import logging
+from logger import Logging
 import argparse
 
-logger = logging.getLogger()
+logger = Logging()
 
 
 def check_duplicate_rows(data):
