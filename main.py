@@ -46,7 +46,8 @@ def main():
         # To avoid dropping the tables on every iteration, we set incremental to True after the first iteration.
         if not incremental:
             incremental = True
-        if timer >= 15:
+        # add a counter for api hits, sleep for 1 minute to reset the counter
+        if timer >= 10:
             time.sleep(60)
             timer = 0
         timer += 1
