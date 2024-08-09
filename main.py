@@ -1,7 +1,7 @@
 from storage import write_all_table_joins
 from collector import alpha_client
 from core_stock import update_core_stock_data
-from logger import Logging
+import logging
 from economic_indicator import update_all_economic_indicators
 from fundamental_data import update_all_fundamental_data
 from technical_indicator import update_all_technical_indicators
@@ -10,8 +10,8 @@ import argparse
 import time
 
 incremental = False
-logger = Logging()
 #SYMBOLS = ['NVDA', 'AAPL']
+logger = logging.getLogger()
 
 
 def main():

@@ -3,13 +3,14 @@ import pandas as pd
 from collector import AlphaVantageClient
 from storage import store_data
 from util import drop_existing_rows, get_last_updated_date, get_table_write_option
-from logger import Logging
+import logging
+
+logger = logging.getLogger()
 
 
 CORE_STOCK_TABLE_NAME = 'core_stock'
 CORE_STOCK_COLUMNS = ['open', 'high', 'low', 'adjusted_close', 'volume']
 DATE_COL = 'date'
-logger = Logging()
 
 def fetch_daily_adjusted_data(api_client: AlphaVantageClient, symbol: str, fetch_compact_data: bool = True):
     params = {
