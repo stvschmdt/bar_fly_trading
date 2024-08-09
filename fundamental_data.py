@@ -47,6 +47,7 @@ def parse_overview(data: dict, symbol: str):
     # replace price_to_book_ratio values with 0 if it is None
     df['price_to_book_ratio'] = df['price_to_book_ratio'].replace('None', 0)
     df['price_to_book_ratio'] = df['price_to_book_ratio'].replace('-', np.nan)
+    df['forward_pe'] = df['forward_pe'].replace('-', np.nan)
     df = graceful_df_to_numeric(df)
     # We add in the symbol after converting to numeric because it's not a numeric column.
     df['symbol'] = symbol

@@ -28,7 +28,6 @@ def main():
             update_core_stock_data(alpha_client, symbol, incremental=incremental)
         except Exception as e:
             print(f"Error fetching historical data: {e}")
-            return
 
         # # Update technical indicators
         try:
@@ -41,7 +40,6 @@ def main():
             update_all_fundamental_data(alpha_client, symbol, incremental=incremental)
         except Exception as e:
             print(f"Error fetching fundamental data: {e}")
-            return
 
         # If incremental is False, that means we want to drop the existing tables and re-insert all the data.
         # To avoid dropping the tables on every iteration, we set incremental to True after the first iteration.
