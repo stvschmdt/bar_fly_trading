@@ -48,7 +48,7 @@ def main():
         if not incremental:
             incremental = True
         # add a counter for api hits, sleep for 1 minute to reset the counter
-        if timer >= 10:
+        if timer >= 9:
             time.sleep(60)
             timer = 0
     write_all_table_joins()
