@@ -1,4 +1,4 @@
-from storage import write_all_table_joins
+from storage import gold_table_processing
 from collector import alpha_client
 from core_stock import update_core_stock_data
 import logging
@@ -51,7 +51,7 @@ def main():
         if timer >= 9:
             time.sleep(60)
             timer = 0
-    write_all_table_joins()
+    gold_table_processing()
 
 
 if __name__ == "__main__":

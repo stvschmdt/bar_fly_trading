@@ -101,7 +101,7 @@ def delete_company_overview_row(symbol: str):
             transaction.commit()
 
 
-def write_all_table_joins(limit: int = 50000):
+def gold_table_processing(limit: int = 50000):
     # This query joins all tables together on the date column. It's a way to see all the data we have in one place.
     # core_stock, company_overview, economic_indicators, technical_indicators, quarterly_earnings are the tables and
     # where core_stock date > '01-01-2016' is a filter to reduce the number of rows returned. This is useful for testing
@@ -124,7 +124,6 @@ def write_all_table_joins(limit: int = 50000):
             tech.bbands_upper_20,
             tech.bbands_middle_20,
             tech.bbands_lower_20,
-            econ.treasury_yield_2year,
             econ.treasury_yield_2year,
             econ.treasury_yield_10year,
             econ.ffer,
@@ -167,6 +166,24 @@ def write_all_table_joins(limit: int = 50000):
         LIMIT {limit};
     """
     df = pd.read_sql_query(query, engine)
+
+    # quarterly_earnings filldown
+    df['fiscal_date_ending'] = df.groupby('symbol')['fiscal_date_ending'].ffill()
+    df['reported_eps'] = df.groupby('symbol')['reported_eps'].ffill()
+    df['estimated_eps'] = df.groupby('symbol')['estimated_eps'].ffill()
+    df['surprise'] = df.groupby('symbol')['surprise'].ffill()
+    df['surprise_percentage'] = df.groupby('symbol')['surprise_percentage'].ffill()
+
+    # economic_indicators filldown
+    df['treasury_yield_2year'] = df['treasury_yield_2year'].ffill()
+    df['treasury_yield_10year'] = df['treasury_yield_10year'].ffill()
+    df['ffer'] = df['ffer'].ffill()
+    df['cpi'] = df['cpi'].ffill()
+    df['retail_sales'] = df['retail_sales'].ffill()
+    df['durables'] = df['durables'].ffill()
+    df['unemployment'] = df['unemployment'].ffill()
+    df['nonfarm_payroll'] = df['nonfarm_payroll'].ffill()
+
     df.to_csv('all_data.csv')
 
 
