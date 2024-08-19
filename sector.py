@@ -147,14 +147,25 @@ if __name__ == '__main__':
     parser.add_argument("-d", "--data", help="file containing all core and technical data", type=str, default='all_data.csv')
     parser.add_argument("-start", "--start_date", help="start date for visual analysis", type=str, default='2024-07-01')
     parser.add_argument("-end", "--end_date", help="end date for visual analysis", type=str, default='2024-08-13')
-    parser.add_argument("-c", "--charts", help="comma separated list of charts to generate", type=str, default='adjusted_close,volume,rsi,macd')
     args = parser.parse_args()
     logger.info(f"Data file: {args.data}")
     logger.info(f"Start date: {args.start_date}")
     logger.info(f"End date: {args.end_date}")
     # Load the stock data
     df = pd.read_csv(args.data)
-
+    # list of sectors
+    sectors = ['XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'XLE', 'XRT']
+    # list of industries
+    industries = [' SPDR FUND MATERIALS SELECT SECTR ETF',' SELECT STR FINANCIAL SELECT SPDR ETF',' SELECT SECTOR INDUSTRIAL SPDR ETF',
+                  ' TECHNOLOGY SELECT SECTOR SPDR ETF',' SPDR FUND CONSUMER STAPLES ETF',' REAL ESTATE SELECT SCTR SPDR ETF',
+                  ' SELECT SECTOR UTI SELECT SPDR ETF',' SELECT SECTOR HEALTH CARE SPDR ETF',' SPDR FUND CONSUMER DISCRE SELECT ETF',
+                  ' ENERGY SELECT SECTOR SPDR ETF',' SPDR S&P RETAIL ETF']
+    # create dictionary of sectors and industries
+    sector_industry = dict(zip(sectors, industries))
+    # filter df to only rows where symbol is one of the sector symbols
+    df = df[df['symbol'].isin(sectors)]
+    # fill df sector column with the corresponding industry
+    df['sector'] = df['symbol'].map(sector_industry)
     analysis = SectorAnalysis(df)
     analysis.visualize(args.start_date, args.end_date)
 
