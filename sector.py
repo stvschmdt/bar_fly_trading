@@ -1,5 +1,11 @@
 import matplotlib.pyplot as plt
 import pandas as pd
+import argparse
+
+import logging
+from logging_config import setup_logging
+setup_logging()
+logger = logging.getLogger(__name__)
 
 class SectorAnalysis:
     def __init__(self, df, use_treasury='10year'):
@@ -136,10 +142,19 @@ class SectorAnalysis:
 
 
 # Example usage
-df = pd.read_csv('all_data.csv')  # Load your data here
-start_date = '2024-01-01'  # Example start date
-end_date = '2024-08-01'  # Example end date
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-d", "--data", help="file containing all core and technical data", type=str, default='all_data.csv')
+    parser.add_argument("-start", "--start_date", help="start date for visual analysis", type=str, default='2024-07-01')
+    parser.add_argument("-end", "--end_date", help="end date for visual analysis", type=str, default='2024-08-13')
+    parser.add_argument("-c", "--charts", help="comma separated list of charts to generate", type=str, default='adjusted_close,volume,rsi,macd')
+    args = parser.parse_args()
+    logger.info(f"Data file: {args.data}")
+    logger.info(f"Start date: {args.start_date}")
+    logger.info(f"End date: {args.end_date}")
+    # Load the stock data
+    df = pd.read_csv(args.data)
 
-analysis = SectorAnalysis(df)
-analysis.visualize(start_date, end_date)
+    analysis = SectorAnalysis(df)
+    analysis.visualize(args.start_date, args.end_date)
 
