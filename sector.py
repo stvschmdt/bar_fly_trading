@@ -53,6 +53,8 @@ class SectorAnalysis:
         plt.legend(loc='lower left')
         plt.grid(True)
         plt.xticks(rotation=45)
+        # save figure
+        plt.savefig('sector_cumulative_percent_change.png')
         plt.show()
 
     def plot_rsi_comparison(self, start_date, end_date):
@@ -76,6 +78,8 @@ class SectorAnalysis:
         plt.legend(loc='lower left')
         plt.grid(True)
         plt.xticks(rotation=45)
+        # save figure
+        plt.savefig('sector_rsi_comparison.png')
         plt.show()
 
     def plot_rsi_deviation_from_average(self, start_date, end_date):
@@ -97,6 +101,8 @@ class SectorAnalysis:
         plt.legend(loc='lower left')
         plt.grid(True)
         plt.xticks(rotation=45)
+        # save figure
+        plt.savefig('sector_rsi_deviation_from_average.png')
         plt.show()
 
     def plot_sector_sharpe_ratio(self, start_date, end_date):
@@ -132,6 +138,8 @@ class SectorAnalysis:
         plt.legend(loc='lower left')  # Legend for sectors only
         plt.grid(True)
         plt.xticks(rotation=45)
+        # save figure
+        plt.savefig('sector_sharpe_ratio.png')
         plt.show()
 
     def visualize(self, start_date, end_date):
