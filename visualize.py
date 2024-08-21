@@ -33,8 +33,8 @@ class VisualizeTechnicals:
         if self.df_filtered is None:
             return
         
-        plt.figure(figsize=(14, 10))
-        plt.subplot(4, 1, 1)
+#        plt.figure(figsize=(14, 10))
+        #plt.subplot(5, 1, 1)
         plt.plot(self.df_filtered.index, self.df_filtered['adjusted_close'], label='Adjusted Close', color='blue')
         
         if 'sma_20' in self.df_filtered.columns:
@@ -68,7 +68,7 @@ class VisualizeTechnicals:
         if self.df_filtered is None:
             return
 
-        plt.subplot(4, 1, 2)
+        #plt.subplot(5, 1, 2)
         plt.bar(self.df_filtered.index, self.df_filtered['volume'], color='gray')
         
         volume_spike_threshold = self.df_filtered['volume'].mean() * 2
@@ -86,7 +86,7 @@ class VisualizeTechnicals:
         if self.df_filtered is None or 'rsi_14' not in self.df_filtered.columns:
             return
 
-        plt.subplot(4, 1, 3)
+        #plt.subplot(5, 1, 3)
         plt.plot(self.df_filtered.index, self.df_filtered['rsi_14'], label='RSI 14', color='magenta')
         plt.axhline(70, color='red', linestyle='--', label='Overbought')
         plt.axhline(30, color='green', linestyle='--', label='Oversold')
@@ -108,11 +108,48 @@ class VisualizeTechnicals:
         plt.grid(True)
         plt.xticks(rotation=90)
 
+    def plot_pe_ratio(self):
+        if self.df_filtered is None or 'pe_ratio' not in self.df_filtered.columns:
+            return
+
+        #plt.subplot(5, 1, 5)
+        plt.plot(self.df_filtered.index, self.df_filtered['pe_ratio'], label='PE Ratio', color='blue')
+
+        # Define thresholds for overvalued and undervalued PE ratios
+        overvalued_threshold = 50  # Example threshold for overvalued PE ratio
+        undervalued_threshold = 15  # Example threshold for undervalued PE ratio
+
+        # Add horizontal lines for thresholds
+        plt.axhline(overvalued_threshold, color='red', linestyle='--')
+        plt.axhline(undervalued_threshold, color='green', linestyle='--')
+
+        # Mark and annotate points where PE ratio crosses above the overvalued threshold
+        overvalued_indices = self.df_filtered[self.df_filtered['pe_ratio'] > overvalued_threshold].index
+        for index in overvalued_indices:
+            plt.annotate('Overvalued', xy=(index, self.df_filtered.loc[index, 'pe_ratio']),
+                         xytext=(index, self.df_filtered.loc[index, 'pe_ratio'] + 2),
+                         arrowprops=dict(facecolor='red', shrink=0.05))
+
+        # Mark and annotate points where PE ratio crosses below the undervalued threshold
+        undervalued_indices = self.df_filtered[self.df_filtered['pe_ratio'] < undervalued_threshold].index
+        for index in undervalued_indices:
+            plt.annotate('Undervalued', xy=(index, self.df_filtered.loc[index, 'pe_ratio']),
+                         xytext=(index, self.df_filtered.loc[index, 'pe_ratio'] - 2),
+                         arrowprops=dict(facecolor='green', shrink=0.05))
+
+        plt.title(f'{self.symbol} PE Ratio Markers')
+        plt.legend()
+        plt.grid(True)
+        plt.xticks(rotation=90)
+        plt.ylabel('PE Ratio')
+#        plt.show()
+
+
     def plot_macd(self):
         if self.df_filtered is None or 'macd' not in self.df_filtered.columns:
             return
 
-        plt.subplot(4, 1, 4)
+        #plt.subplot(5, 1, 4)
         plt.plot(self.df_filtered.index, self.df_filtered['macd'], label='MACD', color='blue')
         plt.axhline(0, color='black', linestyle='--')
         
@@ -135,21 +172,68 @@ class VisualizeTechnicals:
         plt.grid(True)
         plt.xticks(rotation=90)
 
+    #def visualize(self, charts_to_generate):
+        #plt.figure(figsize=(14, len(charts_to_generate) * 3.5))
+        ##
+        #if 'adjusted_close' in charts_to_generate:
+            #self.plot_adjusted_close_and_sma()
+        #if 'volume' in charts_to_generate:
+            #self.plot_volume()
+        #if 'rsi' in charts_to_generate:
+            #self.plot_rsi()
+        #if 'macd' in charts_to_generate:
+            #self.plot_macd()
+        #if 'pe_ratio' in charts_to_generate:
+            #self.plot_pe_ratio()
+#
+        #plt.tight_layout()
+        #plt.savefig(f'{self.symbol}_analysis.png')
+        #plt.show()
+
     def visualize(self, charts_to_generate):
-        plt.figure(figsize=(14, len(charts_to_generate) * 3.5))
-        
+        num_charts = len(charts_to_generate)
+        plt.figure(figsize=(14, num_charts * 3.5))
+
+        plot_index = 1
+
         if 'adjusted_close' in charts_to_generate:
+            plt.subplot(num_charts, 1, plot_index)
             self.plot_adjusted_close_and_sma()
+            if plot_index < num_charts:
+                plt.gca().xaxis.set_ticklabels([])  # Remove x-axis labels for this subplot
+            plot_index += 1
+
         if 'volume' in charts_to_generate:
+            plt.subplot(num_charts, 1, plot_index)
             self.plot_volume()
+            if plot_index < num_charts:
+                plt.gca().xaxis.set_ticklabels([])  # Remove x-axis labels for this subplot
+            plot_index += 1
+
         if 'rsi' in charts_to_generate:
+            plt.subplot(num_charts, 1, plot_index)
             self.plot_rsi()
+            if plot_index < num_charts:
+                plt.gca().xaxis.set_ticklabels([])  # Remove x-axis labels for this subplot
+            plot_index += 1
+
         if 'macd' in charts_to_generate:
+            plt.subplot(num_charts, 1, plot_index)
             self.plot_macd()
+            if plot_index < num_charts:
+                plt.gca().xaxis.set_ticklabels([])  # Remove x-axis labels for this subplot
+            plot_index += 1
+
+        if 'pe_ratio' in charts_to_generate:
+            plt.subplot(num_charts, 1, plot_index)
+            self.plot_pe_ratio()
+            if plot_index < num_charts:
+                plt.gca().xaxis.set_ticklabels([])  # Remove x-axis labels for this subplot
 
         plt.tight_layout()
         plt.savefig(f'{self.symbol}_analysis.png')
         plt.show()
+        plt.close()
 
 
 
@@ -216,6 +300,7 @@ class SectorAnalysis:
         # save figure
         plt.savefig('sector_cumulative_percent_change.png')
         plt.show()
+        plt.close()
 
     def plot_rsi_comparison(self, start_date, end_date):
         filtered_df = self.df[(self.df['date'] >= start_date) & (self.df['date'] <= end_date)]
@@ -243,6 +328,7 @@ class SectorAnalysis:
         # save figure
         plt.savefig('sector_rsi_comparison.png')
         plt.show()
+        plt.close()
 
     def plot_rsi_deviation_from_average(self, start_date, end_date):
         filtered_df = self.df[(self.df['date'] >= start_date) & (self.df['date'] <= end_date)]
@@ -269,6 +355,7 @@ class SectorAnalysis:
         # save figure
         plt.savefig('sector_rsi_deviation_from_average.png')
         plt.show()
+        plt.close()
 
     def plot_sector_sharpe_ratio(self, start_date, end_date):
         filtered_df = self.df[(self.df['date'] >= start_date) & (self.df['date'] <= end_date)]
@@ -308,6 +395,7 @@ class SectorAnalysis:
         # save figure
         plt.savefig('sector_sharpe_ratio.png')
         plt.show()
+        plt.close()
 
     def visualize(self, start_date, end_date):
         self.plot_sector_cumulative_percent_change(start_date, end_date)
@@ -350,62 +438,51 @@ class MarketPerformanceAnalysis:
         # save the plot
         plt.savefig('sector_correlation.png')
         plt.show()
+        plt.close()
 
     def plot_combined_market_sentiment(self, start_date, end_date):
         filtered_df = self.df[(self.df['date'] >= start_date) & (self.df['date'] <= end_date)]
         symbols = ['SPY', 'QQQ']
 
-        sentiment_data = {}
-        for symbol in symbols:
-            weekly_change = self.calculate_percentage_change('adjusted_close', period='W')
-            monthly_change = self.calculate_percentage_change('adjusted_close', period='M')
-            quarterly_change = self.calculate_percentage_change('adjusted_close', period='Q')
-
-            # Define quarters as January, April, July, and October
-            quarterly_change = quarterly_change[(quarterly_change.index.get_level_values('date').month.isin([1, 4, 7, 10]))]
-
-            weekly_change = weekly_change[weekly_change.index.get_level_values('symbol') == symbol]
-            monthly_change = monthly_change[monthly_change.index.get_level_values('symbol') == symbol]
-            quarterly_change = quarterly_change[quarterly_change.index.get_level_values('symbol') == symbol]
-
-            weekly_change = weekly_change[(weekly_change.index.get_level_values('date') >= start_date) & (weekly_change.index.get_level_values('date') <= end_date)]
-            monthly_change = monthly_change[(monthly_change.index.get_level_values('date') >= start_date) & (monthly_change.index.get_level_values('date') <= end_date)]
-            quarterly_change = quarterly_change[(quarterly_change.index.get_level_values('date') >= start_date) & (quarterly_change.index.get_level_values('date') <= end_date)]
-
-            common_index = weekly_change.index.get_level_values('date').union(monthly_change.index.get_level_values('date')).union(quarterly_change.index.get_level_values('date'))
-
-            weekly_change = weekly_change.reset_index(level=0, drop=True).reindex(common_index)
-            monthly_change = monthly_change.reset_index(level=0, drop=True).reindex(common_index)
-            quarterly_change = quarterly_change.reset_index(level=0, drop=True).reindex(common_index)
-
-            sentiment_data[symbol] = pd.DataFrame({
-                'Weekly': weekly_change.values,
-                'Monthly': monthly_change.values,
-                'Quarterly': quarterly_change.values
-            }, index=common_index)
-
-        # Plot SPY and QQQ on the same plot using line plots with different line types and markers
         plt.figure(figsize=(14, 8))
-        for symbol, data in sentiment_data.items():
+
+        for symbol in symbols:
+            symbol_df = filtered_df[filtered_df['symbol'] == symbol]
+            symbol_df = symbol_df.set_index('date')
+
+            # Calculate day-over-day percentage changes
+            symbol_df['pct_change'] = symbol_df['adjusted_close'].pct_change() * 100
+            
+            # Calculate the mean and standard deviation of the percentage changes
+            mean_change = symbol_df['pct_change'].mean()
+            std_change = symbol_df['pct_change'].std()
+
+            # Plot the percentage changes
             color = 'blue' if symbol == 'SPY' else 'orange'
-            plt.plot(data.index, data['Weekly'], label=f'{symbol} Weekly', color=color, linestyle='--', marker='o')
-            plt.plot(data.index, data['Monthly'], label=f'{symbol} Monthly', color=color, linestyle='-', marker='s')
-            #plt.plot(data.index, data['Quarterly'], label=f'{symbol} Quarterly', color=color, linestyle='-.', marker='d')
+            plt.plot(symbol_df.index, symbol_df['pct_change'], label=f'{symbol} Day-over-Day Change', color=color, linestyle='-')
+            
+            # Add horizontal lines for the mean and ±1 standard deviation
+            plt.axhline(mean_change, color=color, linestyle='--')
+            plt.axhline(mean_change + std_change, color=color, linestyle=':', alpha=0.7)
+            plt.axhline(mean_change - std_change, color=color, linestyle=':', alpha=0.7)
 
-        plt.axhline(3, color='green', linestyle=':', linewidth=1)
-        plt.axhline(-3, color='red', linestyle=':', linewidth=1)
-        plt.axhline(7, color='darkgreen', linestyle='--', linewidth=1)
-        plt.axhline(-7, color='darkred', linestyle='--', linewidth=1)
-
-        plt.title('Market Sentiment - SPY and QQQ')
+        plt.title('Day-over-Day Percentage Change - SPY and QQQ')
         plt.ylabel('Percentage Change (%)')
         plt.xlabel('Date')
         plt.legend(loc='upper left')
+
+        # Remove the mean and standard deviation lines from the legend
+        handles, labels = plt.gca().get_legend_handles_labels()
+        handles = [handle for i, handle in enumerate(handles) if "Day-over-Day Change" in labels[i]]
+        labels = [label for label in labels if "Day-over-Day Change" in label]
+        plt.legend(handles, labels, loc='upper left')
+
         plt.grid(True)
         plt.xticks(rotation=45)
-        # save the plot
-        plt.savefig('market_sentiment.png')
         plt.show()
+        plt.close()
+
+
 
     def visualize(self, start_date, end_date):
         self.plot_sector_correlation_over_time(start_date, end_date)
@@ -418,7 +495,7 @@ if __name__ == '__main__':
     parser.add_argument("-s", "--symbol", help="list of stock symbols to visualize", type=str)
     parser.add_argument("-start", "--start_date", help="start date for visual analysis", type=str, default='2024-07-01')
     parser.add_argument("-end", "--end_date", help="end date for visual analysis", type=str, default='2024-08-13')
-    parser.add_argument("-c", "--charts", help="comma separated list of charts to generate", type=str, default='adjusted_close,volume,rsi,macd')
+    parser.add_argument("-c", "--charts", help="comma separated list of charts to generate", type=str, default='adjusted_close,volume,rsi,macd,pe_ratio')
     parser.add_argument("-a", "--analysis", help="comma separated list of analysis to generate", type=str, default='stock, sector,market')
     args = parser.parse_args()
     logger.info(f"Data file: {args.data}")

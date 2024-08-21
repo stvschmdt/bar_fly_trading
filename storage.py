@@ -101,7 +101,7 @@ def delete_company_overview_row(symbol: str):
             transaction.commit()
 
 
-def gold_table_processing(limit: int = 50000):
+def gold_table_processing(limit: int = 1000000):
     # This query joins all tables together on the date column. It's a way to see all the data we have in one place.
     # core_stock, company_overview, economic_indicators, technical_indicators, quarterly_earnings are the tables and
     # where core_stock date > '01-01-2016' is a filter to reduce the number of rows returned. This is useful for testing
@@ -198,6 +198,17 @@ def gold_table_processing(limit: int = 50000):
     df['durables'] = df['durables'].ffill()
     df['unemployment'] = df['unemployment'].ffill()
     df['nonfarm_payroll'] = df['nonfarm_payroll'].ffill()
+
+    # add day of week number column based on date
+    df['day_of_week_num'] = df['date'].dt.dayofweek
+    # add day of week name column based on date
+    df['day_of_week_name'] = df['date'].dt.day_name()
+    # add month number column based on date
+    df['month'] = df['date'].dt.month
+    # add day of year column based on date
+    df['day_of_year'] = df['date'].dt.dayofyear
+    # add year column based on date
+    df['year'] = df['date'].dt.year
 
     df.to_csv('all_data.csv')
 
