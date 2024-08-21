@@ -186,6 +186,9 @@ def gold_table_processing(limit: int = 50000):
     df['surprise'] = df.groupby('symbol')['surprise'].ffill()
     df['surprise_percentage'] = df.groupby('symbol')['surprise_percentage'].ffill()
 
+    # calculate price to earnings ratio
+    df['pe_ratio'] = df['adjusted_close'] / df['eps']
+
     # economic_indicators filldown
     df['treasury_yield_2year'] = df['treasury_yield_2year'].ffill()
     df['treasury_yield_10year'] = df['treasury_yield_10year'].ffill()
