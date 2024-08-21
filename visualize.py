@@ -522,6 +522,8 @@ class MarketPerformanceAnalysis:
 
         plt.grid(True)
         plt.xticks(rotation=90)
+        # save plot
+        plt.savefig('market_sentiment.png')
         plt.show()
         plt.close()
 
@@ -537,7 +539,9 @@ if __name__ == '__main__':
     parser.add_argument("-d", "--data", help="file containing all core and technical data", type=str, default='all_data.csv')
     parser.add_argument("-s", "--symbol", help="list of stock symbols to visualize", type=str)
     parser.add_argument("-start", "--start_date", help="start date for visual analysis", type=str, default='2024-07-01')
-    parser.add_argument("-end", "--end_date", help="end date for visual analysis", type=str, default='2024-08-13')
+    # defaul end date is get todays date
+    default_end_date = pd.to_datetime('today').strftime('%Y-%m-%d')
+    parser.add_argument("-end", "--end_date", help="end date for visual analysis", type=str, default=default_end_date)
     parser.add_argument("-c", "--charts", help="comma separated list of charts to generate", type=str, default='adjusted_close,volume,rsi,macd,pe_ratio,sharpe_ratio')
     parser.add_argument("-a", "--analysis", help="comma separated list of analysis to generate", type=str, default='stock, sector,market')
     args = parser.parse_args()
