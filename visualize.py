@@ -8,12 +8,31 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 class VisualizeTechnicals:
-    def __init__(self, df, symbol, start_date, end_date):
+    def __init__(self, df, symbol, start_date, end_date, use_treasury='10year'):
         self.df = df
         self.symbol = symbol
         self.start_date = start_date
         self.end_date = end_date
+        # Select the appropriate treasury yield as the risk-free rate
+        if use_treasury == '10year':
+            self.df['risk_free_rate'] = self.df['treasury_yield_10year'] / 100 / 252  # Convert annual to daily rate
+        elif use_treasury == '2year':
+            self.df['risk_free_rate'] = self.df['treasury_yield_2year'] / 100 / 252  # Convert annual to daily rate
+        else:
+            raise ValueError("use_treasury must be either '10year' or '2year'")
+
+            # Convert relevant columns to numeric types if they are not already
+
         self.df_filtered = self.filter_data()
+        self.df_filtered['adjusted_close'] = pd.to_numeric(self.df_filtered['adjusted_close'], errors='coerce')
+        self.df_filtered['pe_ratio'] = pd.to_numeric(self.df_filtered['pe_ratio'], errors='coerce')
+        self.df_filtered['risk_free_rate'] = pd.to_numeric(self.df_filtered['risk_free_rate'], errors='coerce')
+        self.df_filtered['volume'] = pd.to_numeric(self.df_filtered['volume'], errors='coerce')
+        self.df_filtered['rsi_14'] = pd.to_numeric(self.df_filtered['rsi_14'], errors='coerce')
+        self.df_filtered['macd'] = pd.to_numeric(self.df_filtered['macd'], errors='coerce')
+        self.df_filtered['sma_20'] = pd.to_numeric(self.df_filtered['sma_20'], errors='coerce')
+        self.df_filtered['sma_50'] = pd.to_numeric(self.df_filtered['sma_50'], errors='coerce')
+        self.df_filtered['sma_200'] = pd.to_numeric(self.df_filtered['sma_200'], errors='coerce')
     
     def filter_data(self):
         # Filter the dataframe for the given symbol and date range
@@ -88,8 +107,8 @@ class VisualizeTechnicals:
 
         #plt.subplot(5, 1, 3)
         plt.plot(self.df_filtered.index, self.df_filtered['rsi_14'], label='RSI 14', color='magenta')
-        plt.axhline(70, color='red', linestyle='--', label='Overbought')
-        plt.axhline(30, color='green', linestyle='--', label='Oversold')
+        plt.axhline(70, color='red', linestyle='--')
+        plt.axhline(30, color='green', linestyle='--')
         
         overbought_indices = self.df_filtered[self.df_filtered['rsi_14'] > 70].index
         for index in overbought_indices:
@@ -172,26 +191,43 @@ class VisualizeTechnicals:
         plt.grid(True)
         plt.xticks(rotation=90)
 
-    #def visualize(self, charts_to_generate):
-        #plt.figure(figsize=(14, len(charts_to_generate) * 3.5))
-        ##
-        #if 'adjusted_close' in charts_to_generate:
-            #self.plot_adjusted_close_and_sma()
-        #if 'volume' in charts_to_generate:
-            #self.plot_volume()
-        #if 'rsi' in charts_to_generate:
-            #self.plot_rsi()
-        #if 'macd' in charts_to_generate:
-            #self.plot_macd()
-        #if 'pe_ratio' in charts_to_generate:
-            #self.plot_pe_ratio()
-#
-        #plt.tight_layout()
-        #plt.savefig(f'{self.symbol}_analysis.png')
-        #plt.show()
+    def plot_symbol_sharpe_ratio(self):
+        # Ensure the filtered data is available and contains the necessary columns
+        if self.df_filtered is None or 'adjusted_close' not in self.df_filtered.columns or 'risk_free_rate' not in self.df_filtered.columns:
+            return
+
+        # Calculate daily returns
+        self.df_filtered['daily_return'] = self.df_filtered['adjusted_close'].pct_change()
+
+        # Calculate excess return over the risk-free rate
+        self.df_filtered['excess_return'] = self.df_filtered['daily_return'] - self.df_filtered['risk_free_rate']
+
+        # Calculate rolling Sharpe ratio (e.g., 5-day rolling window)
+        self.df_filtered['sharpe_ratio'] = (
+            self.df_filtered['excess_return'].rolling(window=5).mean() /
+            self.df_filtered['daily_return'].rolling(window=5).std()
+        )
+
+        plt.plot(self.df_filtered.index, self.df_filtered['sharpe_ratio'], label=f'{self.symbol} Sharpe Ratio', color='blue')
+
+        # Adding shaded regions for Sharpe ratios
+        plt.axhspan(ymin=-float('inf'), ymax=0, color='darkred', alpha=0.3)  # Dark Red for very bad
+        plt.axhspan(ymin=0, ymax=1, color='lightcoral', alpha=0.3)  # Light Red for bad
+        plt.axhspan(ymin=1, ymax=2, color='yellow', alpha=0.3)  # Yellow for neutral/good
+        plt.axhspan(ymin=2, ymax=3, color='lightgreen', alpha=0.3)  # Light Green for very good
+        plt.axhspan(ymin=3, ymax=float('inf'), color='darkgreen', alpha=0.3)  # Dark Green for excellent
+
+        plt.title(f'{self.symbol} Daily Sharpe Ratio')
+        plt.ylabel('Sharpe Ratio')
+        plt.xlabel('Date')
+        plt.legend(loc='lower left')
+        plt.grid(True)
+        plt.xticks(rotation=90)
+
 
     def visualize(self, charts_to_generate):
         num_charts = len(charts_to_generate)
+        logger.info(f"Generating {num_charts} charts for {self.symbol}")
         plt.figure(figsize=(14, num_charts * 3.5))
 
         plot_index = 1
@@ -229,6 +265,14 @@ class VisualizeTechnicals:
             self.plot_pe_ratio()
             if plot_index < num_charts:
                 plt.gca().xaxis.set_ticklabels([])  # Remove x-axis labels for this subplot
+            plot_index += 1
+
+        if 'sharpe_ratio' in charts_to_generate:
+            plt.subplot(num_charts, 1, plot_index)
+            self.plot_symbol_sharpe_ratio()
+            if plot_index < num_charts:
+                plt.gca().xaxis.set_ticklabels([])  # Remove x-axis labels for this subplot
+            plot_index += 1
 
         plt.tight_layout()
         plt.savefig(f'{self.symbol}_analysis.png')
@@ -287,7 +331,7 @@ class SectorAnalysis:
 
         sectors = ['XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'XLE', 'XRT']
         colors = plt.cm.tab20(np.linspace(0, 1, len(sectors)))  # Use a colormap that can handle more than 10 colors
-        plt.figure(figsize=(14, 6))
+        plt.figure(figsize=(14, 8))
         for color, (sector, changes) in zip(colors, cumulative_changes.items()):
             plt.plot(changes.index, changes, label=sector, linestyle='-', marker='', color=color)
 
@@ -296,7 +340,7 @@ class SectorAnalysis:
         plt.xlabel('Date')
         plt.legend(loc='lower left')
         plt.grid(True)
-        plt.xticks(rotation=45)
+        plt.xticks(rotation=90)
         # save figure
         plt.savefig('sector_cumulative_percent_change.png')
         plt.show()
@@ -324,7 +368,7 @@ class SectorAnalysis:
         plt.xlabel('Date')
         plt.legend(loc='lower left')
         plt.grid(True)
-        plt.xticks(rotation=45)
+        plt.xticks(rotation=90)
         # save figure
         plt.savefig('sector_rsi_comparison.png')
         plt.show()
@@ -351,7 +395,7 @@ class SectorAnalysis:
         plt.xlabel('Date')
         plt.legend(loc='lower left')
         plt.grid(True)
-        plt.xticks(rotation=45)
+        plt.xticks(rotation=90)
         # save figure
         plt.savefig('sector_rsi_deviation_from_average.png')
         plt.show()
@@ -363,7 +407,6 @@ class SectorAnalysis:
 
         # plot with enough colormap for 11 different sectors
         colors = plt.cm.tab20(np.linspace(0, 1, len(sectors)))  # Use a colormap that can handle more than 10 colors
-        plt.figure(figsize=(14, 8))
         for sector, color in zip(sectors, colors):
             sector_data = filtered_df[filtered_df['sector'] == sector]
             sector_data = sector_data.groupby('date').mean(numeric_only=True)  # Group by date and take the mean of numeric columns only
@@ -391,7 +434,7 @@ class SectorAnalysis:
         plt.xlabel('Date')
         plt.legend(loc='lower left')  # Legend for sectors only
         plt.grid(True)
-        plt.xticks(rotation=45)
+        plt.xticks(rotation=90)
         # save figure
         plt.savefig('sector_sharpe_ratio.png')
         plt.show()
@@ -434,7 +477,7 @@ class MarketPerformanceAnalysis:
         plt.xlabel('Date')
         plt.legend(loc='upper left', ncol=2)
         plt.grid(True)
-        plt.xticks(rotation=45)
+        plt.xticks(rotation=90)
         # save the plot
         plt.savefig('sector_correlation.png')
         plt.show()
@@ -478,7 +521,7 @@ class MarketPerformanceAnalysis:
         plt.legend(handles, labels, loc='upper left')
 
         plt.grid(True)
-        plt.xticks(rotation=45)
+        plt.xticks(rotation=90)
         plt.show()
         plt.close()
 
@@ -495,7 +538,7 @@ if __name__ == '__main__':
     parser.add_argument("-s", "--symbol", help="list of stock symbols to visualize", type=str)
     parser.add_argument("-start", "--start_date", help="start date for visual analysis", type=str, default='2024-07-01')
     parser.add_argument("-end", "--end_date", help="end date for visual analysis", type=str, default='2024-08-13')
-    parser.add_argument("-c", "--charts", help="comma separated list of charts to generate", type=str, default='adjusted_close,volume,rsi,macd,pe_ratio')
+    parser.add_argument("-c", "--charts", help="comma separated list of charts to generate", type=str, default='adjusted_close,volume,rsi,macd,pe_ratio,sharpe_ratio')
     parser.add_argument("-a", "--analysis", help="comma separated list of analysis to generate", type=str, default='stock, sector,market')
     args = parser.parse_args()
     logger.info(f"Data file: {args.data}")
