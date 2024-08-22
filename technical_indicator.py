@@ -55,7 +55,7 @@ def parse_technical_data(data: dict, indicator_type: TechnicalIndicatorType):
     return df
 
 
-# We to handle bbands separately from the other technical indicator types because they're represented by 3 numbers,
+# We handle bbands separately from the other technical indicator types because they're represented by 3 numbers,
 # while others are just a single number. Therefore, we need to format them slightly differently.
 def get_bbands(api_client: AlphaVantageClient, symbol: str, time_period: int):
     response = fetch_technical_data(api_client, symbol, TechnicalIndicatorType.BBANDS, time_period)
