@@ -76,7 +76,7 @@ def validate_company_overview(symbol):
     data_type = FundamentalDataType.OVERVIEW
     api_data = fetch_fundamental_data(alpha_client, symbol, data_type)
     table_name = DATA_TYPE_TABLES[data_type]['table_name']
-    df = select_all_by_symbol(table_name, symbol)
+    df = select_all_by_symbol(table_name, {symbol})
     # There can only be one row because symbol is the primary key
     row = df.iloc[0]
     all_match = True
@@ -92,7 +92,7 @@ def validate_quarterly_earnings(symbol):
     data_type = FundamentalDataType.EARNINGS
     api_data = fetch_fundamental_data(alpha_client, symbol, data_type)['quarterlyEarnings']
     table_name = DATA_TYPE_TABLES[data_type]['table_name']
-    df = select_all_by_symbol(table_name, symbol)
+    df = select_all_by_symbol(table_name, {symbol})
     df = df.sort_values(by='fiscal_date_ending', ascending=False)
     df.reset_index(drop=True, inplace=True)
     all_match = True
@@ -115,7 +115,7 @@ def validate_quarterly_earnings(symbol):
 def validate_technical_indicators(symbol):
     logger.info(f'Validating {symbol} technical indicators data')
     data_type = 'TechnicalIndicators'
-    df = select_all_by_symbol(TECHNICAL_INDICATORS_TABLE_NAME, symbol)
+    df = select_all_by_symbol(TECHNICAL_INDICATORS_TABLE_NAME, {symbol})
     df = df.sort_values(by='date', ascending=False)
     df.reset_index(drop=True, inplace=True)
     df['date'] = df['date'].dt.strftime('%Y-%m-%d')

@@ -1,19 +1,19 @@
-from position import Position
+from position import Position, OrderOperation
 import uuid
 from abc import ABC, abstractmethod
 
 
 class Account(ABC):
-    def __init__(self, account_id: str, owner_name: str, cash_balance: float, positions: dict[uuid.UUID, Position],
-                 held_symbols: set[str]):
+    def __init__(self, account_id: str, owner_name: str, cash_balance: float, positions: dict[uuid.UUID, Position] = None,
+                 held_symbols: set[str] = None):
         self.account_id = account_id
         self.owner_name = owner_name
         self.cash_balance = cash_balance
-        self.positions = positions
-        self.held_symbols = held_symbols
+        self.positions = positions if positions else {}
+        self.held_symbols = held_symbols if held_symbols else set()
 
     @abstractmethod
-    def add_position(self, position: Position):
+    def add_position(self, position: Position, current_stock_price: float):
         pass
 
     def close_position(self, position_id: uuid.UUID, current_price: float):
@@ -23,12 +23,23 @@ class Account(ABC):
         pass
 
 
+# TODO: Create a real account type for interacting with a broker API
+
+
 class BacktestAccount(Account):
-    def __init__(self, account_id: str, owner_name: str, cash_balance: float, positions: dict[uuid.UUID, Position],
-                 held_symbols: set[str]):
+    def __init__(self, account_id: str, owner_name: str, cash_balance: float, positions: dict[uuid.UUID, Position] = None,
+                 held_symbols: set[str] = None):
         super().__init__(account_id, owner_name, cash_balance, positions, held_symbols)
 
-    def add_position(self, position: Position):
+    def add_position(self, position: Position, current_stock_price: float):
+        position_value = position.calculate_current_value(current_stock_price)
+        if position.order_operation == OrderOperation.BUY:
+            if self.cash_balance < position_value:
+                raise ValueError(f"Insufficient funds to buy {position.symbol}")
+            self.cash_balance -= position_value
+        else:
+            self.cash_balance += position_value
+
         self.held_symbols.add(position.symbol)
         self.positions[position.get_position_id()] = position
 

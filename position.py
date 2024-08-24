@@ -14,9 +14,10 @@ class OptionType(Enum):
 
 
 class Position(ABC):
-    def __init__(self, symbol: str, quantity: int, entry_price: float):
-        self._position_id = uuid.UUID()
+    def __init__(self, symbol: str, order_operation: OrderOperation, quantity: int, entry_price: float):
+        self._position_id = uuid.uuid4()
         self.symbol = symbol
+        self.order_operation = order_operation
         self.quantity = quantity
         self.entry_price = entry_price
 
@@ -30,7 +31,7 @@ class Position(ABC):
 
 class StockPosition(Position):
     def __init__(self, symbol: str, order_operation: OrderOperation, quantity: int, entry_price: float):
-        super().__init__(symbol, quantity, entry_price)
+        super().__init__(symbol, order_operation, quantity, entry_price)
         self.order_operation = order_operation
 
     def calculate_current_value(self, current_price: float) -> float:
@@ -40,13 +41,14 @@ class StockPosition(Position):
 class OptionPosition(Position):
     def __init__(self, symbol: str, order_operation: OrderOperation, option_type: OptionType, quantity: int,
                  entry_price: float, strike_price: float, expiration_date: str):
-        super().__init__(symbol, quantity, entry_price)
+        super().__init__(symbol, order_operation, quantity, entry_price)
         self.order_operation = order_operation
         self.option_type = option_type
         self.strike_price = strike_price
         self.expiration_date = expiration_date
 
     def calculate_current_value(self, current_price: float) -> float:
+        # TODO: Use historical option data to calculate value, but for now, just act as if it's regular stock
         return self.quantity * current_price
 
 
@@ -54,7 +56,7 @@ class OptionSpreadPosition(Position):
     def __init__(self, options: list[Position]):
         self.validate_option_spread(options)
 
-        self._position = uuid.UUID()
+        self._position = uuid.uuid4()
         # Assume all spreads have the same symbol, at least to begin with.
         self.symbol = options[0].symbol
         self.options = options

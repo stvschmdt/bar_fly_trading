@@ -61,10 +61,25 @@ def select_all_from_table(table_name: str, order_by: str, limit: int = 10):
 #    print(df)
 
 
-def select_all_by_symbol(table_name: str, symbol: str, order_by: str = None):
+def select_all_by_symbol(table_name: str, symbols: set[str], order_by: str = None, start_date: str = None, end_date: str = None):
+    symbols_str = ', '.join([f"'{symbol}'" for symbol in symbols])
+
     query = f"""
-    SELECT * from {table_name} WHERE symbol = '{symbol}' {f'ORDER BY {order_by} desc' if order_by else ''};
+    SELECT * from {table_name} WHERE symbol IN ({symbols_str})
     """
+
+    # Add optional date filters
+    if start_date:
+        query += f" AND date >= '{start_date}'"
+    if end_date:
+        query += f" AND date <= '{end_date}'"
+
+    # Add optional ordering
+    if order_by:
+        query += f" ORDER BY {order_by}"
+
+    query += ";"
+
     return pd.read_sql_query(query, engine)
 
 
