@@ -21,6 +21,10 @@ class Account(ABC):
     def add_position(self, position: Position, current_stock_price: float):
         pass
 
+    @abstractmethod
+    def get_num_shares_of_symbol(self, symbol: str):
+        pass
+
     def get_max_buyable_shares(self, price: float):
         return self.cash_balance // price
 
