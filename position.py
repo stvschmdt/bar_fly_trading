@@ -13,6 +13,7 @@ class OptionType(Enum):
     PUT = 2
 
 
+# TODO: Rename to Order
 class Position(ABC):
     def __init__(self, symbol: str, order_operation: OrderOperation, quantity: int, entry_price: float):
         self._position_id = uuid.uuid4()
@@ -20,6 +21,9 @@ class Position(ABC):
         self.order_operation = order_operation
         self.quantity = quantity
         self.entry_price = entry_price
+
+    def __str__(self):
+        return f"{self.order_operation.name} {self.quantity} {self.symbol} at {self.entry_price}"
 
     def get_position_id(self) -> uuid.UUID:
         return self._position_id
@@ -39,6 +43,7 @@ class StockPosition(Position):
 
 
 class OptionPosition(Position):
+    # TODO: Take contract_id as input
     def __init__(self, symbol: str, order_operation: OrderOperation, option_type: OptionType, quantity: int,
                  entry_price: float, strike_price: float, expiration_date: str):
         super().__init__(symbol, order_operation, quantity, entry_price)
@@ -52,7 +57,8 @@ class OptionPosition(Position):
         return self.quantity * current_price
 
 
-class OptionSpreadPosition(Position):
+class MultiLegPosition(Position):
+    # TODO: Change list to dict of ID to Order
     def __init__(self, options: list[Position]):
         self.validate_option_spread(options)
 

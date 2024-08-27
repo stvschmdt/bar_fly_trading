@@ -9,12 +9,20 @@ class Account(ABC):
         self.account_id = account_id
         self.owner_name = owner_name
         self.cash_balance = cash_balance
+        # TODO: Change to orders {orderID: Order}
         self.positions = positions if positions else {}
         self.held_symbols = held_symbols if held_symbols else set()
+        # TODO: Take as input: {symbol: quantity}
+        self.stock_positions = {}
+        # TODO: Take as input: {contractID: quantity}
+        self.option_positions = {}
 
     @abstractmethod
     def add_position(self, position: Position, current_stock_price: float):
         pass
+
+    def get_max_buyable_shares(self, price: float):
+        return self.cash_balance // price
 
     def close_position(self, position_id: uuid.UUID, current_price: float):
         pass
