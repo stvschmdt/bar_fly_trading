@@ -51,6 +51,13 @@ class BacktestAccount(Account):
         self.held_symbols.add(position.symbol)
         self.positions[position.get_position_id()] = position
 
+    def get_num_shares_of_symbol(self, symbol: str):
+        num_shares = 0
+        for position in self.positions.values():
+            if position.symbol == symbol:
+                num_shares += position.quantity
+        return num_shares
+
     def close_position(self, position_id: uuid.UUID, current_price: float):
         if position_id not in self.positions:
             raise ValueError(f"Position with ID {position_id} not found in account")
