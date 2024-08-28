@@ -413,6 +413,7 @@ class SectorAnalysis:
         filtered_df = self.df[(self.df['date'] >= start_date) & (self.df['date'] <= end_date)]
         sectors = filtered_df['sector'].unique()
 
+        plt.figure(figsize=(14, 8))
         # plot with enough colormap for 11 different sectors
         colors = plt.cm.tab20(np.linspace(0, 1, len(sectors)))  # Use a colormap that can handle more than 10 colors
         for sector, color in zip(sectors, colors):
