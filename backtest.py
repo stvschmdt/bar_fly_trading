@@ -7,7 +7,7 @@ import argparse
 import pandas as pd
 
 from account import Account, BacktestAccount
-from core_stock import CORE_STOCK_TABLE_NAME
+from api_data.core_stock import CORE_STOCK_TABLE_NAME
 from strategy.base_strategy import BaseStrategy
 from strategy.bollinger_bands_strategy import BollingerBandsStrategy
 from strategy.test_strategy import TestStrategy

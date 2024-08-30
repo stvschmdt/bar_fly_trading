@@ -1,5 +1,7 @@
 import pandas as pd
-
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../api_data')))
 from collector import AlphaVantageClient
 from storage import store_data
 from util import drop_existing_rows, get_last_updated_date, get_table_write_option
