@@ -1,3 +1,7 @@
 .idea/*
 all_data.csv
 logs/*
+*.ipynb
+*pycache*
+*.swp*
+*.png
