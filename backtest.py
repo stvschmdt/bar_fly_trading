@@ -7,17 +7,19 @@ import argparse
 import pandas as pd
 
 from account import Account, BacktestAccount
-from core_stock import CORE_STOCK_TABLE_NAME
+from api_data.core_stock import CORE_STOCK_TABLE_NAME
 from strategy.base_strategy import BaseStrategy
 from strategy.bollinger_bands_strategy import BollingerBandsStrategy
 from strategy.test_strategy import TestStrategy
-from storage import select_all_by_symbol
+from api_data.storage import select_all_by_symbol
 
 
 def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_date: str) -> float:
     # Iterate through every day between start_date and end_date, and call the strategy's evaluate method
     # on each day. The strategy will return positions traded on that day.
     df = select_all_by_symbol(CORE_STOCK_TABLE_NAME, symbols, start_date=start_date, end_date=end_date)
+
+    # TODO: Store historical option data in the DB and fetch it here, then pass to get_account_values below
 
     daily_account_values = []
     daily_positions = []  # List of tuples (date, position)
@@ -29,21 +31,21 @@ def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_dat
         if current_prices.shape[0] == 0:
             continue
 
-        positions = strategy.evaluate(date, current_prices)
-        for position in positions:
-            current_price = float(current_prices.loc[current_prices['symbol'] == position.symbol, 'open'].iloc[0])
-            strategy.account.add_position(position, current_price)
-            daily_positions.append((date, position))
-            print(f"{date}: {position}")
+        orders = strategy.evaluate(date, current_prices)
+        for order in orders:
+            current_price = float(current_prices.loc[current_prices['symbol'] == order.symbol, 'open'].iloc[0])
+            strategy.account.execute_order(order, current_price)
+            daily_positions.append((date, order))
+            print(f"{date}: {order}")
 
         # Convert df to dict for current_prices
         current_prices = current_prices.set_index('symbol').to_dict()['open']
-        if positions:
-            print(f"Account value: {strategy.account.get_account_values(current_prices)}")
+        if orders:
+            print(f"Account value: {strategy.account.get_account_values(current_prices, None)}")
 
-        daily_account_values.append(strategy.account.get_account_values(current_prices))
+        daily_account_values.append(strategy.account.get_account_values(current_prices, None))
 
-    # TODO: plot the daily account values and daily positions
+    # TODO: write account details to some file, then plot the daily account values and daily positions
     return daily_account_values[-1]
 
 
@@ -82,4 +84,4 @@ if __name__ == "__main__":
     strategy = get_strategy(args.strategy_name, account, set(args.symbols))
 
     account_value = backtest(strategy, set(args.symbols), args.start_date, args.end_date)
-    print(f"Final account value: {account_value} = {account_value[0] + account_value[1]}")
+    print(f"Final account value: {account_value} = ${account_value[0] + account_value[1]:,.2f}")
