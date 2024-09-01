@@ -1,6 +1,7 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
-from core_stock import fetch_daily_adjusted_data, parse_daily_adjusted_data
+from api_data.core_stock import fetch_daily_adjusted_data, parse_daily_adjusted_data
+from api_data.historical_option_data import get_option_data
 from simulations.spreads.util import find_nearest_strike, parse_historical_options_data, fetch_historical_options_data, get_expiration_date, MarketClosedError
 
 BUY_CALL_PERCENT_ABOVE_START = 0.05     # 5% above the start price
@@ -91,8 +92,7 @@ class BullCallSpread:
         # Fetch options data for current date
         options_data = {}
         try:
-            options_data = fetch_historical_options_data(self.alpha_client, self.symbol, current_date)
-            df = parse_historical_options_data(options_data['data'])
+            df = get_option_data(self.alpha_client, self.symbol, current_date)
         except Exception as e:
             if NO_OPTION_DATA_ERROR_MESSAGE in options_data.get('message', ''):
                 raise MarketClosedError()

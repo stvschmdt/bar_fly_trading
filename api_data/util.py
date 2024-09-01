@@ -1,6 +1,6 @@
 import pandas as pd
 
-from storage import TableWriteOption, get_last_updated_date
+from api_data.storage import TableWriteOption, get_last_updated_date
 
 
 def get_table_write_option(incremental: bool) -> TableWriteOption:

@@ -4,7 +4,7 @@ from datetime import datetime
 import pandas as pd
 
 from account import Account
-from position import Position
+from order import Order
 
 
 class BaseStrategy(ABC):
@@ -13,5 +13,5 @@ class BaseStrategy(ABC):
         self.symbols = symbols
 
     @abstractmethod
-    def evaluate(self, date: datetime.date, current_prices: pd.DataFrame) -> list[Position]:
+    def evaluate(self, date: datetime.date, current_prices: pd.DataFrame) -> list[Order]:
         pass
