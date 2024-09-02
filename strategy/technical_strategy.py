@@ -42,8 +42,8 @@ class TechnicalStrategy(BaseStrategy):
             pe_ratio = row['pe_ratio'].iloc[0]
             # Bullish signals
             if (rsi < 30 and close < bb_lower) or \
-               (ema_20 > ema_50 and close > ema_20) or \
-               (sma_20 > sma_50 and sma_50 > sma_200 and close > sma_20) or \
+               close > ema_20 > ema_50 or \
+               close > sma_20 > sma_50 > sma_200 or \
                (macd > 0 and ema_20 > ema_50):
                # buy max shares account will offer
                shares_to_buy = self.account.get_max_buyable_shares(current_price, percent)
@@ -51,8 +51,8 @@ class TechnicalStrategy(BaseStrategy):
                
             # Bearish signals
             if (rsi > 70 and close > bb_upper) or \
-               (ema_20 < ema_50 and close < ema_20) or \
-               (sma_20 < sma_50 and sma_50 < sma_200 and close < sma_20) or \
+               close < ema_20 < ema_50 or \
+               close < sma_20 < sma_50 < sma_200 or \
                (macd < 0 and ema_20 < ema_50):
                if self.account.stock_positions.get(symbol, 0) > 0:
                    orders.append(StockOrder(symbol, OrderOperation.SELL, self.account.stock_positions.get(symbol, 0), current_price, date))
