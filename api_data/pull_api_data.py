@@ -63,15 +63,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-w", "--watchlist", help="file containing symbols to fetch and store data in db", type=str, default='watchlist.csv')
     parser.add_argument("-t", "--test", help="number of symbols for testing functionality", type=int, default=5)
+    parser.add_argument("-s", "--symbols", help="list of symbols to fetch data for", nargs='+', type=str, default=[])
     args = parser.parse_args()
     logger.info(f"Watchlist file: {args.watchlist}")
     logger.info(f"Test Size: {args.test}")
     try:
-        # read in csv file of watch list
-        SYMBOLS = pd.read_csv(args.watchlist)['Symbol'].tolist()
-        # ticker symbol is first token after comma separation
-        SYMBOLS = [symbol.split(',')[0] for symbol in SYMBOLS]
-        SYMBOLS = [symbol.upper() for symbol in SYMBOLS][0:args.test]
+        if args.symbols:
+            SYMBOLS = args.symbols
+        else:
+            # read in csv file of watch list
+            SYMBOLS = pd.read_csv(args.watchlist)['Symbol'].tolist()
+            # ticker symbol is first token after comma separation
+            SYMBOLS = [symbol.split(',')[0] for symbol in SYMBOLS]
+            SYMBOLS = [symbol.upper() for symbol in SYMBOLS][0:args.test]
         logger.info(f"Symbols: {SYMBOLS}")
         main()
     except Exception as e:

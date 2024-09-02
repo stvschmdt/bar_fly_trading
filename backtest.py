@@ -7,6 +7,7 @@ import argparse
 import pandas as pd
 
 from account import Account, BacktestAccount
+from account_values import AccountValues
 from api_data.core_stock import CORE_STOCK_TABLE_NAME
 from strategy.base_strategy import BaseStrategy
 from strategy.bollinger_bands_strategy import BollingerBandsStrategy
@@ -14,12 +15,12 @@ from strategy.test_strategy import TestStrategy
 from api_data.storage import select_all_by_symbol
 
 
-def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_date: str) -> float:
+def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_date: str) -> AccountValues:
     # Iterate through every day between start_date and end_date, and call the strategy's evaluate method
     # on each day. The strategy will return positions traded on that day.
     df = select_all_by_symbol(CORE_STOCK_TABLE_NAME, symbols, start_date=start_date, end_date=end_date)
 
-    # TODO: Store historical option data in the DB and fetch it here, then pass to get_account_values below
+    # TODO: Store historical option data in the DB and fetch it here, then pass to update_account_values below
 
     daily_account_values = []
     daily_positions = []  # List of tuples (date, position)
@@ -31,29 +32,34 @@ def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_dat
         if current_prices.shape[0] == 0:
             continue
 
+        # Convert current_prices df to dict
+        symbol_price_map = current_prices.set_index('symbol').to_dict()['open']
+
         orders = strategy.evaluate(date, current_prices)
+        last_account_values = None
         for order in orders:
             current_price = float(current_prices.loc[current_prices['symbol'] == order.symbol, 'open'].iloc[0])
             strategy.account.execute_order(order, current_price)
+            # TODO: Replace none with historical options data
+            account_values = strategy.account.update_account_values(pd.to_datetime(date), symbol_price_map, None)
+            last_account_values = account_values
             daily_positions.append((date, order))
             print(f"{date}: {order}")
+            print(f"New account values: {account_values}")
 
-        # Convert df to dict for current_prices
-        current_prices = current_prices.set_index('symbol').to_dict()['open']
-        if orders:
-            print(f"Account value: {strategy.account.get_account_values(current_prices, None)}")
-
-        daily_account_values.append(strategy.account.get_account_values(current_prices, None))
+        if last_account_values:
+            daily_account_values.append(last_account_values)
+            print(f"{date} Account values: {last_account_values}")
 
     # TODO: write account details to some file, then plot the daily account values and daily positions
-    return daily_account_values[-1]
+    return strategy.account.account_values
 
 
 def get_account(account_id: str, start_value: float) -> Account:
     if account_id:
         # Create a new BacktestAccount, using the details from the real account that we fetch from a broker API
         pass
-    return BacktestAccount(account_id, "Backtest Account", start_value)
+    return BacktestAccount(account_id, "Backtest Account", AccountValues(start_value, 0, 0))
 
 
 def get_strategy(strategy_name: str, account: Account, symbols: set[str]) -> BaseStrategy:
@@ -83,5 +89,5 @@ if __name__ == "__main__":
     account = get_account(args.account_id, args.start_cash_balance)
     strategy = get_strategy(args.strategy_name, account, set(args.symbols))
 
-    account_value = backtest(strategy, set(args.symbols), args.start_date, args.end_date)
-    print(f"Final account value: {account_value} = ${account_value[0] + account_value[1]:,.2f}")
+    account_values = backtest(strategy, set(args.symbols), args.start_date, args.end_date)
+    print(f"Final account values: {account_values}")
