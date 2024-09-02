@@ -2,14 +2,10 @@ from datetime import datetime
 
 
 import pandas as pd
-import os
-import sys
-# print current working directory
 
 from order import Order, StockOrder, OrderOperation
 from account import Account
 from strategy.base_strategy import BaseStrategy
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 
 
@@ -29,6 +25,7 @@ class TechnicalStrategy(BaseStrategy):
         
         for symbol in self.symbols:
             row = self.historical_data[(self.historical_data['symbol'] == symbol) & (self.historical_data['date'] == date)]
+            current_price = float(current_prices.loc[current_prices['symbol'] == symbol, 'open'].iloc[0])
 
             # Extract the relevant data for the current row
             close = row['adjusted_close'].iloc[0]
@@ -49,8 +46,8 @@ class TechnicalStrategy(BaseStrategy):
                (sma_20 > sma_50 and sma_50 > sma_200 and close > sma_20) or \
                (macd > 0 and ema_20 > ema_50):
                # buy max shares account will offer
-               shares_to_buy = self.account.get_max_buyable_shares(float(current_prices.loc[current_prices['symbol'] == symbol, 'open'].iloc[0]), percent)
-               orders.append(StockOrder(symbol, OrderOperation.BUY, shares_to_buy, float(current_prices.loc[current_prices['symbol'] == symbol, 'open'].iloc[0]), date))
+               shares_to_buy = self.account.get_max_buyable_shares(current_price, percent)
+               orders.append(StockOrder(symbol, OrderOperation.BUY, shares_to_buy, current_price, date))
                
             # Bearish signals
             if (rsi > 70 and close > bb_upper) or \
@@ -58,7 +55,7 @@ class TechnicalStrategy(BaseStrategy):
                (sma_20 < sma_50 and sma_50 < sma_200 and close < sma_20) or \
                (macd < 0 and ema_20 < ema_50):
                if self.account.stock_positions.get(symbol, 0) > 0:
-                   orders.append(StockOrder(symbol, OrderOperation.SELL, self.account.stock_positions.get(symbol, 0), float(current_prices.loc[current_prices['symbol'] == symbol, 'open'].iloc[0]), date))
+                   orders.append(StockOrder(symbol, OrderOperation.SELL, self.account.stock_positions.get(symbol, 0), current_price, date))
               
         return orders
 
