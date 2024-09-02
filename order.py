@@ -28,7 +28,7 @@ class Order(ABC):
         self.order_date = order_date
 
     def __str__(self):
-        return f"{self.order_operation.name} {self.quantity} {self.symbol} at ${self.entry_price:.2f}"
+        return f"{self.order_operation.name} {self.quantity} {self.symbol} at ${self.entry_price:.2f} on {self.order_date}"
 
     @abstractmethod
     def calculate_current_value(self, current_price: float, date: str) -> float:

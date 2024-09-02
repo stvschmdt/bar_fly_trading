@@ -11,5 +11,5 @@ class TestStrategy(BaseStrategy):
         # Buy 1 share of each stock in self.symbols
         orders = []
         for symbol in self.symbols:
-            orders.append(StockOrder(symbol, OrderOperation.BUY, 1, current_prices.loc[current_prices['symbol'] == symbol, 'open']))
+            orders.append(StockOrder(symbol, OrderOperation.BUY, 1, current_prices.loc[current_prices['symbol'] == symbol, 'open'].iloc[0], date))
         return orders
