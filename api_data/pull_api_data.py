@@ -4,6 +4,8 @@ import argparse
 import time
 import sys
 import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 
 from api_data.storage import gold_table_processing
 from api_data.collector import alpha_client
@@ -13,7 +15,6 @@ from api_data.fundamental_data import update_all_fundamental_data
 from api_data.technical_indicator import update_all_technical_indicators
 from logging_config import setup_logging
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 setup_logging()
 logger = logging.getLogger(__name__)
 incremental = False
