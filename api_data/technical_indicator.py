@@ -23,6 +23,8 @@ TYPE_TIME_PERIODS = {
     TechnicalIndicatorType.EMA: [20, 50, 200],
     TechnicalIndicatorType.MACD: [None],
     TechnicalIndicatorType.RSI: [14],
+    TechnicalIndicatorType.ADX: [14],
+    TechnicalIndicatorType.ATR: [14],
     TechnicalIndicatorType.BBANDS: [20],
 }
 
