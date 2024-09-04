@@ -13,6 +13,8 @@ class TechnicalIndicatorType(Enum):
     EMA = 'EMA'
     MACD = 'MACD'
     RSI = 'RSI'
+    ADX = 'ADX'
+    ATR = 'ATR'
     BBANDS = 'BBANDS'
 
 
