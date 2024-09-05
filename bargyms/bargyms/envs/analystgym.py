@@ -1,42 +1,42 @@
-import gym
-from gym import spaces
+import gymnasium as gym
+from gymnasium import spaces
 import numpy as np
 
 class AnalystGym(gym.Env):
-    def __init__(self):
+    """Custom environment for Gym."""
+    
+    def __init__(self, render_mode=None):
+        super(AnalystGym, self).__init__()
+        
+        # Define action and observation space
+        self.action_space = spaces.Discrete(3)  # Example: Buy, Hold, Sell
+        self.observation_space = spaces.Box(low=0, high=1, shape=(10,), dtype=np.float32)
 
-        # 4 possible actions: 0=strong sell, 1=sell, 2=neutral, 3=buy, 4=strong buy
-        self.action_space = spaces.Discrete(5)
+        # Store render_mode
+        self.render_mode = render_mode
 
-        # Observation space is grid of size:rows x columns
-        self.observation_space = spaces.Tuple((spaces.Discrete(10), spaces.Discrete(20)))
+        # Initial state
+        self.state = np.zeros(self.observation_space.shape)
 
-
-    def reset(self):
-        self.current_pos = [0, 0]
-        return self.current_pos
+    def reset(self, seed=None, options=None):
+        """Reset the environment to an initial state."""
+        self.state = np.zeros(self.observation_space.shape)
+        return self.state, {}
 
     def step(self, action):
-        # Move the agent based on the selected action
-        new_pos = np.array(self.current_pos)
-        action = 1
-        if action == 0:  # Up
-            new_pos[0] = 1
-        elif action == 1:  # Down
-            new_pos[0] = 1
-        elif action == 2:  # Left
-            new_pos[1] = 1
-        elif action == 3:  # Right
-            new_pos[1] = 1
-        elif action == 4:
-            new_pos[0] = 1 # something else
-
-
-        # Reward function
-        reward = 1.0
-        done = True
-
-        return self.current_pos, reward, done, {}
+        """Execute one time step within the environment."""
+        self.state = np.random.rand(*self.observation_space.shape)  # Random next state
+        reward = np.random.rand()  # Example reward
+        done = False  # Example termination flag
+        return self.state, reward, done, {}, {}
 
     def render(self, mode='human'):
-        pass
+        """Render the environment."""
+        if self.render_mode == 'rgb_array':
+            # Return an image (e.g., NumPy array)
+            return np.zeros((400, 600, 3), dtype=np.uint8)  # Placeholder for an RGB image
+        elif self.render_mode == 'human':
+            print("Rendering in human mode")
+        else:
+            pass
+
