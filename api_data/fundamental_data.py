@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import inflection
+import json
 
 from api_data.collector import AlphaVantageClient
 from api_data.storage import delete_company_overview_row, store_data, TableWriteOption
@@ -12,6 +13,7 @@ from enum import Enum
 class FundamentalDataType(Enum):
     OVERVIEW = 'OVERVIEW'
     EARNINGS = 'EARNINGS'
+    SPLITS = 'SPLITS'
 
 
 DATA_TYPE_TABLES = {
@@ -24,6 +26,11 @@ DATA_TYPE_TABLES = {
         'table_name': 'quarterly_earnings',
         'columns': ['reported_eps', 'estimated_eps', 'surprise', 'surprise_percentage'],
         'include_index': True,
+    },
+    FundamentalDataType.SPLITS: {
+        'table_name': 'stock_splits',
+        'columns': ['symbol', 'effective_date', 'split_factor'],
+        'include_index': False,
     },
 }
 EARNINGS_DATE_COL = 'fiscal_date_ending'
@@ -78,6 +85,19 @@ def parse_earnings(data: dict, symbol: str):
     return df
 
 
+def parse_splits(data: dict, symbol: str):
+    key = 'data'
+    if key not in data:
+        raise ValueError(f"Unexpected response format: '{key}' key not found")
+
+    df = pd.DataFrame(data[key])
+    df.columns = [inflection.underscore(col) for col in df.columns]
+    df = df.filter(items=DATA_TYPE_TABLES[FundamentalDataType.SPLITS]['columns'])
+    df = graceful_df_to_numeric(df)
+    df['symbol'] = symbol
+    return df
+
+
 def update_all_fundamental_data(api_client: AlphaVantageClient, symbol: str, incremental: bool = True):
     for data_type in FundamentalDataType:
         response = fetch_fundamental_data(api_client, symbol, data_type)
@@ -107,4 +127,5 @@ def update_all_fundamental_data(api_client: AlphaVantageClient, symbol: str, inc
 DATA_TYPE_PARSERS = {
     FundamentalDataType.OVERVIEW: parse_overview,
     FundamentalDataType.EARNINGS: parse_earnings,
+    FundamentalDataType.SPLITS: parse_splits
 }

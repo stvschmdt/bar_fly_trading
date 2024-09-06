@@ -18,6 +18,7 @@ TABLE_CREATES = {
     'quarterly_earnings': 'CREATE TABLE quarterly_earnings(fiscal_date_ending DATETIME, reported_eps DOUBLE, estimated_eps DOUBLE, surprise DOUBLE, surprise_percentage DOUBLE, symbol VARCHAR(5), PRIMARY KEY (fiscal_date_ending, symbol));',
     'economic_indicators': 'CREATE TABLE economic_indicators(date DATETIME, treasury_yield_2year DOUBLE, treasury_yield_10year DOUBLE, ffer DOUBLE, cpi DOUBLE, inflation DOUBLE, retail_sales DOUBLE, durables DOUBLE, unemployment DOUBLE, nonfarm_payroll DOUBLE, PRIMARY KEY (date));',
     'technical_indicators': 'CREATE TABLE technical_indicators(date DATETIME, sma_20 DOUBLE, sma_50 DOUBLE, sma_200 DOUBLE, ema_20 DOUBLE, ema_50 DOUBLE, ema_200 DOUBLE, macd DOUBLE, rsi_14 DOUBLE, adx_14 DOUBLE, atr_14 DOUBLE, bbands_upper_20 DOUBLE, bbands_middle_20 DOUBLE, bbands_lower_20 DOUBLE, symbol VARCHAR(5), PRIMARY KEY (date, symbol));',
+    'stock_splits': 'CREATE TABLE stock_splits(symbol VARCHAR(5), effective_date DATETIME, split_factor DOUBLE, PRIMARY KEY (symbol, effective_date));',
 }
 
 
@@ -116,6 +117,40 @@ def delete_company_overview_row(symbol: str):
             transaction.commit()
 
 
+def get_stock_splits():
+    query = "SELECT symbol, effective_date, split_factor FROM stock_splits;"
+    df = pd.read_sql_query(query, engine)
+
+    # Sort splits by effective_date
+    df = df.sort_values(by=['symbol', 'effective_date'])
+    return df
+
+
+def adjust_for_stock_splits(df):
+    # Adjust open, high, low  for stock splits
+    df_splits = get_stock_splits()
+
+    df = df.copy()  # Ensure we're working on a copy of the DataFrame to avoid chaining issues
+    df.loc[:, 'adjusted_open'] = df['open']
+    df.loc[:, 'adjusted_high'] = df['high']
+    df.loc[:, 'adjusted_low'] = df['low']
+
+    # Apply split factors
+    for _, split_row in df_splits.iterrows():
+        symbol = split_row['symbol']
+        effective_date = split_row['effective_date']
+        split_factor = split_row['split_factor']
+
+        # Adjust open values for the given symbol and dates less than or equal to the effective_date
+        # Note: fractional pennies included in adjusted prices
+        mask = (df['symbol'] == symbol) & (df['date'] <= effective_date)
+        df.loc[mask, 'adjusted_open'] = df.loc[mask, 'adjusted_open'] / split_factor
+        df.loc[mask, 'adjusted_high'] = df.loc[mask, 'adjusted_high'] / split_factor
+        df.loc[mask, 'adjusted_low'] = df.loc[mask, 'adjusted_low'] / split_factor
+
+    return df
+
+
 def gold_table_processing(limit: int = 5000000):
     # This query joins all tables together on the date column. It's a way to see all the data we have in one place.
     # core_stock, company_overview, economic_indicators, technical_indicators, quarterly_earnings are the tables and
@@ -195,7 +230,6 @@ def gold_table_processing(limit: int = 5000000):
     # Derive low_pct from low in core_stock
     df['low_pct'] = df.groupby('symbol')['low'].pct_change(1)
 
-
     # quarterly_earnings filldown
     df['fiscal_date_ending'] = df.groupby('symbol')['fiscal_date_ending'].ffill()
     df['reported_eps'] = df.groupby('symbol')['reported_eps'].ffill()
@@ -227,6 +261,8 @@ def gold_table_processing(limit: int = 5000000):
     # add year column based on date
     df['year'] = df['date'].dt.year
 
+    # Adjust open, high, low for stock splits
+    df = adjust_for_stock_splits(df)
     df.to_csv('all_data.csv')
 
 
