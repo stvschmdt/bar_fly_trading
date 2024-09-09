@@ -4,17 +4,18 @@
 
 
 import argparse
+
 import pandas as pd
 
 from account import Account, BacktestAccount
-from account_values import AccountValues
+from account.account_values import AccountValues
 from api_data.core_stock import CORE_STOCK_TABLE_NAME
+from api_data.storage import select_all_by_symbol
 from strategy.base_strategy import BaseStrategy
 from strategy.bollinger_bands_strategy import BollingerBandsStrategy
-from strategy.technical_strategy import TechnicalStrategy
 from strategy.buy_hold_strategy import BuyHoldStrategy
+from strategy.technical_strategy import TechnicalStrategy
 from strategy.test_strategy import TestStrategy
-from api_data.storage import select_all_by_symbol
 
 
 def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_date: str) -> AccountValues:
@@ -72,7 +73,7 @@ def get_strategy(strategy_name: str, account: Account, symbols: set[str]) -> Bas
     elif strategy_name == "TechnicalStrategy":
         return TechnicalStrategy(account, symbols)
     elif strategy_name == "BuyHoldStrategy":
-        return TechnicalStrategy(account, symbols)
+        return BuyHoldStrategy(account, symbols)
 
     raise ValueError(f"Unknown strategy_name: {strategy_name}")
 
