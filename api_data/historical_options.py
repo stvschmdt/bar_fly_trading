@@ -127,7 +127,7 @@ def update_all_historical_options(api_client: AlphaVantageClient, symbol: str, s
 
     timer = 0  # Counter for API hits
     for date in pd.date_range(start_date, datetime.today()).strftime('%Y-%m-%d'):
-        start_time = time.time()
+        # start_time = time.time()
         timer += 1
         print(f"Proc Hist Opts: {symbol} - {date}")
         response = fetch_historical_options_data(api_client, symbol, date)
@@ -146,7 +146,7 @@ def update_all_historical_options(api_client: AlphaVantageClient, symbol: str, s
             else:
                 historical_options_df = pd.concat([historical_options_df, df_filtered], ignore_index=True)
 
-        print("--- %s seconds ---" % (time.time() - start_time))
+        # print("--- %s seconds ---" % (time.time() - start_time))
 
         # After 20 API hits, sleep for 60 seconds to avoid hitting the API limit
         if timer >= 20:
