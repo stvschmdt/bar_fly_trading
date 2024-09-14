@@ -13,6 +13,7 @@ from api_data.core_stock import update_core_stock_data
 from api_data.economic_indicator import update_all_economic_indicators
 from api_data.fundamental_data import update_all_fundamental_data
 from api_data.technical_indicator import update_all_technical_indicators
+from api_data.historical_options import update_all_historical_options
 from logging_config import setup_logging
 
 setup_logging()
@@ -49,6 +50,12 @@ def main():
         except Exception as e:
             print(f"Error fetching fundamental data: {e}")
 
+        # Update historical options data (this must happen after core stock is updated to get close price)
+        try:
+            update_all_historical_options(alpha_client, symbol, start_date='2024-09-09', incremental=incremental)
+        except Exception as e:
+            print(f"Error fetching historical options data: {e}")
+
         # If incremental is False, that means we want to drop the existing tables and re-insert all the data.
         # To avoid dropping the tables on every iteration, we set incremental to True after the first iteration.
         if not incremental:
@@ -57,6 +64,7 @@ def main():
         if timer >= 9:
             time.sleep(60)
             timer = 0
+
     gold_table_processing()
 
 
