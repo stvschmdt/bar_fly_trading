@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 
-from api_data.historical_option_data import get_option_data
 from api_data.collector import alpha_client
+from api_data.historical_option_data import get_option_data
 
 
 class OrderOperation(Enum):
@@ -29,6 +29,14 @@ class Order(ABC):
 
     def __str__(self):
         return f"{self.order_operation.name} {self.quantity} {self.symbol} at ${self.entry_price:.2f} on {self.order_date}"
+
+    def __eq__(self, other):
+        return self.order_id == other.order_id \
+               and self.symbol == other.symbol \
+               and self.order_operation == other.order_operation \
+               and self.quantity == other.quantity \
+               and self.entry_price == other.entry_price \
+               and self.order_date == other.order_date
 
     @abstractmethod
     def calculate_current_value(self, current_price: float, date: str) -> float:

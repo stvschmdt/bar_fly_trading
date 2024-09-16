@@ -1,12 +1,9 @@
 from datetime import datetime
 
-
 import pandas as pd
 
 from order import Order, StockOrder, OrderOperation
-from account import Account
 from strategy.base_strategy import BaseStrategy
-
 
 
 class TechnicalStrategy(BaseStrategy):

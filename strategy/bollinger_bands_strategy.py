@@ -1,16 +1,14 @@
-from datetime import datetime
-
-
-import pandas as pd
 import os
 import sys
-# print current working directory
+from datetime import datetime
+
+import pandas as pd
 
 from order import Order, StockOrder, OrderOperation
-from account import Account
 from strategy.base_strategy import BaseStrategy
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# print current working directory
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 
 class BollingerBandsStrategy(BaseStrategy):

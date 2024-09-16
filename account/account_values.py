@@ -7,6 +7,11 @@ class AccountValues:
     def __str__(self):
         return f"Cash: ${self.cash_balance:,.2f}, Stocks: ${self.stock_positions:,.2f}, Options: ${self.option_positions:,.2f}, Total: ${self.cash_balance + self.stock_positions + self.option_positions:,.2f}"
 
+    def __eq__(self, other):
+        return self.cash_balance == other.cash_balance \
+               and self.stock_positions == other.stock_positions \
+               and self.option_positions == other.option_positions
+
     def get_cash_percentage(self):
         return self.cash_balance / (self.cash_balance + self.stock_positions + self.option_positions)
 
