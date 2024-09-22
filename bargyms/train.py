@@ -4,6 +4,7 @@ import os
 import yaml
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import EvalCallback
+from register import register_env
 
 def load_config(config_file):
     """Loads the YAML configuration file."""
@@ -16,7 +17,6 @@ def main():
     config = load_config("configs/ppo_agent.yaml")
 
     # Register the custom environment if needed
-    from register import register_env
     register_env()
 
     # Create the environment (no need for render_mode since there's no visual output)
