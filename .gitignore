@@ -1,5 +1,5 @@
 .idea/*
-all_data.csv
+api_data/all_data.csv
 logs/*
 *.ipynb
 *pycache*

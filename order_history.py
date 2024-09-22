@@ -3,10 +3,18 @@ from collections import defaultdict
 from order import Order
 
 
+def convert_to_defaultdict(orders: dict[str, dict[str, Order]]):
+    if not orders:
+        return defaultdict(lambda: defaultdict(Order))
+
+    return defaultdict(lambda: defaultdict(Order),
+                       {order_id: defaultdict(Order, date_order_map) for order_id, date_order_map in orders.items()})
+
+
 class OrderHistory:
     def __init__(self, orders: dict[str, dict[str, Order]] = None):
         # {order_id: {order_timestamp: Order}}
-        self._orders = defaultdict(dict, orders) if orders else {}
+        self._orders = convert_to_defaultdict(orders)
 
     @property
     def orders(self):

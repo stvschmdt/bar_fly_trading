@@ -30,28 +30,41 @@ class BacktestAccount(Account):
         if order.order_operation == OrderOperation.BUY:
             if self.account_values.cash_balance < position_value:
                 raise ValueError(f"Insufficient funds to buy {order.symbol}")
-            self.account_values.cash_balance -= position_value
             self.held_symbols.add(order.symbol)
-        else:
-            self.account_values.cash_balance += position_value
 
         if isinstance(order, MultiLegOrder):
-            for leg in order.orders:
-                self._add_to_open_positions(leg)
+            pass
+            # TODO: Implement this. Might need to use a different method for calculating cost of executing multi-leg orders.
+            # TODO: Also need to do above operations in a loop for each leg of the order.
+            # for leg in order.orders:
+            #     self._apply_order_to_open_positions(leg)
         else:
-            self._add_to_open_positions(order)
+            self._apply_order_to_open_positions(order, position_value)
 
+        # The order of operations is important, that's why we do this down here. We must remove the symbol from
+        # held_symbols AFTER calling _apply_order_to_open_positions, so the symbol/contract is removed from the
+        # respective map prior to calling _remove_held_symbol.
+        if order.order_operation == OrderOperation.SELL:
+            self._remove_held_symbol(order.symbol)
         self.order_history.add_order(order)
 
-    def _add_to_open_positions(self, order: Order):
+    def _apply_order_to_open_positions(self, order: Order, total_price: float):
         if isinstance(order, MultiLegOrder):
-            return ValueError("_add_to_open_positions must be called with a single-leg order")
+            raise ValueError("_apply_order_to_open_positions must be called with a single-leg order")
 
         multiplier = 1 if order.order_operation == OrderOperation.BUY else -1
+        self.account_values.cash_balance -= total_price * multiplier
+
         if isinstance(order, StockOrder):
             self.stock_positions[order.symbol] = self.stock_positions.get(order.symbol, 0) + order.quantity * multiplier
+            self.account_values.stock_positions += total_price * multiplier
+            if self.stock_positions[order.symbol] == 0:
+                self.stock_positions.pop(order.symbol)
         elif isinstance(order, OptionOrder):
             self.option_positions[order.order_id] = self.option_positions.get(order.order_id, 0) + order.quantity * multiplier
+            self.account_values.option_positions += total_price * multiplier
+            if self.option_positions[order.order_id] == 0:
+                self.option_positions.pop(order.order_id)
 
     def get_num_shares_of_symbol(self, symbol: str):
         return self.stock_positions.get(symbol, 0)
@@ -65,6 +78,10 @@ class BacktestAccount(Account):
         # TODO: execute a buy/sell order to close the position
 
     def _remove_held_symbol(self, symbol: str):
+        # Can't remove it if it's not in held_symbols
+        if symbol not in self.held_symbols:
+            return
+
         # Only remove the symbol from held_symbols if it's not in any open positions
         if symbol in self.stock_positions:
             return
@@ -77,9 +94,9 @@ class BacktestAccount(Account):
         self.held_symbols.remove(symbol)
 
     def get_account_values(self, current_prices: dict[str, float], option_data: dict[str, pd.DataFrame]) -> AccountValues:
-        missing_symbols = self.held_symbols - set(current_prices.keys())
+        missing_symbols = self.stock_positions.keys() - current_prices.keys()
         if missing_symbols:
-            raise ValueError(f"Current prices are missing for some held symbols: {missing_symbols}")
+            raise ValueError(f"Current prices are missing for some held stock symbols: {missing_symbols}")
 
         stock_value = 0
         for symbol, quantity in self.stock_positions.items():
@@ -89,7 +106,7 @@ class BacktestAccount(Account):
         for contract_id, quantity in self.option_positions.items():
             symbol = self.order_history.get_order(contract_id).symbol
             df = option_data[symbol]
-            options_value += df.loc[df['contractID'] == contract_id, ['mark']] * quantity
+            options_value += float(df.loc[df['contractID'] == contract_id, 'mark'].iloc[0]) * quantity
 
         return AccountValues(round(self.account_values.cash_balance, 2), round(stock_value, 2), round(options_value, 2))
 
@@ -169,7 +186,7 @@ class BacktestAccount(Account):
                 raise ValueError(f"Option data missing for symbol {symbol}")
             if not symbol or order.symbol == symbol:
                 # We don't need a multiplier here because if we've sold more of these options than we bought, the quantity will be negative.
-                option_price = float(option_data[order.symbol].loc[option_data[order.symbol]['contractID'] == contract_id, ['mark']].iloc[0])
+                option_price = float(option_data[order.symbol].loc[option_data[order.symbol]['contractID'] == contract_id, 'mark'].iloc[0])
                 result[order.symbol][contract_id] += quantity * option_price
 
         if symbol and symbol not in result:
