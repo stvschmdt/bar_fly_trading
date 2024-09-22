@@ -1,10 +1,11 @@
+from abc import ABC, abstractmethod
 from copy import deepcopy
+from datetime import date
 from enum import Enum
 
 from account.account_values import AccountValues
 from order import Order
 from order_history import OrderHistory
-from abc import ABC, abstractmethod
 
 
 class PositionType(Enum):
@@ -31,7 +32,7 @@ class Account(ABC):
 
         # Used to track P/L, should never be updated after instantiation
         self._initial_cash_balance = deepcopy(account_values.cash_balance)
-        # {timestamp: account_value}
+        # {datetime: account_value}
         self.account_value_history = self._construct_account_value_history()
 
     @property
@@ -58,6 +59,6 @@ class Account(ABC):
     def close_position(self, symbol: str, current_price: float):
         pass
 
-    def _construct_account_value_history(self):
+    def _construct_account_value_history(self) -> dict[date, AccountValues]:
         # A real account will go out to the broker API to get the account value history, backtest accounts will calculate it.
-        pass
+        return {}
