@@ -20,3 +20,6 @@ class AccountValues:
 
     def get_option_percentage(self):
         return self.option_positions / (self.cash_balance + self.stock_positions + self.option_positions)
+
+    def get_total_value(self):
+        return self.cash_balance + self.stock_positions + self.option_positions

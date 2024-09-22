@@ -40,30 +40,32 @@ def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_dat
         symbol_price_map = current_prices.set_index('symbol').to_dict()['open']
 
         orders = strategy.evaluate(date, current_prices)
-        last_account_values = None
+        new_account_values = None
         for order in orders:
             current_price = float(current_prices.loc[current_prices['symbol'] == order.symbol, 'open'].iloc[0])
             strategy.account.execute_order(order, current_price)
             # TODO: Replace none with historical options data
-            account_values = strategy.account.update_account_values(pd.to_datetime(date), symbol_price_map, None)
-            last_account_values = account_values
+            new_account_values = strategy.account.update_account_values(pd.to_datetime(date), symbol_price_map, None)
             daily_positions.append((date, order))
             print(f"{date}: {order}")
-            print(f"New account values: {account_values}")
+            print(f"New account values: {new_account_values}")
 
-        if last_account_values:
-            daily_account_values.append(last_account_values)
-            print(f"{date} Account values: {last_account_values}")
+        # If there were orders, we will have already updated the account values.
+        # If not, make sure we update them to account for any price changes of held positions.
+        if not new_account_values:
+            new_account_values = strategy.account.update_account_values(pd.to_datetime(date), symbol_price_map, None)
+        print(f"{date} Account values: {new_account_values}")
 
     # TODO: write account details to some file, then plot the daily account values and daily positions
     return strategy.account.account_values
 
 
-def get_account(account_id: str, start_value: float) -> Account:
+def get_account(account_id: str, start_value: float, start_date: str) -> BacktestAccount:
     if account_id:
         # Create a new BacktestAccount, using the details from the real account that we fetch from a broker API
         pass
-    return BacktestAccount(account_id, "Backtest Account", AccountValues(start_value, 0, 0))
+    start_date = pd.to_datetime(start_date)
+    return BacktestAccount(account_id, "Backtest Account", AccountValues(start_value, 0, 0), start_date)
 
 
 def get_strategy(strategy_name: str, account: Account, symbols: set[str]) -> BaseStrategy:
@@ -94,7 +96,7 @@ if __name__ == "__main__":
     parser.add_argument("--start_cash_balance", type=float, help="Initial cash balance in the dummy account")
     args = parser.parse_args()
 
-    account = get_account(args.account_id, args.start_cash_balance)
+    account = get_account(args.account_id, args.start_cash_balance, args.start_date)
     strategy = get_strategy(args.strategy_name, account, set(args.symbols))
 
     account_values = backtest(strategy, set(args.symbols), args.start_date, args.end_date)

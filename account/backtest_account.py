@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 import pandas as pd
 
@@ -10,11 +10,12 @@ from order_history import OrderHistory
 
 
 class BacktestAccount(Account):
-    def __init__(self, account_id: str, owner_name: str, account_values: AccountValues, order_history: OrderHistory = None,
+    def __init__(self, account_id: str, owner_name: str, account_values: AccountValues, start_date: datetime, order_history: OrderHistory = None,
                  held_symbols: set[str] = None, stock_positions: dict[str, int] = None, option_positions: dict[str, int] = None):
         super().__init__(account_id, owner_name, account_values, order_history, held_symbols, stock_positions, option_positions)
+        self.account_value_history[start_date] = account_values
 
-    def _construct_account_value_history(self):
+    def _construct_account_value_history(self) -> dict[date, AccountValues]:
         # TODO: Implement this
         # Since we know the current cash balance and the order history, we can calculate the account values at each date.
         # This is meant to be called on instantiation of a backtest account that already has orders executed.
@@ -26,6 +27,7 @@ class BacktestAccount(Account):
         pass
 
     def execute_order(self, order: Order, current_stock_price: float):
+        # TODO: Add commission to price of options orders: https://www.interactivebrokers.com/en/pricing/commissions-options.php?re=amer
         position_value = order.calculate_current_value(current_stock_price, order.order_date)
         if order.order_operation == OrderOperation.BUY:
             if self.account_values.cash_balance < position_value:
@@ -192,3 +194,59 @@ class BacktestAccount(Account):
         if symbol and symbol not in result:
             result[symbol] = defaultdict(float)
         return result
+
+    def get_daily_account_value_percentage_change(self, start_date: str = None, end_date: str = None, change_from_start=True) -> pd.DataFrame:
+        """
+        Get the daily percentage change in account value from start_date to end_date. If change_from_start is True, we
+        compare each day's account value to the given start_date. If False, we compare each day's account value to the
+        previous day's account value. We assume there is an entry for every day in the account_value_history because
+        the backtester should be updating it each day.
+        Args:
+            start_date: Date to start comparison. If empty, we start from the account's start date.
+            end_date: Date to end comparison. If empty, we end at the account's last date.
+            change_from_start: If true, compare each day's account value to the start_date. Else, compare to the previous day.
+
+        Returns:
+            df mapping date to daily percentage changes in account value
+        """
+        earliest_account_date = min(self.account_value_history.keys()).date()
+        latest_account_date = max(self.account_value_history.keys()).date()
+
+        if start_date:
+            start_date = pd.to_datetime(start_date).date()
+            if start_date < earliest_account_date:
+                raise ValueError("start_date cannot be before the account's start date")
+        else:
+            start_date = earliest_account_date
+        if end_date:
+            end_date = pd.to_datetime(end_date).date()
+            if end_date > latest_account_date:
+                raise ValueError("end_date cannot be after the account's last date")
+        else:
+            end_date = latest_account_date
+        if start_date >= end_date:
+            raise ValueError("start_date must be before end_date")
+
+        df = pd.DataFrame(columns=['date', 'value', 'perc_change'])
+        start_value = self.account_value_history[datetime.combine(start_date, datetime.min.time())].get_total_value()
+        last_value = start_value
+
+        # Since account values are added each day in chronological order, and Python 3.7+ guarantees dict insertion order,
+        # we can iterate through the account_value_history and calculate the daily percentage change. It's possible
+        # that we have multiple account values for the same date, so we take the last one datetime from each day.
+        keys = list(self.account_value_history.keys())
+        for i, dt in enumerate(keys):
+            if start_date <= dt.date() <= end_date:
+                # There can be multiple account values for the same date, but we only want the last one
+                if i < len(keys) - 1 and dt.date() == keys[i + 1].date():
+                    continue
+
+                account_value = self.account_value_history[dt].get_total_value()
+                if change_from_start:
+                    change = (account_value - start_value) / start_value * 100
+                else:
+                    change = (account_value - last_value) / last_value * 100
+                    last_value = account_value
+                df.loc[len(df)] = [dt.date().strftime('%Y-%m-%d'), account_value, change]
+
+        return df
