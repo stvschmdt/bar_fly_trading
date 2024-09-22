@@ -1,65 +1,16 @@
+from collections import defaultdict
 from datetime import datetime, timedelta
-from copy import deepcopy
 
 import pandas as pd
 
-from account_values import AccountValues
-from order import Order, OrderOperation, StockOrder, OptionOrder, MultiLegOrder
+from account.account import Account, PositionType
+from account.account_values import AccountValues
+from order import Order, OrderOperation, MultiLegOrder, StockOrder, OptionOrder
 from order_history import OrderHistory
-from abc import ABC, abstractmethod
-
-
-class Account(ABC):
-    def __init__(self, account_id: str, owner_name: str, account_values: AccountValues, order_history: OrderHistory = None,
-                 held_symbols: set[str] = None, stock_positions: dict[str, int] = None, option_positions: dict[str, int] = None):
-        self.account_id = account_id
-        self.owner_name = owner_name
-        self.account_values = account_values
-        self.order_history = order_history if order_history else OrderHistory()
-        self.held_symbols = held_symbols if held_symbols else set()
-        # Open stock positions {symbol: quantity}
-        self.stock_positions = {} if not stock_positions else stock_positions
-        # Open option positions {contract_id: quantity}
-        self.option_positions = {} if not option_positions else option_positions
-
-        if not account_values:
-            raise ValueError("AccountValues must be provided to create an account.")
-
-        # Used to track P/L, should never be updated after instantiation
-        self._initial_cash_balance = deepcopy(account_values.cash_balance)
-        # {timestamp: account_value}
-        self.account_value_history = self._construct_account_value_history()
-
-    @property
-    def initial_cash_balance(self):
-        # This makes initial_cash_balance immutable from outside this class, ensuring no one changes it.
-        # We should never have a set_initial_cash_balance method.
-        return self._initial_cash_balance
-
-    @abstractmethod
-    def execute_order(self, order: Order, current_stock_price: float):
-        pass
-
-    @abstractmethod
-    def get_num_shares_of_symbol(self, symbol: str):
-        pass
-
-    def get_max_buyable_shares(self, price: float, percent_of_cash: float = 1.0):
-        return (self.account_values.cash_balance * percent_of_cash) // price
-
-    def close_position(self, symbol: str, current_price: float):
-        pass
-
-    def _construct_account_value_history(self):
-        # A real account will go out to the broker API to get the account value history, backtest accounts will calculate it.
-        pass
-
-
-# TODO: Create a real account type for interacting with a broker API
 
 
 class BacktestAccount(Account):
-    def __init__(self, account_id: str, owner_name: str, account_values: AccountValues, order_history: dict[str, Order] = None,
+    def __init__(self, account_id: str, owner_name: str, account_values: AccountValues, order_history: OrderHistory = None,
                  held_symbols: set[str] = None, stock_positions: dict[str, int] = None, option_positions: dict[str, int] = None):
         super().__init__(account_id, owner_name, account_values, order_history, held_symbols, stock_positions, option_positions)
 
@@ -160,3 +111,67 @@ class BacktestAccount(Account):
             timestamp += timedelta(seconds=1)
         self.account_value_history[timestamp] = self.account_values
         return self.account_values
+
+    def get_positions(self, symbol=None, position_type: PositionType = PositionType.ALL) -> dict:
+        result = {}
+        if position_type == PositionType.STOCK:
+            result['stock'] = self._get_stock_positions(symbol)
+        elif position_type == PositionType.OPTION:
+            result['options'] = self._get_option_positions(symbol)
+        else:
+            result['stock'] = self._get_stock_positions(symbol)
+            result['options'] = self._get_option_positions(symbol)
+        return result
+
+    def _get_stock_positions(self, symbol=None) -> dict:
+        return {symbol: self.stock_positions.get(symbol, 0)} if symbol else self.stock_positions
+
+    def _get_option_positions(self, symbol=None) -> dict:
+        result = defaultdict(dict)
+        for contract_id, quantity in self.option_positions.items():
+            contract_symbol = self.order_history.get_order(contract_id).symbol
+            if not symbol or contract_symbol == symbol:
+                result[contract_symbol][contract_id] = quantity
+
+        if symbol and symbol not in result:
+            result[symbol] = {}
+        return result
+
+    def get_position_values(self, symbol=None, position_type: PositionType = PositionType.ALL, current_prices: dict[str, float] = None, option_data: dict[str, pd.DataFrame] = None) -> dict:
+        result = {}
+        if position_type == PositionType.STOCK:
+            result['stock'] = self._get_stock_position_values(symbol, current_prices)
+        elif position_type == PositionType.OPTION:
+            result['options'] = self._get_option_position_values(symbol, option_data)
+        else:
+            result['stock'] = self._get_stock_position_values(symbol, current_prices)
+            result['options'] = self._get_option_position_values(symbol, option_data)
+        return result
+
+    def _get_stock_position_values(self, symbol=None, current_prices: dict[str, float] = None) -> dict:
+        if symbol:
+            if symbol not in current_prices:
+                raise ValueError(f"Current price missing for given symbol {symbol}")
+            return {symbol: self.stock_positions.get(symbol, 0) * current_prices[symbol]}
+
+        stock_values = {}
+        for owned_symbol, quantity in self.stock_positions.items():
+            if owned_symbol not in current_prices:
+                raise ValueError(f"Current price missing for owned symbol {owned_symbol}")
+            stock_values[owned_symbol] = quantity * current_prices[owned_symbol]
+        return stock_values
+
+    def _get_option_position_values(self, symbol=None, option_data: dict[str, pd.DataFrame] = None) -> dict:
+        result = defaultdict(lambda: defaultdict(float))
+        for contract_id, quantity in self.option_positions.items():
+            order = self.order_history.get_order(contract_id)
+            if symbol and symbol not in option_data:
+                raise ValueError(f"Option data missing for symbol {symbol}")
+            if not symbol or order.symbol == symbol:
+                # We don't need a multiplier here because if we've sold more of these options than we bought, the quantity will be negative.
+                option_price = float(option_data[order.symbol].loc[option_data[order.symbol]['contractID'] == contract_id, ['mark']].iloc[0])
+                result[order.symbol][contract_id] += quantity * option_price
+
+        if symbol and symbol not in result:
+            result[symbol] = defaultdict(float)
+        return result
