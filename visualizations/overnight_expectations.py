@@ -1,13 +1,13 @@
 import logging
 import pandas as pd
 import matplotlib.pyplot as plt
+import argparse
 import os
 import sys
 from matplotlib.backends.backend_pdf import PdfPages
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from visualize import VisualizeTechnicals, SectorAnalysis, MarketPerformanceAnalysis
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from logging_config import setup_logging
 setup_logging()
 #logger = logging.getLogger(__name__)
@@ -74,7 +74,8 @@ class TechnicalAnalyzer:
             for symbol in symbols:
                 try:
                     visualizer = VisualizeTechnicals(self.data, symbol=symbol, start_date=start_date, end_date=date, plot=False)
-                    visualizer.visualize(charts_to_generate=['adjusted_close','volume','rsi','macd','pe_ratio','sharpe_ratio'])
+                    #visualizer.visualize(charts_to_generate=['adjusted_close','volume','rsi','macd','pe_ratio','sharpe_ratio'])
+                    visualizer.visualize(charts_to_generate=['adjusted_close','volume','rsi','macd','sharpe_ratio'])
                 except Exception as e:
                     log.error(f"Error visualizing {symbol}: {e}")
             analysis = SectorAnalysis(self.data, plot=False)
@@ -195,22 +196,31 @@ class TechnicalAnalyzer:
 
 
 if __name__ == "__main__":
-    # Read in the CSV file from the api_data directory
-    file_path = '../api_data/all_data.csv'
-    
-    # Read the CSV into a pandas DataFrame
-    data = pd.read_csv(file_path)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-d", "--data", help="file containing all core and technical data", type=str, default='../api_data/all_data.csv')
+    parser.add_argument("-start", "--start_date", help="analysis date, default is latest date in data", type=str, default=None)
+    args = parser.parse_args()
+    log.info(f"Data file: {args.data}")
+    # Load the stock data
+    df = pd.read_csv(args.data)
     
     # Ensure the date is properly formatted
-    data['date'] = pd.to_datetime(data['date'])
+    df['date'] = pd.to_datetime(df['date'])
     
     # Get the list of unique symbols from the data
-    symbols = data['symbol'].unique()
+    symbols = df['symbol'].unique()
+
+    # get most recent date
+    if not args.start_date:
+        latest_date = df['date'].max()
+    else:
+        latest_date = pd.to_datetime(args.start_date)
+    log.info(f"Latest date: {latest_date}")
 
     # Create an instance of the analyzer
-    analyzer = TechnicalAnalyzer(symbols, data)
+    analyzer = TechnicalAnalyzer(symbols, df)
 
     # Detect trends for a given date and visualize
-    analyzer.detect_trends('2024-09-20', visualize=True)
+    analyzer.detect_trends(latest_date, visualize=True)
 
     
