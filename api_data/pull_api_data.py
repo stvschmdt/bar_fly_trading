@@ -65,7 +65,7 @@ def main():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-w", "--watchlist", help="file containing symbols to fetch and store data in db", type=str, default='watchlist.csv')
-    parser.add_argument("-t", "--test", help="number of symbols for testing functionality", type=int, default=5)
+    parser.add_argument("-t", "--test", help="number of symbols for testing functionality", type=int, default=500)
     parser.add_argument("-s", "--symbols", help="list of symbols to fetch data for", nargs='+', type=str, default=[])
     args = parser.parse_args()
     logger.info(f"Watchlist file: {args.watchlist}")
