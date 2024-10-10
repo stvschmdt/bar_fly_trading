@@ -1,13 +1,12 @@
-import pandas as pd
-import numpy as np
+from enum import Enum
+
 import inflection
-import json
+import numpy as np
+import pandas as pd
 
 from api_data.collector import AlphaVantageClient
-from api_data.storage import delete_company_overview_row, store_data, TableWriteOption
+from api_data.storage import delete_company_overview_row, store_data
 from api_data.util import drop_existing_rows, get_table_write_option, graceful_df_to_numeric
-
-from enum import Enum
 
 
 class FundamentalDataType(Enum):
@@ -26,14 +25,15 @@ DATA_TYPE_TABLES = {
         'table_name': 'quarterly_earnings',
         'columns': ['reported_eps', 'estimated_eps', 'surprise', 'surprise_percentage'],
         'include_index': True,
+        'date_col': 'fiscal_date_ending'
     },
     FundamentalDataType.SPLITS: {
         'table_name': 'stock_splits',
         'columns': ['symbol', 'effective_date', 'split_factor'],
         'include_index': False,
+        'date_col': 'effective_date'
     },
 }
-EARNINGS_DATE_COL = 'fiscal_date_ending'
 
 
 def fetch_fundamental_data(api_client: AlphaVantageClient, symbol: str, data_type: FundamentalDataType):
@@ -68,7 +68,7 @@ def parse_earnings(data: dict, symbol: str):
 
     df = pd.DataFrame(data[key])
     df.set_index('fiscalDateEnding', inplace=True)
-    df.index.name = EARNINGS_DATE_COL
+    df.index.name = DATA_TYPE_TABLES[FundamentalDataType.EARNINGS]['date_col']
     df.index = pd.to_datetime(df.index)
 
     df.columns = [inflection.underscore(col) for col in df.columns]
@@ -95,6 +95,9 @@ def parse_splits(data: dict, symbol: str):
     df = df.filter(items=DATA_TYPE_TABLES[FundamentalDataType.SPLITS]['columns'])
     df = graceful_df_to_numeric(df)
     df['symbol'] = symbol
+    if not df.empty:
+        df = df.set_index(df[DATA_TYPE_TABLES[FundamentalDataType.SPLITS]['date_col']], drop=False)
+        df.index = pd.to_datetime(df.index)
     return df
 
 
@@ -105,8 +108,8 @@ def update_all_fundamental_data(api_client: AlphaVantageClient, symbol: str, inc
 
         write_option = get_table_write_option(incremental)
         if incremental:
-            if data_type == FundamentalDataType.EARNINGS:
-                df = drop_existing_rows(df, DATA_TYPE_TABLES[data_type]['table_name'], EARNINGS_DATE_COL, symbol)
+            if data_type != FundamentalDataType.OVERVIEW:
+                df = drop_existing_rows(df, DATA_TYPE_TABLES[data_type]['table_name'], DATA_TYPE_TABLES[data_type]['date_col'], symbol)
             else:
                 # We need to delete the company_overview row for this symbol
                 # before inserting a new row because the symbol is the PK.

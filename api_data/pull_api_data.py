@@ -1,9 +1,11 @@
-import pandas as pd
-import logging
 import argparse
-import time
-import sys
+import logging
 import os
+import sys
+import time
+
+import pandas as pd
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 
@@ -17,7 +19,7 @@ from logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
-incremental = False
+incremental = True
 
 
 def main():
