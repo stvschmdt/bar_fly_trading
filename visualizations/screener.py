@@ -12,7 +12,6 @@ setup_logging()
 logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta
 
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -112,14 +111,14 @@ class StockScreener:
             input_date -= timedelta(days=1)
         # Assuming all weekends are non-trading days, for simplicity
         return input_date.strftime('%Y-%m-%d')
-    def __init__(self, symbols, date, indicators='all', visualize=True, n_days=30, use_candlesticks=False):
+    def __init__(self, symbols, date, indicators='all', visualize=True, n_days=30, use_candlesticks=False, data='../api_data/all_data.csv'):
         self.symbols = [symbol.upper() for symbol in symbols]
         self.date = pd.to_datetime(self._get_closest_trading_date(date)).strftime('%Y-%m-%d')
         self.indicators = indicators
         self.visualize = visualize
         self.n_days = n_days
         self.use_candlesticks = use_candlesticks
-        self.data = pd.read_csv('../api_data/all_data.csv')
+        self.data = pd.read_csv(data)
         self.results = []
 
     def run_screen(self):
@@ -170,7 +169,7 @@ class StockScreener:
         return bullish_signals, bearish_signals, signals
 
     def _check_pe_ratio(self, selected_date_data, bullish_signals, bearish_signals, signals):
-        pe_ratio = selected_date_data['forward_pe'].values[0]
+        pe_ratio = selected_date_data['pe_ratio'].values[0]
         # Append a signal for PE ratio
         if pe_ratio < 10:
             bullish_signals.append('bullish_pe_ratio')
@@ -220,29 +219,31 @@ class StockScreener:
     def _plot_pe_ratio(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_pe_ratio.png')
         plt.figure()
-        pe_ratio = symbol_data['forward_pe']
-        plt.plot(symbol_data['date'], pe_ratio, color='black', label='Forward PE Ratio')
+        pe_ratio = symbol_data['pe_ratio']
 
+        # Plot PE Ratio with different colors based on thresholds
+        for i in range(len(symbol_data) - 1):
+            if pe_ratio.iloc[i] > 30:
+                plt.plot([symbol_data['date'].iloc[i], symbol_data['date'].iloc[i + 1]], [pe_ratio.iloc[i], pe_ratio.iloc[i + 1]], color='red')
+            elif pe_ratio.iloc[i] < 10:
+                plt.plot([symbol_data['date'].iloc[i], symbol_data['date'].iloc[i + 1]], [pe_ratio.iloc[i], pe_ratio.iloc[i + 1]], color='green')
+            else:
+                plt.plot([symbol_data['date'].iloc[i], symbol_data['date'].iloc[i + 1]], [pe_ratio.iloc[i], pe_ratio.iloc[i + 1]], color='black')
+
+        # Add annotations for the first bullish and bearish signals
         first_bullish = True
         first_bearish = True
-        # Add markers for PE ratio signals
         for i, row in symbol_data.iterrows():
-            if row['forward_pe'] < 10:
-                plt.plot(row['date'], row['forward_pe'], color='green', marker='o')
-                if first_bullish:
-                    plt.annotate('Bullish (Low PE)', (row['date'], row['forward_pe']), textcoords="offset points", xytext=(0,10), ha='center', color='green')
-                    first_bullish = False
-            elif row['forward_pe'] > 30:
-                plt.plot(row['date'], row['forward_pe'], color='red', marker='o')
-                if first_bearish:
-                    plt.annotate('Bearish (High PE)', (row['date'], row['forward_pe']), textcoords="offset points", xytext=(0,10), ha='center', color='red')
-                    first_bearish = False
-            else:
-                plt.plot(row['date'], row['forward_pe'], color='black', marker='o')
+            if row['pe_ratio'] < 10 and first_bullish:
+                plt.annotate('Bullish (Low PE)', (row['date'], row['pe_ratio']), textcoords="offset points", xytext=(0,10), ha='center', color='green')
+                first_bullish = False
+            elif row['pe_ratio'] > 30 and first_bearish:
+                plt.annotate('Bearish (High PE)', (row['date'], row['pe_ratio']), textcoords="offset points", xytext=(0,10), ha='center', color='red')
+                first_bearish = False
 
         plt.xlabel('Date')
         plt.xticks(rotation=45)
-        plt.ylabel('PE Ratio')
+        plt.ylabel('P/E Ratio')
         plt.title(f'{symbol} - PE Ratio Analysis')
         plt.tight_layout()
         plt.savefig(output_path)
@@ -539,6 +540,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     parser = argparse.ArgumentParser()
     parser.add_argument('--symbols', nargs='+', required=True, help='List of stock symbols to check')
+    parser.add_argument('--data', type=str, default='../api_data/all_data.csv', help='Path to the CSV data file (default: ../api_data/all_data.csv)')
     parser.add_argument('--date', type=str, default=datetime.now().strftime('%Y-%m-%d'), help="Date to check signals for (default is today's date)")
     parser.add_argument('--indicators', type=str, nargs='+', default='all', help='List of indicators to check (default is all)')
     parser.add_argument('--visualize', action='store_true', default=True, help='Flag to visualize data (default is true)')
@@ -553,6 +555,6 @@ if __name__ == "__main__":
         indicators=args.indicators,
         visualize=args.visualize,
         n_days=args.n_days,
-        use_candlesticks=args.use_candlesticks
-    )
+        use_candlesticks=args.use_candlesticks,
+        data=args.data)
     screener.run_screen()
