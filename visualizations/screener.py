@@ -626,7 +626,7 @@ class StockScreener:
         # for each sector etf we need to manually calculate sma_20, sma_50, sma_200, bbands_upper_20, bbands_lower_20
         for industry, sector in zip(industries, sectors):
 
-            output_path = os.path.join(self.output_dir, f'{sector}_sector_technicals.png')
+            output_path = os.path.join(self.output_dir, f'{sector}_sector_analysis.png')
 
             sector_data = self.data[self.data['symbol'] == sector]
             sector_data.loc[:, 'date'] = pd.to_datetime(sector_data['date'], format='%Y-%m-%d')
@@ -674,6 +674,21 @@ class StockScreener:
                     plt.annotate('Bearish Breakout', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='red')
                 elif sector_data['adjusted_close'].iloc[i] < sector_data['bbands_lower_20'].iloc[i]:
                     plt.annotate('Bullish Breakout', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='green')
+                # add Buy Watch and Sell Watch annotations for bolinger bands
+                if abs(sector_data['adjusted_close'].iloc[i] - sector_data['bbands_upper_20'].iloc[i]) / sector_data['bbands_upper_20'].iloc[i] <= 0.01:
+                    # ensure this is from below not above
+                    if sector_data['adjusted_close'].iloc[i-1] < sector_data['bbands_upper_20'].iloc[i-1]:
+                        plt.annotate('Sell Watch', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='orange')
+                elif abs(sector_data['adjusted_close'].iloc[i] - sector_data['bbands_lower_20'].iloc[i]) / sector_data['bbands_lower_20'].iloc[i] <= 0.01:
+                    # ensure this is from above not below
+                    if sector_data['adjusted_close'].iloc[i-1] > sector_data['bbands_lower_20'].iloc[i-1]:
+                        plt.annotate('Buy Watch', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='blue')
+
+
+            # find min and max of any data used in the plot for y axis
+            min_val = min(sector_data['adjusted_close'].min(), sector_data['sma_20'].min(), sector_data['sma_50'].min(), sector_data['sma_200'].min(), sector_data['bbands_upper_20'].min(), sector_data['bbands_lower_20'].min())
+            max_val = max(sector_data['adjusted_close'].max(), sector_data['sma_20'].max(), sector_data['sma_50'].max(), sector_data['sma_200'].max(), sector_data['bbands_upper_20'].max(), sector_data['bbands_lower_20'].max())
+            plt.ylim(min_val * 0.95, max_val * 1.05)  # Adjust y-limits for better visibility
             plt.xlabel('Date')
             plt.xticks(rotation=45)
             plt.ylabel('Price')
@@ -685,7 +700,7 @@ class StockScreener:
             plt.close()
         # for all sectors and SPY, QQQ, plot the n_day rolling % change
         # plot the daily % change for all sectors and SPY, QQQ on one chart -> use dotted lines for sectors, bold lines for SPY/QQQ
-        output_path = os.path.join(self.output_dir, 'market_rolling_returns.png')
+        output_path = os.path.join(self.output_dir, 'market_returns.png')
         plt.figure(figsize=(14, 10))
         # need more than 10 colors from plt color cycle
         colors = plt.cm.tab20(np.linspace(0, 1, len(sectors) + 2))
@@ -708,7 +723,7 @@ class StockScreener:
                 # add a plot for SPY and QQQ averages over this time period
                 plt.axhline(sector_data['cumulative_change'].mean(), color='black', linestyle='--', label=f'{sector} Average')
             else:
-                plt.plot(sector_data['date'], sector_data['cumulative_change'], label=sector, color=colors[idx], linestyle='--')
+                plt.plot(sector_data['date'], sector_data['cumulative_change'], label=industries[idx], color=colors[idx], linestyle='--')
 
         plt.xlabel('Date')
         plt.xticks(rotation=45)
