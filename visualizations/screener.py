@@ -99,7 +99,11 @@ class StockScreener:
                 self._visualize(symbol, symbol_data, latest_bullish, latest_bearish)
 
         # run the sector/market ETFs once only
-        self._process_sector_data(self.data)
+        try:
+            self._process_sector_data(self.data)
+        except Exception as e:
+            print(e)
+            logging.error(f'Error processing sector data or sector data not found: {e}')
         # Write results to CSV
         self._write_results()
 
