@@ -70,7 +70,11 @@ class StockScreener:
             os.makedirs(output_dir)
         self.output_dir = output_dir
         logging.info(f'Running stock screener for symbols: {self.symbols} on date: {self.date}')
+        sectors = ['XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'XLE', 'XRT', 'SPY', 'QQQ']
         for symbol in self.symbols:
+            # skip sector ETFs
+            if symbol in sectors:
+                continue
             symbol_data = self.data[self.data['symbol'] == symbol]
             symbol_data.loc[:, 'date'] = pd.to_datetime(symbol_data['date'], format='%Y-%m-%d')
             symbol_data = symbol_data.sort_values('date')
@@ -94,6 +98,8 @@ class StockScreener:
             if self.visualize and (len(latest_bullish) != len(previous_bullish) or len(latest_bearish) != len(previous_bearish)):
                 self._visualize(symbol, symbol_data, latest_bullish, latest_bearish)
 
+        # run the sector/market ETFs once only
+        self._process_sector_data(self.data)
         # Write results to CSV
         self._write_results()
 
@@ -343,15 +349,15 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-    def _plot_price_sma(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_daily_price.png')
+    def _plot_price_sma(self, symbol, symbol_data, title='daily_price'):
+        output_path = os.path.join(self.output_dir, f'{symbol}_{title}.png')
         #plt.figure()
         plt.figure(figsize=(14, 10))
-        plt.plot(symbol_data['date'], symbol_data['adjusted_close'], label='Adjusted Close', color='blue')
-        plt.plot(symbol_data['date'], symbol_data['sma_20'], label='SMA 20', color='orange')
-        plt.plot(symbol_data['date'], symbol_data['sma_50'], label='SMA 50', color='green')
-        plt.plot(symbol_data['date'], symbol_data['sma_200'], label='SMA 200', color='red')
-        
+        plt.plot(symbol_data['date'], symbol_data['adjusted_close'], label='Adjusted Close', color='black')
+        plt.plot(symbol_data['date'], symbol_data['sma_20'], label='SMA 20', color='orange', linestyle='--')
+        plt.plot(symbol_data['date'], symbol_data['sma_50'], label='SMA 50', color='green', linestyle='--')
+        plt.plot(symbol_data['date'], symbol_data['sma_200'], label='SMA 200', color='red', linestyle='--')
+       
         # Add annotations for SMA crossovers
         for i in range(1, len(symbol_data)):
             if symbol_data['sma_20'].iloc[i] > symbol_data['sma_50'].iloc[i] and symbol_data['sma_20'].iloc[i - 1] <= symbol_data['sma_50'].iloc[i - 1]:
@@ -367,6 +373,11 @@ class StockScreener:
                 plt.annotate('Bearish Cross 20/200', (symbol_data['date'].iloc[i-1], symbol_data['sma_200'].iloc[i-1]),
                              textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='red', arrowprops=dict(arrowstyle='->', color='red'))
         
+        # ensure the y axis contains the entire range of prices, smas
+        # find min and max of any data used in the plot
+        min_val = min(symbol_data['adjusted_close'].min(), symbol_data['sma_20'].min(), symbol_data['sma_50'].min(), symbol_data['sma_200'].min())
+        max_val = max(symbol_data['adjusted_close'].max(), symbol_data['sma_20'].max(), symbol_data['sma_50'].max(), symbol_data['sma_200'].max())
+        plt.ylim(min_val * 0.95, max_val * 1.05)  # Adjust y-limits for better visibility
         plt.xlabel('Date')
         plt.xticks(rotation=45)
         plt.ylabel('Price')
@@ -570,7 +581,7 @@ class StockScreener:
         symbol_df['sharpe_ratio'] = (rolling_mean / rolling_std)#.dropna()
 
         sharpe_ratio = symbol_df['sharpe_ratio']
-        plt.plot(symbol_df['date'], symbol_df['sharpe_ratio'], label='Sharpe Ratio', color='blue')
+        plt.plot(symbol_df['date'], symbol_df['sharpe_ratio'], label='Sharpe Ratio', color='black')
 
         # Determine colors for shading based on sharpe ratio values
         #colors = []
@@ -603,6 +614,112 @@ class StockScreener:
         plt.tight_layout()
         plt.savefig(output_path)
         plt.close()
+
+    def _process_sector_data(self, symbol_data):
+        # list of sector etfs
+        sectors = ['XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'XLE', 'XRT', 'SPY', 'QQQ']
+        # list of industry labels
+        industries = [' SPDR FUND MATERIALS SELECT SECTR ETF',' SELECT STR FINANCIAL SELECT SPDR ETF',' SELECT SECTOR INDUSTRIAL SPDR ETF',
+                      ' TECHNOLOGY SELECT SECTOR SPDR ETF',' SPDR FUND CONSUMER STAPLES ETF',' REAL ESTATE SELECT SCTR SPDR ETF',
+                      ' SELECT SECTOR UTI SELECT SPDR ETF',' SELECT SECTOR HEALTH CARE SPDR ETF',' SPDR FUND CONSUMER DISCRE SELECT ETF',
+                      ' ENERGY SELECT SECTOR SPDR ETF',' SPDR S&P RETAIL ETF', 'S&P 500 ETF TRUST ETF', 'NASDAQ QQQ TRUST ETF']
+        # for each sector etf we need to manually calculate sma_20, sma_50, sma_200, bbands_upper_20, bbands_lower_20
+        for industry, sector in zip(industries, sectors):
+
+            output_path = os.path.join(self.output_dir, f'{sector}_sector_technicals.png')
+
+            sector_data = self.data[self.data['symbol'] == sector]
+            sector_data.loc[:, 'date'] = pd.to_datetime(sector_data['date'], format='%Y-%m-%d')
+            sector_data = sector_data.sort_values('date')
+            sector_data = sector_data[sector_data['date'] <= pd.to_datetime(self.latest_date)]
+
+            sector_data['sma_20'] = sector_data['adjusted_close'].rolling(window=20).mean()
+            sector_data['sma_50'] = sector_data['adjusted_close'].rolling(window=50).mean()
+            sector_data['sma_200'] = sector_data['adjusted_close'].rolling(window=200).mean()
+            # calculate bollinger bands
+            sector_data['bbands_middle_20'] = sector_data['adjusted_close'].rolling(window=20).mean()
+            sector_data['bbands_std_20'] = sector_data['adjusted_close'].rolling(window=20).std()
+            sector_data['bbands_upper_20'] = sector_data['bbands_middle_20'] + (2 * sector_data['bbands_std_20'])
+            sector_data['bbands_lower_20'] = sector_data['bbands_middle_20'] - (2 * sector_data['bbands_std_20'])
+            # for each sector, plot the chart with sma_20, sma_50, sma_200, bbands_upper_20, bbands_lower_20
+            #sector_data = symbol_data[symbol_data['symbol'] == sector]
+            # only get the last n_days
+            sector_data = sector_data[-self.n_days:]
+            print('lenge of sector data:', len(sector_data))
+            # plot a chart with adjusted_close, sma_20, sma_50, sma_200, bbands_upper_20, bbands_lower_20
+            # add text annotation when there are bullish or bearish signals
+            plt.figure(figsize=(14, 10))
+            plt.plot(sector_data['date'], sector_data['adjusted_close'], label='Adjusted Close', color='black', linewidth=2)
+            plt.plot(sector_data['date'], sector_data['sma_20'], label='SMA 20', color='orange')
+            plt.plot(sector_data['date'], sector_data['sma_50'], label='SMA 50', color='green')
+            plt.plot(sector_data['date'], sector_data['sma_200'], label='SMA 200', color='red')
+            plt.plot(sector_data['date'], sector_data['bbands_upper_20'], linestyle='--', label='Bollinger Band Upper', color='blue')
+            plt.plot(sector_data['date'], sector_data['bbands_lower_20'], linestyle='--', label='Bollinger Band Lower', color='blue')
+
+            # Add annotations for SMA crossovers and bollinger band breakouts
+            for i in range(1, len(sector_data)):
+                if sector_data['sma_20'].iloc[i] > sector_data['sma_50'].iloc[i] and sector_data['sma_20'].iloc[i - 1] <= sector_data['sma_50'].iloc[i - 1]:
+                    plt.annotate('Bullish Cross 20/50', (sector_data['date'].iloc[i-1], sector_data['sma_20'].iloc[i-1]),
+                                 textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='green', arrowprops=dict(arrowstyle='->', color='green'))
+                elif sector_data['sma_20'].iloc[i] < sector_data['sma_50'].iloc[i] and sector_data['sma_20'].iloc[i - 1] >= sector_data['sma_50'].iloc[i - 1]:
+                    plt.annotate('Bearish Cross 20/50', (sector_data['date'].iloc[i], sector_data['sma_20'].iloc[i]),
+                                 textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='red', arrowprops=dict(arrowstyle='->', color='red'))
+                if sector_data['sma_20'].iloc[i] > sector_data['sma_200'].iloc[i] and sector_data['sma_20'].iloc[i - 1] <= sector_data['sma_200'].iloc[i - 1]:
+                    plt.annotate('Bullish Cross 20/200', (sector_data['date'].iloc[i-1], sector_data['sma_200'].iloc[i-1]),
+                                 textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='green', arrowprops=dict(arrowstyle='->', color='green'))
+                elif sector_data['sma_20'].iloc[i] < sector_data['sma_200'].iloc[i] and sector_data['sma_20'].iloc[i - 1] >= sector_data['sma_200'].iloc[i - 1]:
+                    plt.annotate('Bearish Cross 20/200', (sector_data['date'].iloc[i-1], sector_data['sma_200'].iloc[i-1]),
+                                 textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='red', arrowprops=dict(arrowstyle='->', color='red'))
+                if sector_data['adjusted_close'].iloc[i] > sector_data['bbands_upper_20'].iloc[i]:
+                    plt.annotate('Bearish Breakout', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='red')
+                elif sector_data['adjusted_close'].iloc[i] < sector_data['bbands_lower_20'].iloc[i]:
+                    plt.annotate('Bullish Breakout', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='green')
+            plt.xlabel('Date')
+            plt.xticks(rotation=45)
+            plt.ylabel('Price')
+            plt.title(f'{sector} {industry}- Price and SMAs')
+            plt.legend()
+            plt.tight_layout()
+            plt.ylim(min(sector_data['adjusted_close']) * 0.95, max(sector_data['adjusted_close']) * 1.05)  # Adjust y-limits for better visibility
+            plt.savefig(output_path)
+            plt.close()
+        # for all sectors and SPY, QQQ, plot the n_day rolling % change
+        # plot the daily % change for all sectors and SPY, QQQ on one chart -> use dotted lines for sectors, bold lines for SPY/QQQ
+        output_path = os.path.join(self.output_dir, 'market_rolling_returns.png')
+        plt.figure(figsize=(14, 10))
+        # need more than 10 colors from plt color cycle
+        colors = plt.cm.tab20(np.linspace(0, 1, len(sectors) + 2))
+        for idx, sector in enumerate(sectors):
+
+            sector_data = self.data[self.data['symbol'] == sector]
+            sector_data.loc[:, 'date'] = pd.to_datetime(sector_data['date'], format='%Y-%m-%d')
+            sector_data = sector_data.sort_values('date')
+            sector_data = sector_data[sector_data['date'] <= pd.to_datetime(self.latest_date)]
+            # only get the last n_days
+            sector_data = sector_data[-self.n_days:]
+            # calcluate the rolling cumulative % change since the beginning of the n_days (-n_days is the base value)
+            initial_value = sector_data['adjusted_close'].iloc[0]
+            if initial_value != 0:  # Avoid division by zero
+                sector_data['cumulative_change'] = (sector_data['adjusted_close'] / initial_value - 1) * 100
+
+            # plot with a different color, if SPY or QQQ use a bold line, otherwise dash
+            if sector in ['SPY', 'QQQ']:
+                plt.plot(sector_data['date'], sector_data['cumulative_change'], label=sector, color='black', linewidth=2)
+                # add a plot for SPY and QQQ averages over this time period
+                plt.axhline(sector_data['cumulative_change'].mean(), color='black', linestyle='--', label=f'{sector} Average')
+            else:
+                plt.plot(sector_data['date'], sector_data['cumulative_change'], label=sector, color=colors[idx], linestyle='--')
+
+        plt.xlabel('Date')
+        plt.xticks(rotation=45)
+        plt.ylabel('Rolling % Change')
+        plt.title('Sector ETFs and Major Indices - Cumulative % Change')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+        
+
 
 
     def _write_results(self):
