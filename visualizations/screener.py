@@ -506,34 +506,104 @@ class StockScreener:
                 self._plot_pe_ratio(symbol, symbol_data)
             self._plot_price_sma(symbol, symbol_data)
             self._plot_volume(symbol, symbol_data)
+            self._plot_symbol_sharpe_ratio(symbol, symbol_data)
 
-        output_path = os.path.join(self.output_dir, f'{symbol}_chart.png')
+        #output_path = os.path.join(self.output_dir, f'{symbol}_chart.png')
 
-        fig, ax = plt.subplots()
-        plt.plot(symbol_data['date'], symbol_data['adjusted_close'], label='Adjusted Close')
-        plt.plot(symbol_data['date'], symbol_data['sma_20'], label='SMA 20')
-        plt.plot(symbol_data['date'], symbol_data['sma_50'], label='SMA 50')
-        plt.plot(symbol_data['date'], symbol_data['sma_200'], label='SMA 200')
-        plt.bar(symbol_data['date'], symbol_data['volume'], alpha=0.3, label='Volume')
+        #fig, ax = plt.subplots()
+        #plt.plot(symbol_data['date'], symbol_data['adjusted_close'], label='Adjusted Close')
+        #plt.plot(symbol_data['date'], symbol_data['sma_20'], label='SMA 20')
+        #plt.plot(symbol_data['date'], symbol_data['sma_50'], label='SMA 50')
+        #plt.plot(symbol_data['date'], symbol_data['sma_200'], label='SMA 200')
+        #plt.bar(symbol_data['date'], symbol_data['volume'], alpha=0.3, label='Volume')
+#
+        #markers = set()
+        #for signal in bullish + bearish:
+            #if signal not in markers:
+                #if signal in bullish:
+                    #plt.scatter(symbol_data['date'].iloc[-1], symbol_data['adjusted_close'].iloc[-1], color='green', label=signal)
+                #if signal in bearish:
+                    #plt.scatter(symbol_data['date'].iloc[-1], symbol_data['adjusted_close'].iloc[-1], color='red', label=signal)
+                #markers.add(signal)
+#
+        #plt.xlabel('Date')
+        #plt.xticks(rotation=45)
+        #ax.xaxis.set_major_locator(plt.MaxNLocator(10))
+        #plt.ylabel('Price')
+        #plt.title(f'{symbol} - {self.date}')
+        #plt.legend()
+        #plt.tight_layout()
+#
+        #plt.close()
 
-        markers = set()
-        for signal in bullish + bearish:
-            if signal not in markers:
-                if signal in bullish:
-                    plt.scatter(symbol_data['date'].iloc[-1], symbol_data['adjusted_close'].iloc[-1], color='green', label=signal)
-                if signal in bearish:
-                    plt.scatter(symbol_data['date'].iloc[-1], symbol_data['adjusted_close'].iloc[-1], color='red', label=signal)
-                markers.add(signal)
+    def _plot_symbol_sharpe_ratio(self, symbol, symbol_data):
+        # Plot Sharpe ratio
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_sharpe_ratio.png')
+        plt.figure(figsize=(14, 10))
+        plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))
+        plt.gca().xaxis.set_major_locator(plt.matplotlib.dates.AutoDateLocator())
+        # Make a copy of symbol_data to avoid modifying a slice of the original DataFrame
+        symbol_df = symbol_data.copy()
+        # Convert the 'date' column to datetime to avoid plotting issues
+        symbol_df['date'] = pd.to_datetime(symbol_df['date'], errors='coerce')
 
+        # Calculate daily returns
+        symbol_df['daily_return'] = symbol_df['adjusted_close'].pct_change()
+
+        # Replace NaN values in daily returns
+        #symbol_df['daily_return'].fillna(0, inplace=True)
+
+        # Calculate excess return over the risk-free rate
+        symbol_df['excess_return'] = symbol_df['daily_return'] - symbol_df['ffer']*.01/252.
+
+        # Replace NaN values in excess return
+        #symbol_df['excess_return'].fillna(0, inplace=True)
+
+        # Calculate rolling Sharpe ratio (e.g., 5-day rolling window)
+        rolling_mean = symbol_df['excess_return'].rolling(window=5).mean()
+        rolling_std = symbol_df['daily_return'].rolling(window=5).std()
+
+        # Replace 0 standard deviation with NaN to avoid division by zero
+        #rolling_std.replace(0, np.nan, inplace=True)
+
+        # Calculate the Sharpe ratio and replace NaN values
+        symbol_df['sharpe_ratio'] = (rolling_mean / rolling_std)#.dropna()
+
+        sharpe_ratio = symbol_df['sharpe_ratio']
+        plt.plot(symbol_df['date'], symbol_df['sharpe_ratio'], label='Sharpe Ratio', color='blue')
+
+        # Determine colors for shading based on sharpe ratio values
+        #colors = []
+        #for value in sharpe_ratio:
+        #    if value < -1.5:
+        #        colors.append('darkred')
+        #    elif -1.5 <= value < -0.5:
+        #        colors.append('red')
+        #    elif -0.5 <= value < 0.5:
+        #        colors.append('orange')
+        #    elif 0.5 <= value < 1.5:
+        #        colors.append('lightgreen')
+        #    else:
+        #        colors.append('darkgreen')
+        # Adding shaded regions for Sharpe ratios
+        #plt.axhspan(ymin=-50, ymax=0, color='darkred', alpha=0.3)  # Dark Red for very bad
+        plt.axhspan(ymin=0, ymax=1, color='lightcoral', alpha=0.3)  # Light Red for bad
+        plt.axhspan(ymin=1, ymax=2, color='yellow', alpha=0.3)  # Yellow for neutral/good
+        plt.axhspan(ymin=2, ymax=3, color='lightgreen', alpha=0.3)  # Light Green for very good
+        plt.axhspan(ymin=3, ymax=np.inf, color='darkgreen', alpha=0.3)  # Dark Green for excellent
+
+        #plt.bar(symbol_df['date'], sharpe_ratio, color=colors, alpha=0.7)
+        plt.axhline(0, color='black', linestyle='--')
+        # Format the x-axis to show dates correctly
         plt.xlabel('Date')
         plt.xticks(rotation=45)
-        ax.xaxis.set_major_locator(plt.MaxNLocator(10))
-        plt.ylabel('Price')
-        plt.title(f'{symbol} - {self.date}')
+        plt.ylabel('Sharpe Ratio')
+        plt.title(f'{symbol} - Daily Sharpe Ratio')
         plt.legend()
         plt.tight_layout()
-
+        plt.savefig(output_path)
         plt.close()
+
 
     def _write_results(self):
         if not self.results:
@@ -559,7 +629,8 @@ class StockScreener:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     parser = argparse.ArgumentParser()
-    parser.add_argument('--symbols', nargs='+', required=True, help='List of stock symbols to check')
+    parser.add_argument('--symbols', nargs='+', required=False, help='List of stock symbols to check')
+    parser.add_argument('--watchlist', type=str, required=False, default='stocklist.csv', help='Watchlist of stock symbols to check')
     parser.add_argument('--data', type=str, default='../api_data/all_data.csv', help='Path to the CSV data file (default: ../api_data/all_data.csv)')
     parser.add_argument('--date', type=str, default=datetime.now().strftime('%Y-%m-%d'), help="Date to check signals for (default is today's date)")
     parser.add_argument('--indicators', type=str, nargs='+', default='all', help='List of indicators to check (default is all)')
@@ -569,8 +640,21 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    try:
+        if args.symbols:
+            SYMBOLS = args.symbols
+        else:
+            # read in csv file of watch list
+            SYMBOLS = pd.read_csv(args.watchlist)['Symbol'].tolist()
+            # ticker symbol is first token after comma separation
+            SYMBOLS = [symbol.split(',')[0] for symbol in SYMBOLS]
+            SYMBOLS = [symbol.upper() for symbol in SYMBOLS]
+        logger.info(f"Symbols: {SYMBOLS}")
+    except Exception as e:
+        print(f"Error: {e}")
+
     screener = StockScreener(
-        symbols=args.symbols,
+        symbols=SYMBOLS,
         date=args.date,
         indicators=args.indicators,
         visualize=args.visualize,
