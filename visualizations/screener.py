@@ -61,9 +61,9 @@ class StockScreener:
         previous_date = nearest_dates[1]
         day_before_previous_date = nearest_dates[2]
         #print dates
-        print(self.latest_date)
-        print(previous_date)
-        print(day_before_previous_date)
+        #print(self.latest_date)
+        #print(previous_date)
+        #print(day_before_previous_date)
         # Create output directory for plots
         output_dir = f'overnight_{self.date}'
         if not os.path.exists(output_dir):
@@ -500,9 +500,9 @@ class StockScreener:
         # Filter the data for the past n days
         symbol_data = symbol_data[-self.n_days:]
         # print out the most recent date in symbol_data
-        print(symbol_data['date'].iloc[-1])
+        #print(symbol_data['date'].iloc[-1])
         # how many rows
-        print(len(symbol_data))
+        #print(len(symbol_data))
 
         # Plot individual indicators if there are bullish or bearish signals
         if bullish or bearish:
@@ -649,7 +649,7 @@ class StockScreener:
             #sector_data = symbol_data[symbol_data['symbol'] == sector]
             # only get the last n_days
             sector_data = sector_data[-self.n_days:]
-            print('lenge of sector data:', len(sector_data))
+            #print('lenge of sector data:', len(sector_data))
             # plot a chart with adjusted_close, sma_20, sma_50, sma_200, bbands_upper_20, bbands_lower_20
             # add text annotation when there are bullish or bearish signals
             plt.figure(figsize=(14, 10))
