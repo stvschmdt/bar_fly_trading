@@ -388,7 +388,6 @@ class StockScreener:
         plt.title(f'{symbol} - Price and SMAs')
         plt.legend()
         plt.tight_layout()
-        plt.ylim(min(symbol_data['adjusted_close']) * 0.95, max(symbol_data['adjusted_close']) * 1.05)  # Adjust y-limits for better visibility
         plt.savefig(output_path)
         plt.close()
 
