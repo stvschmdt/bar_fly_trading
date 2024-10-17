@@ -2,6 +2,9 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 import argparse
 import pandas as pd
+import logging
+logger = logging.getLogger(__name__)
+
 
 class SectionedPNGtoPDFConverter:
     def __init__(self, directory, output_pdf):
@@ -78,6 +81,15 @@ class SectionedPNGtoPDFConverter:
     def csv_to_image_table(self,csv_path='screener_results_', output_image='table_image.png', output_pdf='table_image.pdf'):
         # Load CSV file into DataFrame
         df = pd.read_csv(csv_path+self.date+'.csv')
+        # sort by symbol and reset index
+        df = df.sort_values(by='symbol').reset_index(drop=True)
+        
+        # add a column subtracting the num_bullish from num_bearish
+        df['bull_bear_delta'] = df['num_bullish'] - df['num_bearish']
+        # get a list of the columns and move the bull_bear_delta to second position after symbol
+        cols = df.columns.tolist()
+        cols = cols[:1] + cols[-1:] + cols[1:-1]
+        df = df[cols]
         print(df)
 
         # Set font and dimensions for the table
@@ -135,9 +147,14 @@ if __name__ == '__main__':
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Convert sectioned PNG files to a single PDF')
     # add directory argument
-    parser.add_argument('-d', '--directory', help='Directory containing PNG files', required=True)
-    args = parser.parse_args()
-    # Example usage
-    converter = SectionedPNGtoPDFConverter(directory=args.directory, output_pdf='overnight.pdf')
-    converter.convert()
-
+    parser.add_argument('-d', '--directory', default='overnight_'+pd.Timestamp.now().strftime('%Y-%m-%d'), help='Directory containing sectioned PNG files')
+    # if no directory is provided, try the current date appended to overnight_
+    try:
+        args = parser.parse_args()
+        logger.info('Creating PDF for directory: %s', args.directory)
+        # Get date from directory for output PDF name
+        output_date = args.directory.split('_')[-1]
+        converter = SectionedPNGtoPDFConverter(directory=args.directory, output_pdf=f'overnight_{output_date}.pdf')
+        converter.convert()
+    except:
+        print('No directory provided and unable to determine current date')

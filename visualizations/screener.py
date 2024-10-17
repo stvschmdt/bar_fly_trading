@@ -723,12 +723,18 @@ class StockScreener:
 
             # plot with a different color, if SPY or QQQ use a bold line, otherwise dash
             if sector in ['SPY', 'QQQ']:
-                plt.plot(sector_data['date'], sector_data['cumulative_change'], label=sector, color='black', linewidth=2)
-                # add a plot for SPY and QQQ averages over this time period
-                plt.axhline(sector_data['cumulative_change'].mean(), color='black', linestyle='--', label=f'{sector} Average')
+                if sector == 'SPY':
+                    plt.plot(sector_data['date'], sector_data['cumulative_change'], label='SPY', color='black', linewidth=2)
+                    # add a plot for SPY and QQQ averages over this time period
+                    plt.axhline(sector_data['cumulative_change'].mean(), color='black', linestyle='--', label=f'{sector} Average')
+                if sector == 'QQQ':
+                    plt.plot(sector_data['date'], sector_data['cumulative_change'], label='QQQ', color='blue', linewidth=2)
+                    # add a plot for SPY and QQQ averages over this time period
+                    plt.axhline(sector_data['cumulative_change'].mean(), color='blue', linestyle='--', label=f'{sector} Average')
             else:
+                # add sector annotation at the end of the line on the right of plot
                 plt.plot(sector_data['date'], sector_data['cumulative_change'], label=industries[idx], color=colors[idx], linestyle='--')
-
+                plt.annotate(sector, (sector_data['date'].iloc[-1], sector_data['cumulative_change'].iloc[-1]), textcoords="offset points", xytext=(0,10), ha='center', color=colors[idx])
         plt.xlabel('Date')
         plt.xticks(rotation=45)
         plt.ylabel('Rolling % Change')
