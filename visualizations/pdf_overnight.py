@@ -12,6 +12,13 @@ class SectionedPNGtoPDFConverter:
         self.output_pdf = output_pdf
         # parse the date from the directory name overnight_2021-09-01
         self.date = self.directory.split('/')[-1].split('_')[-1]
+        # check to see if directory exists
+        if not os.path.exists(self.directory):
+            print('cannot find directory: ', self.directory)
+            # get the nearest trading date and try that instead
+            self.date = self.find_nearest_dates(self.date)[0]
+            self.directory = 'overnight_'+self.date
+            print('trying directory: ', self.directory)
 
     def convert(self):
         # Dictionary to hold images by section
@@ -157,4 +164,4 @@ if __name__ == '__main__':
         converter = SectionedPNGtoPDFConverter(directory=args.directory, output_pdf=f'overnight_{output_date}.pdf')
         converter.convert()
     except:
-        print('No directory provided and unable to determine current date')
+        print('No directory provided and unable to determine current date. Please try manually adding the latest directory.')
