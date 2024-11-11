@@ -96,7 +96,9 @@ class StockScreener:
             
             
             if self.visualize and (len(latest_bullish) != len(previous_bullish) or len(latest_bearish) != len(previous_bearish)):
-                self._visualize(symbol, symbol_data, latest_bullish, latest_bearish)
+                if abs(len(latest_bullish) - len(latest_bearish)) > 2:
+                    print('Visualizing', symbol, latest_bullish, latest_bearish)
+                    self._visualize(symbol, symbol_data, latest_bullish, latest_bearish)
 
         # run the sector/market ETFs once only
         try:
@@ -164,7 +166,7 @@ class StockScreener:
         return bullish_signals, bearish_signals, signals
 
     def _check_pe_ratio(self, selected_date_data, bullish_signals, bearish_signals, signals):
-        pe_ratio = selected_date_data['adjusted_pe_ratio'].values[0]
+        pe_ratio = selected_date_data['pe_ratio'].values[0]
         # Append a signal for PE ratio
         if pe_ratio < 15:
             bullish_signals.append('bullish_pe_ratio')
@@ -215,7 +217,7 @@ class StockScreener:
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_pe_ratio.png')
         #plt.figure()
         plt.figure(figsize=(14, 10))
-        pe_ratio = symbol_data['adjusted_pe_ratio']
+        pe_ratio = symbol_data['pe_ratio']
 
         # Plot PE Ratio with different colors based on thresholds
         for i in range(len(symbol_data) - 1):
@@ -504,7 +506,10 @@ class StockScreener:
         #print(len(symbol_data))
 
         # Plot individual indicators if there are bullish or bearish signals
-        if bullish or bearish:
+        print(f'Bullish: {bullish}')
+        print(f'Bearish: {bearish}')
+        if len(bullish) > 1 or len(bearish) > 1:
+        #if abs(len(bullish) - len(bearish)) > 2:
             logging.info(f'Visualizing data for symbol {symbol}')
             if 'macd' in self.indicators or self.indicators == 'all':
                 self._plot_macd(symbol, symbol_data)
@@ -754,7 +759,9 @@ class StockScreener:
         rows_to_write = []
         for result in self.results:
             symbol, num_bullish, num_bearish, *signals = result
-            if any(signals):  # Only write rows where there is at least one signal (1 or -1)
+           # if any(signals):  # Only write rows where there is at least one signal (1 or -1)
+            # only write rows where the absolute difference between bullish and bearish signals is greater than 2
+            if abs(num_bullish - num_bearish) > 2:
                 rows_to_write.append([symbol, num_bullish, num_bearish, *signals])
 
         if not rows_to_write:
