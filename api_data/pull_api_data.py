@@ -1,19 +1,14 @@
 import argparse
 import logging
-import os
-import sys
 import time
 
 import pandas as pd
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-
-from api_data.storage import gold_table_processing
 from api_data.collector import alpha_client
 from api_data.core_stock import update_core_stock_data
 from api_data.economic_indicator import update_all_economic_indicators
 from api_data.fundamental_data import update_all_fundamental_data
+from api_data.storage import process_gold_table_in_batches
 from api_data.technical_indicator import update_all_technical_indicators
 from logging_config import setup_logging
 
@@ -59,7 +54,7 @@ def main():
         if timer >= 9:
             time.sleep(60)
             timer = 0
-    gold_table_processing()
+    process_gold_table_in_batches(SYMBOLS)
 
 
 if __name__ == "__main__":
