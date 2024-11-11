@@ -1,8 +1,13 @@
 import argparse
 import logging
+import os
+import sys
 import time
 
 import pandas as pd
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 
 from api_data.collector import alpha_client
 from api_data.core_stock import update_core_stock_data

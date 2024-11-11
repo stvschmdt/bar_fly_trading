@@ -150,7 +150,7 @@ def adjust_for_stock_splits(df):
     return df
 
 
-def process_gold_table_in_batches(symbols: list[str], earliest_date: str = '2016-01-01', symbols_per_batch: int = 30):
+def process_gold_table_in_batches(symbols: list[str], earliest_date: str = '2016-01-01', symbols_per_batch: int = 15):
     symbol_batches = [symbols[i:i + symbols_per_batch] for i in range(0, len(symbols), symbols_per_batch)]
     for i, symbol_batch in enumerate(symbol_batches):
         print(f'Processing batch {i + 1} of {len(symbol_batches)}: {symbol_batch}')
