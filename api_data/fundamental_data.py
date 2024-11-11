@@ -1,3 +1,4 @@
+import logging
 from enum import Enum
 
 import inflection
@@ -7,6 +8,10 @@ import pandas as pd
 from api_data.collector import AlphaVantageClient
 from api_data.storage import delete_company_overview_row, store_data
 from api_data.util import drop_existing_rows, get_table_write_option, graceful_df_to_numeric
+from logging_config import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 class FundamentalDataType(Enum):
@@ -81,7 +86,6 @@ def parse_earnings(data: dict, symbol: str):
     # We add in the symbol after converting to numeric because it's not a numeric column.
     df['symbol'] = symbol
 
-    #print(df.head())
     return df
 
 
@@ -104,6 +108,12 @@ def parse_splits(data: dict, symbol: str):
 def update_all_fundamental_data(api_client: AlphaVantageClient, symbol: str, incremental: bool = True):
     for data_type in FundamentalDataType:
         response = fetch_fundamental_data(api_client, symbol, data_type)
+
+        # An empty response indicates that the symbol isn't a company (e.g. index, ETF, etc.)
+        if not response:
+            logger.info(f"No fundamental data found for {symbol}")
+            return
+
         df = DATA_TYPE_PARSERS[data_type](response, symbol)
 
         write_option = get_table_write_option(incremental)
@@ -114,9 +124,6 @@ def update_all_fundamental_data(api_client: AlphaVantageClient, symbol: str, inc
                 # We need to delete the company_overview row for this symbol
                 # before inserting a new row because the symbol is the PK.
                 delete_company_overview_row(symbol)
-
-        #print(f'{data_type.value} data')
-        #print(df.head())
 
         store_data(
             df,
