@@ -41,7 +41,7 @@ class BenchmarkMultiEnv(gym.Env):
         self.cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'ema_20', 'ema_50', 'bbands_upper_20', 'bbands_lower_20', 'rsi_14', 'adx_14', 'atr_14', 'macd','treasury_yield_2year', 'treasury_yield_10year', '52_week_high', '52_week_low', 'beta', 'analyst_rating_strong_buy', 'analyst_rating_buy', 'analyst_rating_hold', 'analyst_rating_sell', 'analyst_rating_strong_sell', 'day_of_week_num', 'day_of_year', 'year']
         self.spy_cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'bbands_upper_20', 'bbands_lower_20']
         # Define observation and action spaces
-        self.action_cols = 5
+        self.action_cols = 7
         space_cols = len(self.cols) + len(self.spy_cols) + self.action_cols
         self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.n_days, space_cols), dtype=np.float32)
         self.action_space = gym.spaces.Discrete(3)  # 0: Hold, 1: Buy, 2: Sell
@@ -88,7 +88,6 @@ class BenchmarkMultiEnv(gym.Env):
         self.spy_data = self.spy_data.iloc[self.current_index : self.current_index + (self.n_days*2)+1]
         
         # Reset account, holdings, and state
-        self.initial_balance = self.initial_balance
         self.current_balance = self.initial_balance
         self.initial_cost = 0
         self.final_cost = 0
@@ -119,7 +118,7 @@ class BenchmarkMultiEnv(gym.Env):
         # horizontally stack the state data and the account
         self.state_data = np.hstack((self.state_data, self.account))
         # the action is initialized to -1 for each of the length of self.current_data_window
-        actions = np.full((len(self.state_data), 1), -1)
+        actions = np.full((len(self.state_data), 4), -1)
         # horizontally stack the state data and the actions
         self.state = np.hstack((self.state_data, actions))
         
@@ -162,7 +161,7 @@ class BenchmarkMultiEnv(gym.Env):
                 self.state_data[-(self.current_step + self.n_days + 1)][-4] = action  
                 self.state_data[-(self.current_step + self.n_days + 1)][-5] += -self.initial_cost
                 self.state_data[-(self.current_step + self.n_days + 1)][-6] += self.shares_owned
-                self.current_balance += -self.initial_cost
+                self.current_balance -= low_cost
                 reward = 0.0
             else:
                 print('invalid buy action')
@@ -182,7 +181,7 @@ class BenchmarkMultiEnv(gym.Env):
                 self.state_data[-(self.current_step + self.n_days + 1)][-3] = action  
                 self.state_data[-(self.current_step + self.n_days + 1)][-5] += -self.initial_cost
                 self.state_data[-(self.current_step + self.n_days + 1)][-6] += self.shares_owned
-                self.current_balance += -self.initial_cost
+                self.current_balance -= high_cost
                 reward = 0.0
             else:
                 print('invalid buy action')
@@ -197,34 +196,38 @@ class BenchmarkMultiEnv(gym.Env):
                 self.final_cost = low_cost
                 self.shares_owned -= 10
                 self.initial_cost = (share_price  * self.shares_owned) / self.num_trades
-                self.current_balance += self.final_cost
+                self.current_balance += low_cost
                 # calculate the profit or loss
                 self.current_pl += self.final_cost - self.initial_cost
                 # calculate the reward
                 #reward = self.final_cost - self.initial_cost
-                share_value = self.share_owned * share_price
-                reward = (self.current_balance - share_value) - self.initial_balance
+                share_value = self.shares_owned * share_price
+                reward = (self.current_balance + share_value) - self.initial_balance
                 # calculate percent profit or loss
                 reward_perc = reward / self.initial_cost
                 # update the state to reflect the action taken
                 self.state_data[-(self.current_step + self.n_days + 1)][-2] = action 
                 self.state_data[-(self.current_step + self.n_days + 1)][-5] += self.final_cost
                 self.state_data[-(self.current_step + self.n_days + 1)][-6] = self.shares_owned
-                self.current_balance += self.final_cost
                 # craft reward and info around positive and negative trades
                 if reward > 0:
                     self.total_positive_trades += 1
                     self.info['positive_trade'] = self.total_positive_trades
                     self.info['positive_amount'] = reward
-                else:
+                    # winning trade aka episode -> could be renamed
+                    self.win_trade += 1
+                    self.win_trade_pl += reward
+                    self.info['avg_win_trade'] = self.win_trade_pl / self.win_trade
+                elif reward < 0:
                     self.total_negative_trades += 1
                     self.info['negative_trade'] = self.total_negative_trades
                     self.info['negative_amount'] = reward
-                    # we can shape reward now
-                    reward = reward - (reward * .5) # punish losses more as they grow larger
-                if reward_perc > .03:
-                    # represent option like reward
-                    reward = reward * 1.0
+                    self.loss_trade += 1
+                    self.loss_trade_pl += reward
+                    self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
+                # craft reward and info around positive and negative trades
+                else:
+                    pass
             else:
                 reward = -100000
                 self.state_data[-(self.current_step+self.n_days+1)][-1] = 0
@@ -237,34 +240,38 @@ class BenchmarkMultiEnv(gym.Env):
                 # sell shares -> the current day opening price
                 self.final_cost = high_cost
                 self.shares_owned -= 100
-                self.current_balance += self.final_cost
+                self.current_balance += high_cost
                 # calculate the profit or loss
                 self.current_pl += self.final_cost - self.initial_cost
                 # calculate the reward
                 #reward = self.final_cost - self.initial_cost
-                share_value = self.share_owned * share_price
-                reward = (self.current_balance - share_value) - self.initial_balance
+                share_value = self.shares_owned * share_price
+                reward = (self.current_balance + share_value) - self.initial_balance
                 # calculate percent profit or loss
                 reward_perc = reward / self.initial_cost
                 # update the state to reflect the action taken
                 self.state_data[-(self.current_step + self.n_days + 1)][-1] = action 
                 self.state_data[-(self.current_step + self.n_days + 1)][-5] += self.final_cost
                 self.state_data[-(self.current_step + self.n_days + 1)][-6] = self.shares_owned
-                self.current_balance += self.final_cost
                 # craft reward and info around positive and negative trades
                 if reward > 0:
                     self.total_positive_trades += 1
                     self.info['positive_trade'] = self.total_positive_trades
                     self.info['positive_amount'] = reward
-                else:
+                    # winning trade aka episode -> could be renamed
+                    self.win_trade += 1
+                    self.win_trade_pl += reward
+                    self.info['avg_win_trade'] = self.win_trade_pl / self.win_trade
+                elif reward < 0:
                     self.total_negative_trades += 1
                     self.info['negative_trade'] = self.total_negative_trades
                     self.info['negative_amount'] = reward
-                    # we can shape reward now
-                    reward = reward - (reward * .5) # punish losses more as they grow larger
-                if reward_perc > .03:
-                    # represent option like reward
-                    reward = reward * 1.0
+                    self.loss_trade += 1
+                    self.loss_trade_pl += reward
+                    self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
+                # craft reward and info around positive and negative trades
+                else:
+                    pass
             else:
                 reward = -100000
                 self.state_data[-(self.current_step+self.n_days+1)][-1] = 0
@@ -276,11 +283,10 @@ class BenchmarkMultiEnv(gym.Env):
                 # we are done, get the final cost of the stock and close out
                 self.final_cost = self.current_data_window.iloc[-(self.current_step+self.n_days+1)]['adjusted_close']
                 # sell all shares
-                self.current_balance += self.final_cost * self.shares_owned
-                self.shares_owned -= self.shares_owned
-                share_value = self.share_owned * share_price
-                reward = (self.current_balance - share_value) - self.initial_balance
-
+                share_value = self.shares_owned * self.final_cost
+                self.current_balance += share_value
+                reward = self.current_balance - self.initial_balance
+                self.shares_owned = 0
                 # tell us about a positive trade
                 if reward > 0:
                     self.total_positive_trades += 1
@@ -290,31 +296,20 @@ class BenchmarkMultiEnv(gym.Env):
                     self.total_negative_trades += 1
                     self.info['negative_trade'] = self.total_negative_trades
                     self.info['negative_amount'] = reward
-                    # shape reward now
-                    reward = reward - (reward * .5) # punish losses more
-                if reward_perc > .03:
-                    # represent options
-                    reward = reward * 1.0
-                self.info['end_pl'] = self.current_pl
-                self.state_data[-(self.current_step+self.n_days+1)][-1] = 0
-                self.state_data[-(self.current_step + self.n_days + 1)][-5] += self.final_cost
-                self.state_data[-(self.current_step + self.n_days + 1)][-6] = self.shares_owned
-                self.current_balance += self.final_cost
+                if reward > 0:
+                    # winning trade aka episode -> could be renamed
+                    self.win_trade += 1
+                    self.win_trade_pl += reward
+                    self.info['avg_win_trade'] = self.win_trade_pl / self.win_trade
+                elif reward < 0:
+                    self.loss_trade += 1
+                    self.loss_trade_pl += reward
+                    self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
+                else:
+                    pass
             else:
                 reward = 0.0
-            # process the episode (may be multiple trades)
-            if self.current_pl > 0:
-                self.win_trade_pl += self.current_pl
-                # winning trade aka episode -> could be renamed
-                self.win_trade += 1
-                self.info['win_trade_pl'] = self.win_trade_pl / self.win_trade
-            elif self.current_pl < 0:
-                self.loss_trade_pl += self.current_pl
-                self.loss_trade += 1
-                self.info['loss_trade_pl'] = self.loss_trade_pl / self.loss_trade
-            else:
-                pass
-            self.total_pl += self.current_pl
+            self.total_pl += self.current_balance - self.initial_balance
                 
             # end reward is p/l
             #reward += self.current_balance - self.initial_balance
@@ -326,12 +321,12 @@ class BenchmarkMultiEnv(gym.Env):
             # print win rate (positive trades / positive trades + negative trades)
             win_rate = self.total_positive_trades / (self.total_positive_trades + self.total_negative_trades)
             self.info['win_rate'] = win_rate
-            self.info['total_pl'] = self.total_pl
-            self.info['average_pl'] = self.total_pl / self.current_episode
-            self.symbols_pl[self.current_symbol] += self.current_pl
-            if self.current_pl != 0.0:
+            self.info['total_pl'] = self.win_trade_pl - self.loss_trade_pl
+            self.info['avg_all_pl'] = self.total_pl / (self.win_trade + self.loss_trade + 1)
+            self.symbols_pl[self.current_symbol] += self.total_pl
+            if reward != 0.0:
                 # cap to 2 decimal places
-                print(f"Ep P/L: {self.current_pl:.2f}, WR: {win_rate:.2f}, Tot P/L: {self.total_pl:.2f}, {self.current_symbol} P/L: {self.symbols_pl[self.current_symbol]:.2f}")
+                print(f"Ep P/L: {self.current_balance-self.initial_balance:.2f}, WR: {win_rate:.2f}, WL P/L: {self.info.get('avg_win_trade',0)-self.info.get('avg_loss_trade',0):.2f}")
             if self.current_balance > self.max_balance:
                 self.max_balance = self.current_balance
                 print(f"******* NEW MAX BALANCE: {self.max_balance}, {self.current_symbol} ********")
