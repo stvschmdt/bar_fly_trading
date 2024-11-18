@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import random
 
-class BenchmarkEnv(gym.Env):
+class BenchmarkMultiEnv(gym.Env):
     def __init__(self, csv_path=None, stock_symbols=None, render_mode=None, initial_balance=500000):
         super(BenchmarkEnv, self).__init__()
         if csv_path is None:
@@ -140,6 +140,7 @@ class BenchmarkEnv(gym.Env):
     def step(self, action):
         # Check if episode is done (10 steps have passed)
         done = self.current_step >= self.n_days - 1
+        share_price = self.current_data_window.iloc[-(self.current_step+self.n_days)]['adjusted_close']
         low_cost = self.current_data_window.iloc[-(self.current_step+self.n_days)]['adjusted_close'] * self.low_shares
         high_cost = self.current_data_window.iloc[-(self.current_step+self.n_days)]['adjusted_close'] * self.high_shares
 
@@ -152,11 +153,11 @@ class BenchmarkEnv(gym.Env):
         # if the action is to buy low shares
         if action == 1:
             # make sure we have enough money to buy the shares
-            if self.current_balance > low_cost:
+            if self.current_balance >= low_cost:
                 self.shares_owned += 10
                 self.num_trades += 1
                 # calculate the cost of the share -> the visible day closing
-                self.initial_cost = low_cost
+                self.initial_cost = (share_price  * self.shares_owned) / self.num_trades
                 # assume minimal risk for entering into a position
                 self.state_data[-(self.current_step + self.n_days + 1)][-4] = action  
                 self.state_data[-(self.current_step + self.n_days + 1)][-5] += -self.initial_cost
@@ -167,15 +168,16 @@ class BenchmarkEnv(gym.Env):
                 print('invalid buy action')
                 # change the state at this step to reflect the action taken
                 self.state_data[-(self.current_step + self.n_days + 1)][-1] = 0
+                reward = -100000
                 
         # take the action is to buy high shares
         elif action == 2:
             # make sure we have enough money to buy the shares
-            if self.current_balance > high_cost:
+            if self.current_balance >= high_cost:
                 self.shares_owned += 100
                 self.num_trades += 1
                 # calculate the cost of the share -> the visible day closing
-                self.initial_cost = high_cost
+                self.initial_cost = (share_price  * self.shares_owned) / self.num_trades
                 # assume minimal risk for entering into a position
                 self.state_data[-(self.current_step + self.n_days + 1)][-3] = action  
                 self.state_data[-(self.current_step + self.n_days + 1)][-5] += -self.initial_cost
@@ -194,10 +196,14 @@ class BenchmarkEnv(gym.Env):
                 # sell shares -> the current day opening price
                 self.final_cost = low_cost
                 self.shares_owned -= 10
+                self.initial_cost = (share_price  * self.shares_owned) / self.num_trades
+                self.current_balance += self.final_cost
                 # calculate the profit or loss
                 self.current_pl += self.final_cost - self.initial_cost
                 # calculate the reward
-                reward = self.final_cost - self.initial_cost
+                #reward = self.final_cost - self.initial_cost
+                share_value = self.share_owned * share_price
+                reward = (self.current_balance - share_value) - self.initial_balance
                 # calculate percent profit or loss
                 reward_perc = reward / self.initial_cost
                 # update the state to reflect the action taken
@@ -218,7 +224,7 @@ class BenchmarkEnv(gym.Env):
                     reward = reward - (reward * .5) # punish losses more as they grow larger
                 if reward_perc > .03:
                     # represent option like reward
-                    reward = reward * 3.0
+                    reward = reward * 1.0
             else:
                 reward = -100000
                 self.state_data[-(self.current_step+self.n_days+1)][-1] = 0
@@ -231,10 +237,13 @@ class BenchmarkEnv(gym.Env):
                 # sell shares -> the current day opening price
                 self.final_cost = high_cost
                 self.shares_owned -= 100
+                self.current_balance += self.final_cost
                 # calculate the profit or loss
                 self.current_pl += self.final_cost - self.initial_cost
                 # calculate the reward
-                reward = self.final_cost - self.initial_cost
+                #reward = self.final_cost - self.initial_cost
+                share_value = self.share_owned * share_price
+                reward = (self.current_balance - share_value) - self.initial_balance
                 # calculate percent profit or loss
                 reward_perc = reward / self.initial_cost
                 # update the state to reflect the action taken
@@ -255,7 +264,7 @@ class BenchmarkEnv(gym.Env):
                     reward = reward - (reward * .5) # punish losses more as they grow larger
                 if reward_perc > .03:
                     # represent option like reward
-                    reward = reward * 3.0
+                    reward = reward * 1.0
             else:
                 reward = -100000
                 self.state_data[-(self.current_step+self.n_days+1)][-1] = 0
@@ -265,8 +274,12 @@ class BenchmarkEnv(gym.Env):
         if done:
             if self.shares_owned > 0:
                 # we are done, get the final cost of the stock and close out
-                self.final_cost = self.current_data_window.iloc[-(self.current_step+self.n_days+1)]['adjusted_close'] * 100
+                self.final_cost = self.current_data_window.iloc[-(self.current_step+self.n_days+1)]['adjusted_close']
+                # sell all shares
+                self.current_balance += self.final_cost * self.shares_owned
                 self.shares_owned -= self.shares_owned
+                share_value = self.share_owned * share_price
+                reward = (self.current_balance - share_value) - self.initial_balance
 
                 # tell us about a positive trade
                 if reward > 0:
@@ -281,7 +294,7 @@ class BenchmarkEnv(gym.Env):
                     reward = reward - (reward * .5) # punish losses more
                 if reward_perc > .03:
                     # represent options
-                    reward = reward * 3.0
+                    reward = reward * 1.0
                 self.info['end_pl'] = self.current_pl
                 self.state_data[-(self.current_step+self.n_days+1)][-1] = 0
                 self.state_data[-(self.current_step + self.n_days + 1)][-5] += self.final_cost
@@ -304,7 +317,7 @@ class BenchmarkEnv(gym.Env):
             self.total_pl += self.current_pl
                 
             # end reward is p/l
-            reward += self.current_balance - self.initial_balance
+            #reward += self.current_balance - self.initial_balance
             #if self.num_trades > 0 and reward < 10:
                 #reward = reward * .8
             #self.info['num_trades'] = self.num_trades
@@ -345,7 +358,7 @@ if __name__ == "__main__":
     csv_path = "../../../api_data/all_data.csv"  # Update with actual path to your CSV
     stock_symbols = ["AAPL", "NVDA", "AMD"]  # Example stock symbols
     stock_symbols = ["AAPL"]
-    env = BenchmarkEnv(csv_path=csv_path, stock_symbols=stock_symbols, initial_balance=1)
+    env = BenchmarkMulti(csv_path=csv_path, stock_symbols=stock_symbols, initial_balance=500000)
 
     # Run the environment for a few episodes
     num_episodes = 1
