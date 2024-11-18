@@ -6,7 +6,7 @@ import random
 
 class BenchmarkMultiEnv(gym.Env):
     def __init__(self, csv_path=None, stock_symbols=None, render_mode=None, initial_balance=500000):
-        super(BenchmarkEnv, self).__init__()
+        super(BenchmarkMultiEnv, self).__init__()
         if csv_path is None:
             csv_path = "../api_data/all_data.csv"  # Update with actual path to your CSV
         if stock_symbols is None:
@@ -358,7 +358,7 @@ if __name__ == "__main__":
     csv_path = "../../../api_data/all_data.csv"  # Update with actual path to your CSV
     stock_symbols = ["AAPL", "NVDA", "AMD"]  # Example stock symbols
     stock_symbols = ["AAPL"]
-    env = BenchmarkMulti(csv_path=csv_path, stock_symbols=stock_symbols, initial_balance=500000)
+    env = BenchmarkMultiEnv(csv_path=csv_path, stock_symbols=stock_symbols, initial_balance=500000)
 
     # Run the environment for a few episodes
     num_episodes = 1
