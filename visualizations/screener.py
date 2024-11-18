@@ -232,11 +232,11 @@ class StockScreener:
         first_bullish = True
         first_bearish = True
         for i, row in symbol_data.iterrows():
-            if row['adjusted_pe_ratio'] < 15 and first_bullish:
-                plt.annotate('Bullish (Low PE)', (row['date'], row['adjusted_pe_ratio']), textcoords="offset points", xytext=(0,10), ha='center', color='green')
+            if row['pe_ratio'] < 15 and first_bullish:
+                plt.annotate('Bullish (Low PE)', (row['date'], row['pe_ratio']), textcoords="offset points", xytext=(0,10), ha='center', color='green')
                 first_bullish = False
             elif row['pe_ratio'] > 35 and first_bearish:
-                plt.annotate('Bearish (High PE)', (row['date'], row['adjusted_pe_ratio']), textcoords="offset points", xytext=(0,10), ha='center', color='red')
+                plt.annotate('Bearish (High PE)', (row['date'], row['pe_ratio']), textcoords="offset points", xytext=(0,10), ha='center', color='red')
                 first_bearish = False
 
         plt.xlabel('Date')
