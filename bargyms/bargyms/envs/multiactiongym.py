@@ -198,13 +198,13 @@ class BenchmarkMultiEnv(gym.Env):
                 self.initial_cost = (share_price  * self.shares_owned) / self.num_trades
                 self.current_balance += low_cost
                 # calculate the profit or loss
-                self.current_pl += self.final_cost - self.initial_cost
                 # calculate the reward
                 #reward = self.final_cost - self.initial_cost
                 share_value = self.shares_owned * share_price
                 reward = (self.current_balance + share_value) - self.initial_balance
+                self.current_pl = (self.current_balance + share_value) - self.initial_balance
                 # calculate percent profit or loss
-                reward_perc = reward / self.initial_cost
+                reward_perc = reward / self.initial_balance
                 # update the state to reflect the action taken
                 self.state_data[-(self.current_step + self.n_days + 1)][-2] = action 
                 self.state_data[-(self.current_step + self.n_days + 1)][-5] += self.final_cost
@@ -225,6 +225,8 @@ class BenchmarkMultiEnv(gym.Env):
                     self.loss_trade += 1
                     self.loss_trade_pl += reward
                     self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
+                    # shape reward to downside
+                    reward = reward * (1 + reward_perc)
                 # craft reward and info around positive and negative trades
                 else:
                     pass
@@ -241,14 +243,13 @@ class BenchmarkMultiEnv(gym.Env):
                 self.final_cost = high_cost
                 self.shares_owned -= 100
                 self.current_balance += high_cost
-                # calculate the profit or loss
-                self.current_pl += self.final_cost - self.initial_cost
                 # calculate the reward
                 #reward = self.final_cost - self.initial_cost
                 share_value = self.shares_owned * share_price
                 reward = (self.current_balance + share_value) - self.initial_balance
+                self.current_pl = (self.current_balance + share_value) - self.initial_balance
                 # calculate percent profit or loss
-                reward_perc = reward / self.initial_cost
+                reward_perc = reward / self.initial_balance
                 # update the state to reflect the action taken
                 self.state_data[-(self.current_step + self.n_days + 1)][-1] = action 
                 self.state_data[-(self.current_step + self.n_days + 1)][-5] += self.final_cost
@@ -262,6 +263,8 @@ class BenchmarkMultiEnv(gym.Env):
                     self.win_trade += 1
                     self.win_trade_pl += reward
                     self.info['avg_win_trade'] = self.win_trade_pl / self.win_trade
+                    # add a multiple to the reward
+                    reward = reward * 3.0
                 elif reward < 0:
                     self.total_negative_trades += 1
                     self.info['negative_trade'] = self.total_negative_trades
@@ -269,6 +272,7 @@ class BenchmarkMultiEnv(gym.Env):
                     self.loss_trade += 1
                     self.loss_trade_pl += reward
                     self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
+                    reward = reward * (1 + reward_perc)
                 # craft reward and info around positive and negative trades
                 else:
                     pass
@@ -286,25 +290,28 @@ class BenchmarkMultiEnv(gym.Env):
                 share_value = self.shares_owned * self.final_cost
                 self.current_balance += share_value
                 reward = self.current_balance - self.initial_balance
+                self.current_pl = self.current_balance - self.initial_balance
+                # calculate percent profit or loss
+                reward_perc = reward / self.initial_balance
                 self.shares_owned = 0
                 # tell us about a positive trade
                 if reward > 0:
                     self.total_positive_trades += 1
                     self.info['positive_trade'] = self.total_positive_trades
                     self.info['positive_amount'] = reward
-                else:
-                    self.total_negative_trades += 1
-                    self.info['negative_trade'] = self.total_negative_trades
-                    self.info['negative_amount'] = reward
-                if reward > 0:
                     # winning trade aka episode -> could be renamed
                     self.win_trade += 1
                     self.win_trade_pl += reward
                     self.info['avg_win_trade'] = self.win_trade_pl / self.win_trade
                 elif reward < 0:
+                    self.total_negative_trades += 1
+                    self.info['negative_trade'] = self.total_negative_trades
+                    self.info['negative_amount'] = reward
                     self.loss_trade += 1
                     self.loss_trade_pl += reward
                     self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
+                    # shape reward to downside
+                    reward = reward * (1 + reward_perc)
                 else:
                     pass
             else:
