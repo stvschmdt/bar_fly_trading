@@ -5,7 +5,7 @@ import pandas as pd
 import random
 
 class BenchmarkMultiEnv(gym.Env):
-    def __init__(self, csv_path=None, stock_symbols=None, render_mode=None, initial_balance=500000):
+    def __init__(self, csv_path=None, stock_symbols=None, render_mode=None, initial_balance=250000):
         super(BenchmarkMultiEnv, self).__init__()
         if csv_path is None:
             csv_path = "../api_data/all_data.csv"  # Update with actual path to your CSV
@@ -22,6 +22,7 @@ class BenchmarkMultiEnv(gym.Env):
         self.symbols_map = {symbol: i for i, symbol in enumerate(self.stock_symbols)}
         self.symbols_pl = {symbol: 0.0 for i, symbol in enumerate(self.stock_symbols)}
         self.spy_symbol = 'SPY'  # SPY for benchmarking
+        self.sector_symbol = 'SOXL'  # SOXL for benchmarking chips
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.current_pl = 0
@@ -30,7 +31,7 @@ class BenchmarkMultiEnv(gym.Env):
         self.max_balance = self.initial_balance
         
         # we give the agent n_days to trade
-        self.n_days = 20
+        self.n_days = 15
         # we want to show the agent window amount of data to take an action
         self.window = 30
         # low number of discrete shares
@@ -40,9 +41,10 @@ class BenchmarkMultiEnv(gym.Env):
         
         self.cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'ema_20', 'ema_50', 'bbands_upper_20', 'bbands_lower_20', 'rsi_14', 'adx_14', 'atr_14', 'macd','treasury_yield_2year', 'treasury_yield_10year', '52_week_high', '52_week_low', 'beta', 'analyst_rating_strong_buy', 'analyst_rating_buy', 'analyst_rating_hold', 'analyst_rating_sell', 'analyst_rating_strong_sell', 'day_of_week_num', 'day_of_year', 'year']
         self.spy_cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'bbands_upper_20', 'bbands_lower_20']
+        self.sector_cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'bbands_upper_20', 'bbands_lower_20']
         # Define observation and action spaces
         self.action_cols = 7
-        space_cols = len(self.cols) + len(self.spy_cols) + self.action_cols
+        space_cols = len(self.cols) + len(self.spy_cols) + len(self.sector_cols) + self.action_cols
         self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.n_days, space_cols), dtype=np.float32)
         self.action_space = gym.spaces.Discrete(3)  # 0: Hold, 1: Buy, 2: Sell
         
@@ -86,6 +88,10 @@ class BenchmarkMultiEnv(gym.Env):
         # Get SPY data for the same date range
         self.spy_data = self.data[self.data['symbol'] == self.spy_symbol].reset_index(drop=True)
         self.spy_data = self.spy_data.iloc[self.current_index : self.current_index + (self.n_days*2)+1]
+
+        # Get Sector data for the same date range
+        self.sector_data = self.data[self.data['symbol'] == self.sector_symbol].reset_index(drop=True)
+        self.sector_data = self.sector_data.iloc[self.current_index : self.current_index + (self.n_days*2)+1]
         
         # Reset account, holdings, and state
         self.current_balance = self.initial_balance
@@ -107,6 +113,10 @@ class BenchmarkMultiEnv(gym.Env):
         sym = np.full((len(self.state_data), 1), self.symbols_map[self.current_symbol])
         # horizontally stack the state data and the sym vector
         self.state_data = np.hstack((self.state_data, sym))
+        # get the columns for the sector data
+        self.sector_data = self.sector_data[self.sector_cols].values
+        # horizontally stack the state data and the sector data
+        self.state_data = np.hstack((self.state_data, self.sector_data))
         # horizontally stack the state data and the spy data
         self.state_data = np.hstack((self.state_data, self.spy_data))
         # the state shares is initialized to 0 for each of the length of self.current_data_window
@@ -145,7 +155,10 @@ class BenchmarkMultiEnv(gym.Env):
 
         # if action is 0, do not buy or sell
         if action == 0:
-            reward = 0.0
+            if self.shares_owned == 0:
+                reward = 25.0 # risk free rate of return
+            else:
+                reward = 0.0
             # change the state at this step to reflect the action taken
             self.state_data[-(self.current_step + self.n_days + 1)][-5] = 0
 
@@ -182,11 +195,12 @@ class BenchmarkMultiEnv(gym.Env):
                 self.state_data[-(self.current_step + self.n_days + 1)][-5] += -self.initial_cost
                 self.state_data[-(self.current_step + self.n_days + 1)][-6] += self.shares_owned
                 self.current_balance -= high_cost
-                reward = 0.0
+                reward = -10.0 # risk free rate of return
             else:
                 print('invalid buy action')
                 # change the state at this step to reflect the action taken
                 self.state_data[-(self.current_step + self.n_days + 1)][-1] = 0
+                reward = -100000
         
         # if the action is 3 to sell low shares
         elif action == 3:
@@ -218,6 +232,7 @@ class BenchmarkMultiEnv(gym.Env):
                     self.win_trade += 1
                     self.win_trade_pl += reward
                     self.info['avg_win_trade'] = self.win_trade_pl / self.win_trade
+                    reward = reward * 3.0
                 elif reward < 0:
                     self.total_negative_trades += 1
                     self.info['negative_trade'] = self.total_negative_trades
@@ -229,7 +244,8 @@ class BenchmarkMultiEnv(gym.Env):
                     reward = reward * (1 + reward_perc)
                 # craft reward and info around positive and negative trades
                 else:
-                    pass
+                    reward = 0.0
+
             else:
                 reward = -100000
                 self.state_data[-(self.current_step+self.n_days+1)][-1] = 0
@@ -275,7 +291,7 @@ class BenchmarkMultiEnv(gym.Env):
                     reward = reward * (1 + reward_perc)
                 # craft reward and info around positive and negative trades
                 else:
-                    pass
+                    reward = 0.0
             else:
                 reward = -100000
                 self.state_data[-(self.current_step+self.n_days+1)][-1] = 0
@@ -313,17 +329,15 @@ class BenchmarkMultiEnv(gym.Env):
                     # shape reward to downside
                     reward = reward * (1 + reward_perc)
                 else:
-                    pass
+                    reward = 0.0
             else:
                 reward = 0.0
+                self.current_pl = self.current_balance - self.initial_balance
+                reward_perc = self.current_pl / self.initial_balance
             self.total_pl += self.current_balance - self.initial_balance
-                
-            # end reward is p/l
-            #reward += self.current_balance - self.initial_balance
-            #if self.num_trades > 0 and reward < 10:
-                #reward = reward * .8
-            #self.info['num_trades'] = self.num_trades
-            
+            self.info['reward_perc'] = reward_perc
+            self.info['avg_reward_perc'] = reward_perc / (self.win_trade + self.loss_trade + 1)
+    
             # print episode pl and total pl
             # print win rate (positive trades / positive trades + negative trades)
             win_rate = self.total_positive_trades / (self.total_positive_trades + self.total_negative_trades)
