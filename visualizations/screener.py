@@ -417,6 +417,38 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    def _plot_analyst_ratings(self, symbol, symbol_data):
+        # plot a stacked bar chart for analyst ratings, with the top being strong buy and the bottom being strong sell
+        output_path = os.path.join(self.output_dir, f'{symbol}_daily_zanalyst_ratings.png')
+        plt.figure(figsize=(14, 10))
+        
+        # get the most recent analyst ratings
+        ratings = symbol_data[['analyst_rating_strong_buy', 'analyst_rating_buy', 'analyst_rating_hold', 'analyst_rating_sell', 'analyst_rating_strong_sell']].iloc[-1]
+        # get the date of the most recent data
+        date = symbol_data['date'].iloc[-1]
+        # convert date to string
+        date = date.strftime('%Y-%m-%d')
+        # create a stacked bar chart
+        plt.bar(ratings.index, ratings, color=['green', 'lightgreen', 'yellow', 'orange', 'red'])
+        # draw a horizontal line at the average of strong buy and buy
+        avg_buy = (ratings['analyst_rating_strong_buy'] + ratings['analyst_rating_buy']) / 2
+        plt.axhline(avg_buy, color='green', linestyle='--', label='Average Buy Rating')
+        # draw a horizontal line at the average of sell and strong sell
+        avg_sell = (ratings['analyst_rating_sell'] + ratings['analyst_rating_strong_sell']) / 2
+        plt.axhline(avg_sell, color='red', linestyle='--', label='Average Sell Rating')
+        # draw a horizontal line for the absolute difference between the average buy and sell ratings
+        plt.axhline(abs(avg_buy - avg_sell), color='black', linestyle='--', label='Buy/Sell Rating Difference')
+
+        plt.xlabel('Analyst Ratings')
+        plt.ylabel('Number of Analysts')
+        # date format just year-month-day
+        plt.title(f'{symbol} - Analyst Ratings as of {date}')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+
+
     def _plot_rsi(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_rsi.png')
         #plt.figure()
@@ -526,6 +558,7 @@ class StockScreener:
             self._plot_price_sma(symbol, symbol_data)
             self._plot_volume(symbol, symbol_data)
             self._plot_symbol_sharpe_ratio(symbol, symbol_data)
+            self._plot_analyst_ratings(symbol, symbol_data)
 
         #output_path = os.path.join(self.output_dir, f'{symbol}_chart.png')
 
