@@ -20,3 +20,10 @@ def register_env():
         entry_point='bargyms.envs.benchmarkgym:BenchmarkEnv',
         max_episode_steps=1000
     )
+
+def register_env():
+    register(
+        id='BenchmarkMultiEnv-v0',
+        entry_point='bargyms.envs.multiactiongym:BenchmarkMultiEnv',
+        max_episode_steps=20
+    )

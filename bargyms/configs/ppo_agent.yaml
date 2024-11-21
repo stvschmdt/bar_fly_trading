@@ -1,7 +1,7 @@
 ppo:
   policy: "MlpPolicy"
   gamma: 0.99
-  learning_rate: 0.0007
+  learning_rate: 0.0005
   n_steps: 15
   batch_size: 120
   n_epochs: 10
@@ -11,8 +11,12 @@ ppo:
   ent_coef: 0.01
   max_grad_norm: 0.5
   verbose: 1
+  policy_kwargs: 
+      net_arch:
+        pi: [128, 128]
+        vf: [64, 64]
 training:
-  total_timesteps: 10000000
+  total_timesteps: 2000000
   log_interval: 1000
 tensorboard:
   log_dir: "./tensorboard_logs"
