@@ -10,7 +10,7 @@ class BenchmarkMultiEnv(gym.Env):
         if csv_path is None:
             csv_path = "../api_data/all_data.csv"  # Update with actual path to your CSV
         if stock_symbols is None:
-            stock_symbols = ["AMD", "NVDA", "LRCX", "MU", "QCOM", "AVGO", "TXN"]
+            stock_symbols = ["AMD", "NVDA", "LRCX", "MU", "QCOM", "AVGO"]
         self.render_mode = render_mode
         # Load data from CSV file
         self.data = pd.read_csv(csv_path)
@@ -81,9 +81,7 @@ class BenchmarkMultiEnv(gym.Env):
         symbol_data = self.data[self.data['symbol'] == self.current_symbol].reset_index(drop=True)
         
         # check for inference mode
-        if options is not None:
-            self.inference = options.get('inference', False)
-        if self.inference:
+        if options is not None and options.get('inference', True):
             # we need to set the dates
             self.start_date = options.get('start_date', '2021-01-01')
             self.end_date = options.get('end_date', '2021-12-31')
