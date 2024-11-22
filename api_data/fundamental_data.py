@@ -18,7 +18,7 @@ class FundamentalDataType(Enum):
 DATA_TYPE_TABLES = {
     FundamentalDataType.OVERVIEW: {
         'table_name': 'company_overview',
-        'columns': ['exchange', 'country', 'sector', 'industry', 'market_capitalization', 'book_value', 'dividend_yield', 'eps', 'price_to_book_ratio', 'beta', '52_week_high', '52_week_low', 'forward_pe'],
+        'columns': ['exchange', 'country', 'sector', 'industry', 'market_capitalization', 'book_value', 'dividend_yield', 'eps', 'beta', '52_week_high', '52_week_low', 'forward_pe', 'shares_outstanding', 'price_to_book_ratio', 'analyst_rating_strong_buy', 'analyst_rating_buy', 'analyst_rating_hold', 'analyst_rating_sell', 'analyst_rating_strong_sell'],
         'include_index': False,
     },
     FundamentalDataType.EARNINGS: {
