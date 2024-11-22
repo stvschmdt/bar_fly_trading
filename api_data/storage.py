@@ -1,9 +1,8 @@
 import os
 from enum import Enum
 
-from sqlalchemy import create_engine, text
-
 import pandas as pd
+from sqlalchemy import create_engine, text
 
 username = 'root'
 password = os.getenv('MYSQL_PASSWORD', None)
@@ -151,7 +150,14 @@ def adjust_for_stock_splits(df):
     return df
 
 
-def gold_table_processing(limit: int = 5000000):
+def process_gold_table_in_batches(symbols: list[str], earliest_date: str = '2016-01-01', symbols_per_batch: int = 15):
+    symbol_batches = [symbols[i:i + symbols_per_batch] for i in range(0, len(symbols), symbols_per_batch)]
+    for i, symbol_batch in enumerate(symbol_batches):
+        print(f'Processing batch {i + 1} of {len(symbol_batches)}: {symbol_batch}')
+        gold_table_processing(symbol_batch, i, earliest_date)
+
+
+def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str = '2016-01-01', limit: int = 5000000):
     # This query joins all tables together on the date column. It's a way to see all the data we have in one place.
     # core_stock, company_overview, economic_indicators, technical_indicators, quarterly_earnings are the tables and
     # where core_stock date > '01-01-2016' is a filter to reduce the number of rows returned. This is useful for testing
@@ -220,7 +226,8 @@ def gold_table_processing(limit: int = 5000000):
         AND core.symbol = quart.symbol
         LEFT JOIN company_overview as comp
         ON core.symbol = comp.symbol
-        WHERE core.date > '2016-01-01' 
+        WHERE core.date > {earliest_date}
+        AND core.symbol in ({', '.join([f"'{symbol}'" for symbol in symbols])})
         LIMIT {limit};
     """
     df = pd.read_sql_query(query, engine)
@@ -269,7 +276,7 @@ def gold_table_processing(limit: int = 5000000):
 
     # Adjust open, high, low for stock splits
     df = adjust_for_stock_splits(df)
-    df.to_csv('all_data.csv')
+    df.to_csv(f'all_data_{batch_num}.csv')
 
 
 connection_string = f'mysql+pymysql://{username}:{password}@{host}:{port}/{dbname}'
