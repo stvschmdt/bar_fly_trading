@@ -96,7 +96,9 @@ class StockScreener:
             
             
             if self.visualize and (len(latest_bullish) != len(previous_bullish) or len(latest_bearish) != len(previous_bearish)):
-                self._visualize(symbol, symbol_data, latest_bullish, latest_bearish)
+                if abs(len(latest_bullish) - len(latest_bearish)) > 2:
+                    print('Visualizing', symbol, latest_bullish, latest_bearish)
+                    self._visualize(symbol, symbol_data, latest_bullish, latest_bearish)
 
         # run the sector/market ETFs once only
         try:
@@ -164,7 +166,7 @@ class StockScreener:
         return bullish_signals, bearish_signals, signals
 
     def _check_pe_ratio(self, selected_date_data, bullish_signals, bearish_signals, signals):
-        pe_ratio = selected_date_data['adjusted_pe_ratio'].values[0]
+        pe_ratio = selected_date_data['pe_ratio'].values[0]
         # Append a signal for PE ratio
         if pe_ratio < 15:
             bullish_signals.append('bullish_pe_ratio')
@@ -215,7 +217,7 @@ class StockScreener:
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_pe_ratio.png')
         #plt.figure()
         plt.figure(figsize=(14, 10))
-        pe_ratio = symbol_data['adjusted_pe_ratio']
+        pe_ratio = symbol_data['pe_ratio']
 
         # Plot PE Ratio with different colors based on thresholds
         for i in range(len(symbol_data) - 1):
@@ -230,11 +232,11 @@ class StockScreener:
         first_bullish = True
         first_bearish = True
         for i, row in symbol_data.iterrows():
-            if row['adjusted_pe_ratio'] < 15 and first_bullish:
-                plt.annotate('Bullish (Low PE)', (row['date'], row['adjusted_pe_ratio']), textcoords="offset points", xytext=(0,10), ha='center', color='green')
+            if row['pe_ratio'] < 15 and first_bullish:
+                plt.annotate('Bullish (Low PE)', (row['date'], row['pe_ratio']), textcoords="offset points", xytext=(0,10), ha='center', color='green')
                 first_bullish = False
             elif row['pe_ratio'] > 35 and first_bearish:
-                plt.annotate('Bearish (High PE)', (row['date'], row['adjusted_pe_ratio']), textcoords="offset points", xytext=(0,10), ha='center', color='red')
+                plt.annotate('Bearish (High PE)', (row['date'], row['pe_ratio']), textcoords="offset points", xytext=(0,10), ha='center', color='red')
                 first_bearish = False
 
         plt.xlabel('Date')
@@ -415,6 +417,38 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    def _plot_analyst_ratings(self, symbol, symbol_data):
+        # plot a stacked bar chart for analyst ratings, with the top being strong buy and the bottom being strong sell
+        output_path = os.path.join(self.output_dir, f'{symbol}_daily_zanalyst_ratings.png')
+        plt.figure(figsize=(14, 10))
+        
+        # get the most recent analyst ratings
+        ratings = symbol_data[['analyst_rating_strong_buy', 'analyst_rating_buy', 'analyst_rating_hold', 'analyst_rating_sell', 'analyst_rating_strong_sell']].iloc[-1]
+        # get the date of the most recent data
+        date = symbol_data['date'].iloc[-1]
+        # convert date to string
+        date = date.strftime('%Y-%m-%d')
+        # create a stacked bar chart
+        plt.bar(ratings.index, ratings, color=['green', 'lightgreen', 'yellow', 'orange', 'red'])
+        # draw a horizontal line at the average of strong buy and buy
+        avg_buy = (ratings['analyst_rating_strong_buy'] + ratings['analyst_rating_buy']) / 2
+        plt.axhline(avg_buy, color='green', linestyle='--', label='Average Buy Rating')
+        # draw a horizontal line at the average of sell and strong sell
+        avg_sell = (ratings['analyst_rating_sell'] + ratings['analyst_rating_strong_sell']) / 2
+        plt.axhline(avg_sell, color='red', linestyle='--', label='Average Sell Rating')
+        # draw a horizontal line for the absolute difference between the average buy and sell ratings
+        plt.axhline(abs(avg_buy - avg_sell), color='black', linestyle='--', label='Buy/Sell Rating Difference')
+
+        plt.xlabel('Analyst Ratings')
+        plt.ylabel('Number of Analysts')
+        # date format just year-month-day
+        plt.title(f'{symbol} - Analyst Ratings as of {date}')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+
+
     def _plot_rsi(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_rsi.png')
         #plt.figure()
@@ -504,7 +538,10 @@ class StockScreener:
         #print(len(symbol_data))
 
         # Plot individual indicators if there are bullish or bearish signals
-        if bullish or bearish:
+        print(f'Bullish: {bullish}')
+        print(f'Bearish: {bearish}')
+        if len(bullish) > 1 or len(bearish) > 1:
+        #if abs(len(bullish) - len(bearish)) > 2:
             logging.info(f'Visualizing data for symbol {symbol}')
             if 'macd' in self.indicators or self.indicators == 'all':
                 self._plot_macd(symbol, symbol_data)
@@ -521,6 +558,7 @@ class StockScreener:
             self._plot_price_sma(symbol, symbol_data)
             self._plot_volume(symbol, symbol_data)
             self._plot_symbol_sharpe_ratio(symbol, symbol_data)
+            self._plot_analyst_ratings(symbol, symbol_data)
 
         #output_path = os.path.join(self.output_dir, f'{symbol}_chart.png')
 
@@ -754,7 +792,9 @@ class StockScreener:
         rows_to_write = []
         for result in self.results:
             symbol, num_bullish, num_bearish, *signals = result
-            if any(signals):  # Only write rows where there is at least one signal (1 or -1)
+           # if any(signals):  # Only write rows where there is at least one signal (1 or -1)
+            # only write rows where the absolute difference between bullish and bearish signals is greater than 2
+            if abs(num_bullish - num_bearish) > 2:
                 rows_to_write.append([symbol, num_bullish, num_bearish, *signals])
 
         if not rows_to_write:
@@ -771,7 +811,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     parser = argparse.ArgumentParser()
     parser.add_argument('--symbols', nargs='+', required=False, help='List of stock symbols to check')
-    parser.add_argument('--watchlist', type=str, required=False, default='stocklist.csv', help='Watchlist of stock symbols to check')
+    parser.add_argument('--watchlist', type=str, required=False, default='../api_data/watchlist.csv', help='Watchlist of stock symbols to check')
     parser.add_argument('--data', type=str, default='../api_data/all_data.csv', help='Path to the CSV data file (default: ../api_data/all_data.csv)')
     parser.add_argument('--date', type=str, default=datetime.now().strftime('%Y-%m-%d'), help="Date to check signals for (default is today's date)")
     parser.add_argument('--indicators', type=str, nargs='+', default='all', help='List of indicators to check (default is all)')
