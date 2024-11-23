@@ -50,17 +50,23 @@ def fetch_fundamental_data(api_client: AlphaVantageClient, symbol: str, data_typ
 
 
 def parse_overview(data: dict, symbol: str):
+    pd.set_option('future.no_silent_downcasting', True)
     data = {key: [value] for key, value in data.items()}
     df = pd.DataFrame(data)
     df.columns = [inflection.underscore(col) for col in df.columns]
     df = df.filter(items=DATA_TYPE_TABLES[FundamentalDataType.OVERVIEW]['columns'])
-    df['dividend_yield'].replace('None', 0, inplace=True)
-    df['price_to_book_ratio'].replace('None', 0, inplace=True)
-    df['price_to_book_ratio'].replace('-', np.nan, inplace=True)
-    df['book_value'].replace('None', 0, inplace=True)
-    df['eps'].replace('None', 0, inplace=True)
-    df['beta'].replace('None', 0, inplace=True)
-    df['forward_pe'].replace('-', np.nan, inplace=True)
+    df['dividend_yield'] = df['dividend_yield'].replace('None', 0)
+    df['price_to_book_ratio'] = df['price_to_book_ratio'].replace('None', 0)
+    df['price_to_book_ratio'] = df['price_to_book_ratio'].replace('-', np.nan)
+    df['book_value'] = df['book_value'].replace('None', 0)
+    df['eps'] = df['eps'].replace('None', 0)
+    df['beta'] = df['beta'].replace('None', 0)
+    df['analyst_rating_strong_buy'] = df['analyst_rating_strong_buy'].replace('-', 0)
+    df['analyst_rating_buy'] = df['analyst_rating_buy'].replace('-', 0)
+    df['analyst_rating_hold'] = df['analyst_rating_hold'].replace('-', 0)
+    df['analyst_rating_sell'] = df['analyst_rating_sell'].replace('-', 0)
+    df['analyst_rating_strong_sell'] = df['analyst_rating_strong_sell'].replace('-', 0)
+    df['forward_pe'] = df['forward_pe'].replace('-', np.nan)
     df = graceful_df_to_numeric(df)
     # We add in the symbol after converting to numeric because it's not a numeric column.
     df['symbol'] = symbol

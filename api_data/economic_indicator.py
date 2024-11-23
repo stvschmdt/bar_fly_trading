@@ -51,6 +51,7 @@ def fetch_economic_data(api_client: AlphaVantageClient, indicator_type: Economic
 
 
 def parse_economic_data(data: dict, indicator_type: EconomicIndicatorType):
+    pd.set_option('future.no_silent_downcasting', True)
     key = 'data'
     if key not in data:
         raise ValueError(f"Unexpected response format: '{key}' key not found")
@@ -61,7 +62,7 @@ def parse_economic_data(data: dict, indicator_type: EconomicIndicatorType):
 
     column_name = TYPE_OVERRIDES.get(indicator_type, {}).get('column_name', inflection.underscore(indicator_type.value))
     df = df.rename(columns={'value': column_name})
-    df[column_name].replace('.', np.nan, inplace=True)
+    df[column_name] = df[column_name].replace('.', np.nan)
     #print(f'{indicator_type.value} data')
     #print(df.head())
     return df
