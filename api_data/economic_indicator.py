@@ -1,13 +1,13 @@
 from enum import Enum
 from functools import reduce
+
 import inflection
+import numpy as np
+import pandas as pd
 
 from api_data.collector import AlphaVantageClient
 from api_data.storage import store_data
 from api_data.util import drop_existing_rows, get_table_write_option, graceful_df_to_numeric
-
-import numpy as np
-import pandas as pd
 
 
 class EconomicIndicatorType(Enum):
@@ -61,7 +61,7 @@ def parse_economic_data(data: dict, indicator_type: EconomicIndicatorType):
 
     column_name = TYPE_OVERRIDES.get(indicator_type, {}).get('column_name', inflection.underscore(indicator_type.value))
     df = df.rename(columns={'value': column_name})
-    df[column_name] = df[column_name].replace('.', np.nan)
+    df[column_name].replace('.', np.nan, inplace=True)
     #print(f'{indicator_type.value} data')
     #print(df.head())
     return df

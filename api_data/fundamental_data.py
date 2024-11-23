@@ -54,12 +54,13 @@ def parse_overview(data: dict, symbol: str):
     df = pd.DataFrame(data)
     df.columns = [inflection.underscore(col) for col in df.columns]
     df = df.filter(items=DATA_TYPE_TABLES[FundamentalDataType.OVERVIEW]['columns'])
-    # replace df['dividend_yield'] values with 0 if it is None
-    df['dividend_yield'] = df['dividend_yield'].replace('None', 0)
-    # replace price_to_book_ratio values with 0 if it is None
-    df['price_to_book_ratio'] = df['price_to_book_ratio'].replace('None', 0)
-    df['price_to_book_ratio'] = df['price_to_book_ratio'].replace('-', np.nan)
-    df['forward_pe'] = df['forward_pe'].replace('-', np.nan)
+    df['dividend_yield'].replace('None', 0, inplace=True)
+    df['price_to_book_ratio'].replace('None', 0, inplace=True)
+    df['price_to_book_ratio'].replace('-', np.nan, inplace=True)
+    df['book_value'].replace('None', 0, inplace=True)
+    df['eps'].replace('None', 0, inplace=True)
+    df['beta'].replace('None', 0, inplace=True)
+    df['forward_pe'].replace('-', np.nan, inplace=True)
     df = graceful_df_to_numeric(df)
     # We add in the symbol after converting to numeric because it's not a numeric column.
     df['symbol'] = symbol
