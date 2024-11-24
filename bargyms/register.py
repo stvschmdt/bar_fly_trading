@@ -27,3 +27,10 @@ def register_env():
         entry_point='bargyms.envs.multiactiongym:BenchmarkMultiEnv',
         max_episode_steps=20
     )
+
+def register_env():
+    register(
+        id='GoldTradeEnv-v0',
+        entry_point='bargyms.envs.goldtradegym:GoldTradeEnv',
+        max_episode_steps=100
+    )

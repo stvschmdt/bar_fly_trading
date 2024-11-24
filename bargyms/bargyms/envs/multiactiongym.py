@@ -10,7 +10,7 @@ class BenchmarkMultiEnv(gym.Env):
         if csv_path is None:
             csv_path = "../api_data/all_data.csv"  # Update with actual path to your CSV
         if stock_symbols is None:
-            stock_symbols = ["AMD", "NVDA", "LRCX", "MU", "QCOM", "AVGO"]
+            stock_symbols = ["AMD", "NVDA", "AVGO", "AMZN", "GOOG"]
         self.render_mode = render_mode
         # Load data from CSV file
         self.data = pd.read_csv(csv_path)
@@ -34,14 +34,14 @@ class BenchmarkMultiEnv(gym.Env):
         self.max_balance = self.initial_balance
         
         # we give the agent n_days to learn the environment (window view)
-        self.n_days = 20
+        self.n_days = 30
         # example
         # agent sees at the beginning of an episode
         # 10-31-2023 back to 10-1-2023
         # example at step 2
         # agent sees 11-01-2023 back to 10-02-2023
         # we want to show the agent window amount of data to take an action
-        self.window = 20
+        self.window = 15
         # low number of discrete shares
         self.low_shares = 10
         # high number of discrete shares
@@ -309,7 +309,7 @@ class BenchmarkMultiEnv(gym.Env):
                     self.info['high_win_perc'] = self.num_high / self.win_trade
                     # add a multiple to the reward
                     #reward = reward * 5.0
-                    reward = reward * (1 + 2*reward_perc)
+                    reward = reward * (1.0 + reward_perc)
                 elif reward < 0:
                     self.total_negative_trades += 1
                     self.info['negative_trade'] = self.total_negative_trades
