@@ -267,7 +267,7 @@ class BenchmarkMultiEnv(gym.Env):
                     self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
                     self.info['low_loss_perc'] = self.num_low / self.loss_trade
                     # shape reward to downside
-                    reward = reward * (1.0 + reward_perc)
+                    reward = reward * (1.0 + abs(reward_perc))
                 # craft reward and info around positive and negative trades
                 else:
                     reward = 0.0
@@ -318,7 +318,7 @@ class BenchmarkMultiEnv(gym.Env):
                     self.loss_trade_pl += reward
                     self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
                     self.info['high_loss_perc'] = self.num_high / self.loss_trade
-                    reward = reward * (1 + reward_perc)
+                    reward = reward * (1.0 + 2*abs(reward_perc))
                 # craft reward and info around positive and negative trades
                 else:
                     reward = 0.0
@@ -359,7 +359,7 @@ class BenchmarkMultiEnv(gym.Env):
                     self.loss_trade_pl += reward
                     self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
                     # shape reward to downside
-                    reward = reward * (1 + reward_perc)
+                    reward = reward * (1 + 2*abs(reward_perc))
                 else:
                     reward = 0.0
             else:
