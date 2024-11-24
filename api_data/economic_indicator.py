@@ -1,13 +1,13 @@
 from enum import Enum
 from functools import reduce
+
 import inflection
+import numpy as np
+import pandas as pd
 
 from api_data.collector import AlphaVantageClient
 from api_data.storage import store_data
 from api_data.util import drop_existing_rows, get_table_write_option, graceful_df_to_numeric
-
-import numpy as np
-import pandas as pd
 
 
 class EconomicIndicatorType(Enum):
@@ -51,6 +51,7 @@ def fetch_economic_data(api_client: AlphaVantageClient, indicator_type: Economic
 
 
 def parse_economic_data(data: dict, indicator_type: EconomicIndicatorType):
+    pd.set_option('future.no_silent_downcasting', True)
     key = 'data'
     if key not in data:
         raise ValueError(f"Unexpected response format: '{key}' key not found")
