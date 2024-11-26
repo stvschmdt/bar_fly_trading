@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta
 
 class StockScreener:
-    def __init__(self, symbols, date, indicators='all', visualize=True, n_days=30, use_candlesticks=False, data='../api_data/all_data.csv'):
+    def __init__(self, symbols, date, indicators='all', visualize=True, n_days=30, use_candlesticks=False, all_data_path='../"'):
         self.symbols = [symbol.upper() for symbol in symbols]
         self.date = pd.to_datetime(self._get_closest_trading_date(date)).strftime('%Y-%m-%d')
         self.indicators = indicators
@@ -21,7 +21,14 @@ class StockScreener:
         self.n_days = n_days
         # not implemented
         self.use_candlesticks = use_candlesticks
-        self.data = pd.read_csv(data)
+        # read in all files all_data*.csv and append them into one self.data
+        for file in os.listdir(all_data_path):
+            if file.startswith('all_data'):
+                data = os.path.join('../', file)
+                if not hasattr(self, 'data'):
+                    self.data = pd.read_csv(data)
+                else:
+                    self.data = pd.concat([self.data, pd.read_csv(data)])
         self.results = []
 
     def _get_closest_trading_date(self, input_date):
@@ -812,7 +819,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--symbols', nargs='+', required=False, help='List of stock symbols to check')
     parser.add_argument('--watchlist', type=str, required=False, default='../api_data/watchlist.csv', help='Watchlist of stock symbols to check')
-    parser.add_argument('--data', type=str, default='../api_data/all_data.csv', help='Path to the CSV data file (default: ../api_data/all_data.csv)')
+    parser.add_argument('--data', type=str, default='../', help='Path to the CSV data files (default: ../api_data/all_data.csv)')
     parser.add_argument('--date', type=str, default=datetime.now().strftime('%Y-%m-%d'), help="Date to check signals for (default is today's date)")
     parser.add_argument('--indicators', type=str, nargs='+', default='all', help='List of indicators to check (default is all)')
     parser.add_argument('--visualize', action='store_true', default=True, help='Flag to visualize data (default is true)')
@@ -841,5 +848,5 @@ if __name__ == "__main__":
         visualize=args.visualize,
         n_days=args.n_days,
         use_candlesticks=args.use_candlesticks,
-        data=args.data)
+        all_data_path=args.data)
     screener.run_screen()

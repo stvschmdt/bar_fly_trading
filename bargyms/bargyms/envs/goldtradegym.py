@@ -170,6 +170,7 @@ class GoldTradeEnv(gym.Env):
         self.enter_trade_step = -1
         self.exit_trade_step = -1
         self.num_trades = 0
+        self.illegal_trades = 0
         
         # Set up the initial 10-day observation window
         self.state_data = self.current_data_window[self.cols].values
@@ -239,9 +240,9 @@ class GoldTradeEnv(gym.Env):
         # if action is 0, do not buy or sell
         if action == 0:
             if self.shares_owned == 0:
-                reward = 0.0 # risk free rate of return
+                reward = -.1 # risk free rate of return
             else:
-                reward = 0.0
+                reward = -.2
             # change the state at this step to reflect the action taken
             self.state_data[-(self.current_step + self.n_days)][-4] = 0
 
@@ -264,6 +265,7 @@ class GoldTradeEnv(gym.Env):
                 # change the state at this step to reflect the action taken
                 self.state_data[-(self.current_step + self.n_days)][-4] = -1
                 reward = -100000
+                self.illegal_trades = 1
                 #done = True
                 
         # take the action is to buy high shares
@@ -285,6 +287,7 @@ class GoldTradeEnv(gym.Env):
                 # change the state at this step to reflect the action taken
                 self.state_data[-(self.current_step + self.n_days)][-4] = -1
                 reward = -100000
+                self.illegal_trades = 1
                 #done = True
         
         # if the action is 3 to close out the trade
@@ -340,6 +343,7 @@ class GoldTradeEnv(gym.Env):
                 reward = -100000
                 self.state_data[-(self.current_step+self.n_days)][-4] = -1
                 print('invalid sell action')
+                self.illegal_trades = 1
             if not self.inference:
                 done = True
             else:
@@ -395,7 +399,7 @@ class GoldTradeEnv(gym.Env):
                     self.loss_trade_pl += self.trade_pl_perc
                     self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
                 else:
-                    reward = self.agent_pl * .2
+                    reward = 0.0
                     self.total_positive_trades += 1
                     self.info['positive_trade'] = self.total_positive_trades
                     self.info['positive_amount'] = self.current_pl
@@ -404,8 +408,8 @@ class GoldTradeEnv(gym.Env):
                     self.win_trade_pl += self.trade_pl_perc
                     self.info['avg_win_trade'] = self.win_trade_pl / self.win_trade
             else:
-                if self.enter_trade_step < 0:
-                    reward = -self.max_profit
+                if self.enter_trade_step < 0: # no trades
+                    reward = -3.0
                     self.trade_days = 0
                     self.agent_pl = 0
                 else:
@@ -432,13 +436,14 @@ class GoldTradeEnv(gym.Env):
             self.info['agent_alpha_avg'] = self.info['agent_alpha'] / (self.current_episode)
 
             self.symbols_pl[self.current_symbol] += self.total_pl
-            if reward != 0.0:
+            if reward != 0.0 and reward > -10000:
                 # cap to 2 decimal places
                 print(f"Ep P/L: {self.current_balance-self.initial_balance:.2f}, WR: {win_rate:.2f}, Agent P/L: {self.agent_pl:.2f}, Agent P/L %: {self.trade_pl_perc:.2f}, Max PL: {self.max_profit:.2f}, Spy Max PL: {self.spy_max_profit:.2f}, Reward: {reward:.2f}")
             if self.current_balance > self.max_balance:
                 self.max_balance = self.current_balance
                 print(f"******* NEW MAX BALANCE: {self.max_balance}, {self.current_symbol} ********")
-
+        if self.illegal_trades:
+            reward = -100000
         self.current_step += 1
         self.state = self.state_data[-(self.current_step + self.n_days ) : -(self.current_step)].astype(np.float32)
         #print(self.state)
