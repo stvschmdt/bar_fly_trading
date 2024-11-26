@@ -99,6 +99,7 @@ class BenchmarkMultiEnv(gym.Env):
             # randomly select a start index, with a minimum of 10 days from the earliest date
             min_start_index = self.n_days + 30
             # max start date is 20 days from the end of the data
+
             max_start_index = len(symbol_data) - (self.n_days + self.window + 1)
             # select a random start date in the range of min, max
             self.current_index = random.randint(min_start_index, max_start_index)
