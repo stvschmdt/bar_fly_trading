@@ -17,6 +17,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from torch.utils.tensorboard import SummaryWriter
 from bargyms.envs.multiactiongym import BenchmarkMultiEnv
+from bargyms.envs.goldtradegym import GoldTradeEnv
 
 class BenchmarkInference:
     def __init__(self, model_path, csv_path, symbols, start_date, end_date):
@@ -39,7 +40,7 @@ class BenchmarkInference:
         self.model = PPO.load(model_path)
         
         # Load the custom environment
-        self.env = BenchmarkMultiEnv(csv_path=csv_path, stock_symbols=symbols)
+        self.env = GoldTradeEnv(csv_path=csv_path, stock_symbols=symbols)
     
     def run_inference(self):
         """
@@ -66,10 +67,11 @@ class BenchmarkInference:
 
             # print out symbol and date
             while not done:
-                # print the start_date shifted by env current_step
-                print(f"Symbol: {self.env.current_symbol}, Date: {self.start_date + pd.DateOffset(days=self.env.current_step)}")
+                # print the symbol
+                print(f"Symbol: {self.env.current_symbol})")
                 # Choose action using the trained model
                 action, _ = self.model.predict(state)
+                # we know the date from the environment
                 
                 # Take action in the environment
                 state, reward, done, truncated, info = self.env.step(action)
@@ -106,11 +108,11 @@ if __name__ == "__main__":
     # Create the environment (no need for render_mode since there's no visual output)
     #env = gym.make("AnalystGym-v0")
     #env = gym.make("StockTradingEnv-v0")
-    env = gym.make("BenchmarkMultiEnv-v0")
+    env = gym.make("GoldTradeEnv-v0")
     model_path = "ppo_analystgym.zip"
-    csv_path = "../api_data/all_data.csv"
-    symbols = ["AAPL", "GOOGL", "AMZN"]
-    start_date = "2024-06-01"
+    csv_path = None
+    symbols = ["AAPL", "GOOG", "AMZN"]
+    start_date = "2024-07-10"
     end_date = "2024-10-18"
 
     # Run inference

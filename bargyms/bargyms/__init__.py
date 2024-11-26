@@ -22,3 +22,9 @@ gym.register(
     id='BenchmarkMultiEnv-v0',
     entry_point='bargyms.envs:BenchmarkMultiEnv', 
 )
+
+# Register the environment
+gym.register(
+    id='GoldTradeEnv-v0',
+    entry_point='bargyms.envs:GoldTradeEnv', 
+)

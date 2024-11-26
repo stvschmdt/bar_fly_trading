@@ -10,7 +10,7 @@ class BenchmarkMultiEnv(gym.Env):
         if csv_path is None:
             csv_path = "../api_data/all_data.csv"  # Update with actual path to your CSV
         if stock_symbols is None:
-            stock_symbols = ["AMD", "NVDA", "LRCX", "MU", "QCOM", "AVGO"]
+            stock_symbols = ["AMD", "NVDA", "AVGO", "AMZN", "GOOG"]
         self.render_mode = render_mode
         # Load data from CSV file
         self.data = pd.read_csv(csv_path)
@@ -25,7 +25,7 @@ class BenchmarkMultiEnv(gym.Env):
         self.symbols_map = {symbol: i for i, symbol in enumerate(self.stock_symbols)}
         self.symbols_pl = {symbol: 0.0 for i, symbol in enumerate(self.stock_symbols)}
         self.spy_symbol = 'SPY'  # SPY for benchmarking
-        self.sector_symbol = 'SOXL'  # SOXL for benchmarking chips
+        self.sector_symbol = 'XLK'  # SOXL for benchmarking chips
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.current_pl = 0
@@ -51,7 +51,7 @@ class BenchmarkMultiEnv(gym.Env):
         self.spy_cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'bbands_upper_20', 'bbands_lower_20']
         self.sector_cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'bbands_upper_20', 'bbands_lower_20']
         # Define observation and action spaces
-        self.action_cols = 7
+        self.action_cols = 8
         space_cols = len(self.cols) + len(self.spy_cols) + len(self.sector_cols) + self.action_cols
         self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.n_days, space_cols), dtype=np.float32)
         self.action_space = gym.spaces.Discrete(3)  # 0: Hold, 1: Buy, 2: Sell
@@ -97,9 +97,10 @@ class BenchmarkMultiEnv(gym.Env):
             self.current_index = symbol_data[symbol_data['date'] == self.start_date].index[0]
         else:
             # randomly select a start index, with a minimum of 10 days from the earliest date
-            min_start_index = self.n_days
+            min_start_index = self.n_days + 30
             # max start date is 20 days from the end of the data
-            max_start_index = len(symbol_data) - (self.window + 1)
+
+            max_start_index = len(symbol_data) - (self.n_days + self.window + 1)
             # select a random start date in the range of min, max
             self.current_index = random.randint(min_start_index, max_start_index)
         # get the data for the selected date range, starting from the current index and adding 20 days
@@ -193,7 +194,7 @@ class BenchmarkMultiEnv(gym.Env):
                 #self.initial_cost = (share_price  * self.shares_owned) / self.num_trades
                 # update the state
                 self.state_data[-(self.current_step + self.n_days)][-4] = 1
-                self.state_data[-(self.current_step + self.n_days)][-6] += -self.low_cost
+                self.state_data[-(self.current_step + self.n_days)][-6] += -low_cost
                 self.state_data[-(self.current_step + self.n_days)][-7] += self.shares_owned
                 self.current_balance -= low_cost
                 reward = 0.0
@@ -214,7 +215,7 @@ class BenchmarkMultiEnv(gym.Env):
                 #self.initial_cost = (share_price  * self.shares_owned) / self.num_trades
                 # assume minimal risk for entering into a position
                 self.state_data[-(self.current_step + self.n_days)][-3] = 1 
-                self.state_data[-(self.current_step + self.n_days)][-6] += -self.high_cost
+                self.state_data[-(self.current_step + self.n_days)][-6] += -high_cost
                 self.state_data[-(self.current_step + self.n_days)][-7] += self.shares_owned
                 self.current_balance -= high_cost
                 reward = -1.0 # risk free rate of return
@@ -267,7 +268,7 @@ class BenchmarkMultiEnv(gym.Env):
                     self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
                     self.info['low_loss_perc'] = self.num_low / self.loss_trade
                     # shape reward to downside
-                    reward = reward * (1.0 + reward_perc)
+                    reward = reward * (1.0 + abs(reward_perc))
                 # craft reward and info around positive and negative trades
                 else:
                     reward = 0.0
@@ -309,7 +310,7 @@ class BenchmarkMultiEnv(gym.Env):
                     self.info['high_win_perc'] = self.num_high / self.win_trade
                     # add a multiple to the reward
                     #reward = reward * 5.0
-                    reward = reward * (1 + 2*reward_perc)
+                    reward = reward * (1.0 + reward_perc)
                 elif reward < 0:
                     self.total_negative_trades += 1
                     self.info['negative_trade'] = self.total_negative_trades
@@ -318,7 +319,7 @@ class BenchmarkMultiEnv(gym.Env):
                     self.loss_trade_pl += reward
                     self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
                     self.info['high_loss_perc'] = self.num_high / self.loss_trade
-                    reward = reward * (1 + reward_perc)
+                    reward = reward * (1.0 + 2*abs(reward_perc))
                 # craft reward and info around positive and negative trades
                 else:
                     reward = 0.0
@@ -359,7 +360,7 @@ class BenchmarkMultiEnv(gym.Env):
                     self.loss_trade_pl += reward
                     self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
                     # shape reward to downside
-                    reward = reward * (1 + reward_perc)
+                    reward = reward * (1 + 2*abs(reward_perc))
                 else:
                     reward = 0.0
             else:
@@ -375,7 +376,7 @@ class BenchmarkMultiEnv(gym.Env):
     
             # print episode pl and total pl
             # print win rate (positive trades / positive trades + negative trades)
-            win_rate = self.total_positive_trades / max(((self.total_positive_trades + self.total_negative_trades), 1)
+            win_rate = self.total_positive_trades / max((self.total_positive_trades + self.total_negative_trades), 1)
             self.info['win_rate'] = win_rate
             self.info['total_pl'] = self.win_trade_pl - self.loss_trade_pl
             self.info['avg_all_pl'] = self.total_pl / max((self.win_trade + self.loss_trade), 1)
