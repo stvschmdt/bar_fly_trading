@@ -1,11 +1,11 @@
 ppo:
   policy: "MlpPolicy"
-  gamma: 0.97
-  learning_rate: 0.001
+  gamma: 0.96
+  learning_rate: 0.0009
   n_steps: 15
   batch_size: 300
   n_epochs: 10
-  clip_range: 0.2
+  clip_range: 0.1
   gae_lambda: 0.95
   vf_coef: 0.5
   ent_coef: 0.01
@@ -13,8 +13,8 @@ ppo:
   verbose: 1
   policy_kwargs: 
       net_arch:
-        pi: [128, 128]
-        vf: [128, 128]
+        pi: [64, 128]
+        vf: [64, 128]
 training:
   total_timesteps: 2000000
   log_interval: 1000
