@@ -56,7 +56,7 @@ def main():
     # Create the environment (no need for render_mode since there's no visual output)
     #env = gym.make("AnalystGym-v0")
     #env = gym.make("StockTradingEnv-v0")
-    env = Monitor(gym.make("BenchmarkMultiEnv-v0"))
+    env = Monitor(gym.make("GoldTradeEnv-v0"))
 
     # Set up a directory for monitoring results
     monitor_dir = './monitor_results'
