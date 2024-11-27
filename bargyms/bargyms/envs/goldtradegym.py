@@ -331,10 +331,16 @@ class GoldTradeEnv(gym.Env):
                 reward = self.final_cost - self.trade_price
                 reward  = reward * (1.0 * self.trade_pl_perc)
                 if self.trade_days < 10 and reward > 0:
-                    reward = reward * 1.1
+                    reward = reward * 1.15
+                    if self.trade_pl_perc > 5.0:
+                        reward = reward * 1.15
                 if self.trade_days < 5 and reward > 0:
-                    reward = reward * 1.2
-                if reward > 0:
+                    reward = reward * 1.25
+                    if self.trade_pl_perc > 2.0:
+                        reward = reward * 1.25
+                if self.trade_pl_perc < .25:
+                    reward = reward * -1.0
+                if self.trade_pl_perc > 0:
                     self.total_positive_trades += 1
                     self.info['positive_trade'] = self.total_positive_trades
                     self.info['positive_amount'] = reward
@@ -342,8 +348,8 @@ class GoldTradeEnv(gym.Env):
                     self.win_trade += 1
                     self.win_trade_pl += self.trade_pl_perc
                     self.info['avg_win_trade'] = self.win_trade_pl / self.win_trade
-                elif reward < 0:
-                    reward = reward * 5.0
+                elif self.trade_pl_perc < 0:
+                    reward = reward * 7.0
                     self.total_negative_trades += 1
                     self.info['negative_trade'] = self.total_negative_trades
                     self.info['negative_amount'] = reward
@@ -414,7 +420,7 @@ class GoldTradeEnv(gym.Env):
                     self.loss_trade_pl += self.trade_pl_perc
                     self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
                 else:
-                    reward = 0.0
+                    reward = self.agent_pl * .1
                     self.total_positive_trades += 1
                     self.info['positive_trade'] = self.total_positive_trades
                     self.info['positive_amount'] = self.current_pl
