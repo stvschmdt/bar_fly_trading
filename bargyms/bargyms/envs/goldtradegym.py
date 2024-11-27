@@ -10,7 +10,7 @@ class GoldTradeEnv(gym.Env):
         if csv_path is None:
             csv_path = "../api_data/all_data.csv"  # Update with actual path to your CSV
         if stock_symbols is None:
-            stock_symbols = ["AMD", "NVDA", "LRCX", "MU", "QCOM", "AVGO"]
+            stock_symbols = ["AAPL", "NVDA", "MSFT", "AVGO","QCOM", "AMD", "LRCX"]
         self.render_mode = render_mode
         # Load data from CSV file
         self.data = pd.read_csv(csv_path)
@@ -92,27 +92,28 @@ class GoldTradeEnv(gym.Env):
             num_rows = len(symbol_data[(symbol_data['date'] >= self.start_date) & (symbol_data['date'] <= self.end_date)])
             print('num_rows', num_rows)
             # set window to the number of rows
-            self.window = num_rows - 1
+            #self.window = num_rows - 1
             # get the index for the nearest date to the start date (if start date is not in the data get next earliest date)
             self.start_index_date = symbol_data[symbol_data['date'] >= self.start_date] # get the date before the start date
             # now get the latest date in the data
-            self.start_index_date = self.start_index_date.iloc[0]['date']
-            print(self.start_index_date)
+            self.start_index_date = self.start_index_date.iloc[-1]['date']
+            #print('start date', self.start_index_date)
             # get the index of the current index
             self.start_index = symbol_data.index[symbol_data['date'] == self.start_index_date].tolist()[0]
-            print(self.start_index)
+            #print(self.start_index)
             # get the end date and index
             self.end_index_date = symbol_data[symbol_data['date'] <= self.end_date] # get the date before the end date
             # now get the latest date in the data
             self.end_index_date = self.end_index_date.iloc[0]['date']
-            print(self.end_index_date)
+            #print('end date', self.end_index_date)
             # get the index of the current index
             self.end_index = symbol_data.index[symbol_data['date'] == self.end_index_date].tolist()[0]
             # get the data for the selected date range, starting from the current index and adding 20 days
-            print(self.start_index, self.end_index)
+            #print(self.start_index, self.end_index)
             self.current_data_window = symbol_data.iloc[self.end_index : self.start_index + 1]
             # print the first row of data
-            print("**************")
+            #print(self.current_data_window)
+            #print("**************")
         else:
             self.inference = False
             # randomly select a start index, with a minimum of 10 days from the earliest date
@@ -130,6 +131,8 @@ class GoldTradeEnv(gym.Env):
             # print start and end index dates
             #print(self.start_index_date, self.end_index_date)
 
+        # print the -n_days date for testing
+        #print(self.current_data_window.iloc[-self.n_days]['date'])
         # Get SPY data for the same date range
         self.spy_data = self.data[self.data['symbol'] == self.spy_symbol].reset_index(drop=True)
         # get the index of the self.index_date in the spy data        
@@ -137,8 +140,12 @@ class GoldTradeEnv(gym.Env):
         # get the index of the self.index_date in the spy data
         self.spy_end_index = self.spy_data.index[self.spy_data['date'] == self.end_index_date].tolist()[0]
         # get the spy data for the same date range
-        #print(self.spy_end_index, self.spy_start_index)
+        #print(self.spy_start_index, self.spy_end_index)
         self.spy_data = self.spy_data.iloc[self.spy_end_index : self.spy_start_index + 1]
+        #print the first day in spy data
+        #print(self.spy_data.iloc[0]['date'])
+        # print the -n_days date for testing
+        #print(self.spy_data.iloc[-self.n_days]['date'])
 
 
         # Get sector data for the same date range
@@ -148,16 +155,22 @@ class GoldTradeEnv(gym.Env):
         # get the index of the self.index_date in the sector data
         self.sector_end_index = self.sector_data.index[self.sector_data['date'] == self.end_index_date].tolist()[0]
         # get the sector data for the same date range
-        #print(self.sector_end_index, self.sector_start_index)
+        #print(self.sector_start_index, self.sector_end_index)
         self.sector_data = self.sector_data.iloc[self.sector_end_index : self.sector_start_index + 1]
-
+        #print the first day in sector data
+        #print(self.sector_data.iloc[0]['date'])
+        # print the -n_days date for testing
+        #print(self.sector_data.iloc[-self.n_days]['date'])
+        #print("**************")
         #print(len(self.current_data_window), len(self.spy_data), len(self.sector_data))
+
 
         # print the first date in each of the data frames
         #print(self.current_data_window.iloc[0]['date'], self.spy_data.iloc[0]['date'], self.sector_data.iloc[0]['date'])
         # print the last date in each of the data frames
         #print(self.current_data_window.iloc[-1]['date'], self.spy_data.iloc[-1]['date'], self.sector_data.iloc[-1]['date'])
-        
+        # print the -n_days for each of the data frames
+        #print(self.current_data_window.iloc[-self.n_days]['date'], self.spy_data.iloc[-self.n_days]['date'], self.sector_data.iloc[-self.n_days]['date'])
         # Reset account, holdings, and state
         self.current_balance = self.initial_balance
         self.initial_cost = 0
@@ -219,6 +232,8 @@ class GoldTradeEnv(gym.Env):
 
     # step and reward functions follow as previously outlined.
     def step(self, action):
+        # track the current day
+        self.current_day = self.current_data_window.iloc[-(self.current_step+self.n_days)]['date']
         if self.inference:
             # print the date and symbol
             print(self.current_data_window.iloc[-(self.current_step+self.n_days+1)]['date'], self.current_symbol)
@@ -344,13 +359,13 @@ class GoldTradeEnv(gym.Env):
                 self.state_data[-(self.current_step+self.n_days)][-4] = -1
                 print('invalid sell action')
                 self.illegal_trades = 1
-            if not self.inference:
-                done = True
-            else:
-                done = False
+            #if not self.inference:
+            #    done = True
+            #else:
+                #done = False
                 # reset the trade steps
-                self.enter_trade_step = -1
-                self.exit_trade_step = -1
+                #self.enter_trade_step = -1
+                #self.exit_trade_step = -1
 
         if self.inference:
             # print the date and symbol
@@ -412,6 +427,7 @@ class GoldTradeEnv(gym.Env):
                     reward = -3.0
                     self.trade_days = 0
                     self.agent_pl = 0
+                    self.trade_pl_perc = 0
                 else:
                     reward = 0.0
                 self.current_pl = self.current_balance - self.initial_balance
