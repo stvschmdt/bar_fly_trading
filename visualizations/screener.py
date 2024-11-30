@@ -1,21 +1,33 @@
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
 import argparse
 import logging
-from datetime import datetime
-import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from logging_config import setup_logging
-setup_logging()
-logger = logging.getLogger(__name__)
+import sys
 from datetime import datetime, timedelta
 
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from logging_config import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
+
+
+def get_closest_trading_date(input_date):
+    input_date = datetime.strptime(input_date, '%Y-%m-%d')
+    while input_date.weekday() > 4:  # If it's Saturday (5) or Sunday (6), move to Friday
+        input_date -= timedelta(days=1)
+    # Assuming all weekends are non-trading days, for simplicity
+    return input_date.strftime('%Y-%m-%d')
+
+
 class StockScreener:
-    def __init__(self, symbols, date, indicators='all', visualize=True, n_days=30, use_candlesticks=False, data='../api_data/all_data.csv'):
+    def __init__(self, symbols, date, indicators='all', visualize=True, n_days=30, use_candlesticks=False, data='../api_data/all_data.csv', skip_sectors=False):
         self.symbols = [symbol.upper() for symbol in symbols]
-        self.date = pd.to_datetime(self._get_closest_trading_date(date)).strftime('%Y-%m-%d')
+        self.date = pd.to_datetime(get_closest_trading_date(date)).strftime('%Y-%m-%d')
         self.indicators = indicators
         self.visualize = visualize
         self.n_days = n_days
@@ -23,13 +35,7 @@ class StockScreener:
         self.use_candlesticks = use_candlesticks
         self.data = pd.read_csv(data)
         self.results = []
-
-    def _get_closest_trading_date(self, input_date):
-        input_date = datetime.strptime(input_date, '%Y-%m-%d')
-        while input_date.weekday() > 4:  # If it's Saturday (5) or Sunday (6), move to Friday
-            input_date -= timedelta(days=1)
-        # Assuming all weekends are non-trading days, for simplicity
-        return input_date.strftime('%Y-%m-%d')
+        self.skip_sectors = skip_sectors
 
     def find_nearest_two_dates(self, target_date):
         target_date = pd.to_datetime(target_date)
@@ -60,10 +66,7 @@ class StockScreener:
         self.latest_date = nearest_dates[0]
         previous_date = nearest_dates[1]
         day_before_previous_date = nearest_dates[2]
-        #print dates
-        #print(self.latest_date)
-        #print(previous_date)
-        #print(day_before_previous_date)
+
         # Create output directory for plots
         output_dir = f'overnight_{self.date}'
         if not os.path.exists(output_dir):
@@ -94,7 +97,7 @@ class StockScreener:
                 if len(latest_bullish) != len(previous_bullish) or len(latest_bearish) != len(previous_bearish):
                     self.results.append([symbol, len(latest_bullish), len(latest_bearish), *latest_signals])
             
-            
+
             if self.visualize and (len(latest_bullish) != len(previous_bullish) or len(latest_bearish) != len(previous_bearish)):
                 if abs(len(latest_bullish) - len(latest_bearish)) > 2:
                     print('Visualizing', symbol, latest_bullish, latest_bearish)
@@ -102,7 +105,8 @@ class StockScreener:
 
         # run the sector/market ETFs once only
         try:
-            self._process_sector_data(self.data)
+            if not self.skip_sectors:
+                self._process_sector_data(self.data)
         except Exception as e:
             print(e)
             logging.error(f'Error processing sector data or sector data not found: {e}')
@@ -560,34 +564,6 @@ class StockScreener:
             self._plot_symbol_sharpe_ratio(symbol, symbol_data)
             self._plot_analyst_ratings(symbol, symbol_data)
 
-        #output_path = os.path.join(self.output_dir, f'{symbol}_chart.png')
-
-        #fig, ax = plt.subplots()
-        #plt.plot(symbol_data['date'], symbol_data['adjusted_close'], label='Adjusted Close')
-        #plt.plot(symbol_data['date'], symbol_data['sma_20'], label='SMA 20')
-        #plt.plot(symbol_data['date'], symbol_data['sma_50'], label='SMA 50')
-        #plt.plot(symbol_data['date'], symbol_data['sma_200'], label='SMA 200')
-        #plt.bar(symbol_data['date'], symbol_data['volume'], alpha=0.3, label='Volume')
-#
-        #markers = set()
-        #for signal in bullish + bearish:
-            #if signal not in markers:
-                #if signal in bullish:
-                    #plt.scatter(symbol_data['date'].iloc[-1], symbol_data['adjusted_close'].iloc[-1], color='green', label=signal)
-                #if signal in bearish:
-                    #plt.scatter(symbol_data['date'].iloc[-1], symbol_data['adjusted_close'].iloc[-1], color='red', label=signal)
-                #markers.add(signal)
-#
-        #plt.xlabel('Date')
-        #plt.xticks(rotation=45)
-        #ax.xaxis.set_major_locator(plt.MaxNLocator(10))
-        #plt.ylabel('Price')
-        #plt.title(f'{symbol} - {self.date}')
-        #plt.legend()
-        #plt.tight_layout()
-#
-        #plt.close()
-
     def _plot_symbol_sharpe_ratio(self, symbol, symbol_data):
         # Plot Sharpe ratio
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_sharpe_ratio.png')
@@ -624,19 +600,6 @@ class StockScreener:
         sharpe_ratio = symbol_df['sharpe_ratio']
         plt.plot(symbol_df['date'], symbol_df['sharpe_ratio'], label='Sharpe Ratio', color='black')
 
-        # Determine colors for shading based on sharpe ratio values
-        #colors = []
-        #for value in sharpe_ratio:
-        #    if value < -1.5:
-        #        colors.append('darkred')
-        #    elif -1.5 <= value < -0.5:
-        #        colors.append('red')
-        #    elif -0.5 <= value < 0.5:
-        #        colors.append('orange')
-        #    elif 0.5 <= value < 1.5:
-        #        colors.append('lightgreen')
-        #    else:
-        #        colors.append('darkgreen')
         # Adding shaded regions for Sharpe ratios
         #plt.axhspan(ymin=-50, ymax=0, color='darkred', alpha=0.3)  # Dark Red for very bad
         plt.axhspan(ymin=0, ymax=1, color='lightcoral', alpha=0.3)  # Light Red for bad
@@ -644,7 +607,6 @@ class StockScreener:
         plt.axhspan(ymin=2, ymax=3, color='lightgreen', alpha=0.3)  # Light Green for very good
         plt.axhspan(ymin=3, ymax=np.inf, color='darkgreen', alpha=0.3)  # Dark Green for excellent
 
-        #plt.bar(symbol_df['date'], sharpe_ratio, color=colors, alpha=0.7)
         plt.axhline(0, color='black', linestyle='--')
         # Format the x-axis to show dates correctly
         plt.xlabel('Date')
@@ -753,7 +715,7 @@ class StockScreener:
             sector_data = sector_data[sector_data['date'] <= pd.to_datetime(self.latest_date)]
             # only get the last n_days
             sector_data = sector_data[-self.n_days:]
-            # calcluate the rolling cumulative % change since the beginning of the n_days (-n_days is the base value)
+            # calculate the rolling cumulative % change since the beginning of the n_days (-n_days is the base value)
             initial_value = sector_data['adjusted_close'].iloc[0]
             if initial_value != 0:  # Avoid division by zero
                 sector_data['cumulative_change'] = (sector_data['adjusted_close'] / initial_value - 1) * 100
@@ -780,9 +742,6 @@ class StockScreener:
         plt.tight_layout()
         plt.savefig(output_path)
         plt.close()
-        
-
-
 
     def _write_results(self):
         if not self.results:
@@ -792,8 +751,7 @@ class StockScreener:
         rows_to_write = []
         for result in self.results:
             symbol, num_bullish, num_bearish, *signals = result
-           # if any(signals):  # Only write rows where there is at least one signal (1 or -1)
-            # only write rows where the absolute difference between bullish and bearish signals is greater than 2
+            # Only write rows where the absolute difference between bullish and bearish signals is greater than 2
             if abs(num_bullish - num_bearish) > 2:
                 rows_to_write.append([symbol, num_bullish, num_bearish, *signals])
 
@@ -818,28 +776,32 @@ if __name__ == "__main__":
     parser.add_argument('--visualize', action='store_true', default=True, help='Flag to visualize data (default is true)')
     parser.add_argument('--n_days', type=int, default=30, help='Number of past days to visualize (default is 30)')
     parser.add_argument('--use_candlesticks', action='store_true', default=False, help='Use candlestick charts instead of line plots (default is false)')
+    parser.add_argument('--skip_sectors', action='store_true', default=False, help='Skip sector analysis (default is false)')
 
     args = parser.parse_args()
 
+    symbols = []
     try:
         if args.symbols:
-            SYMBOLS = args.symbols
+            symbols = args.symbols
         else:
             # read in csv file of watch list
-            SYMBOLS = pd.read_csv(args.watchlist)['Symbol'].tolist()
+            symbols = pd.read_csv(args.data)['symbol'].drop_duplicates().tolist()
             # ticker symbol is first token after comma separation
-            SYMBOLS = [symbol.split(',')[0] for symbol in SYMBOLS]
-            SYMBOLS = [symbol.upper() for symbol in SYMBOLS]
-        logger.info(f"Symbols: {SYMBOLS}")
+            symbols = [symbol.upper() for symbol in symbols]
+        logger.info(f"Symbols: {symbols}")
     except Exception as e:
         print(f"Error: {e}")
+        exit()
 
     screener = StockScreener(
-        symbols=SYMBOLS,
+        symbols=symbols,
         date=args.date,
         indicators=args.indicators,
         visualize=args.visualize,
         n_days=args.n_days,
         use_candlesticks=args.use_candlesticks,
-        data=args.data)
+        data=args.data,
+        skip_sectors=args.skip_sectors,
+    )
     screener.run_screen()

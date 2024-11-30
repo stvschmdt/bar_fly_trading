@@ -1,8 +1,12 @@
-from PIL import Image, ImageDraw, ImageFont
-import os
 import argparse
-import pandas as pd
 import logging
+import os
+
+import pandas as pd
+from PIL import Image, ImageDraw, ImageFont
+
+from screener import get_closest_trading_date
+
 logger = logging.getLogger(__name__)
 
 
@@ -137,24 +141,19 @@ class SectionedPNGtoPDFConverter:
         # Save the image
         img.save(output_image)
 
-        # Convert image to PDF and save
-        #img_pdf = img.convert('RGB')
-        #img_pdf.save(output_pdf)
-
-
 
 if __name__ == '__main__':
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Convert sectioned PNG files to a single PDF')
     # add directory argument
-    parser.add_argument('-d', '--directory', default='overnight_'+pd.Timestamp.now().strftime('%Y-%m-%d'), help='Directory containing sectioned PNG files')
+    parser.add_argument('-d', '--directory', default='overnight_'+get_closest_trading_date(pd.Timestamp.now().strftime('%Y-%m-%d')), help='Directory containing sectioned PNG files')
     # if no directory is provided, try the current date appended to overnight_
     try:
         args = parser.parse_args()
         logger.info('Creating PDF for directory: %s', args.directory)
         # Get date from directory for output PDF name
-        output_date = args.directory.split('_')[-1]
+        output_date = get_closest_trading_date(args.directory.split('_')[-1])
         converter = SectionedPNGtoPDFConverter(directory=args.directory, output_pdf=f'overnight_{output_date}.pdf')
         converter.convert()
     except:
-        print('No directory provided and unable to determine current date')
+        print('Unable to create PDF')

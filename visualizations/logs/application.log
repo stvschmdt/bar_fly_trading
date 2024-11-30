@@ -1,0 +1,4 @@
+[2024-11-30 13:54:37,261] INFO in screener: Symbols: ['AAPL']
+[2024-11-30 13:54:37,274] INFO in screener: Running stock screener for symbols: ['AAPL'] on date: 2024-11-29
+[2024-11-30 13:54:37,281] WARNING in screener: No results to write.
+[2024-11-30 13:54:41,885] INFO in pdf_overnight: Creating PDF for directory: overnight_2024-11-29
