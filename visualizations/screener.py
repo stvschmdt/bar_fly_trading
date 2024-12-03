@@ -27,8 +27,13 @@ class StockScreener:
                 data = os.path.join('../', file)
                 if not hasattr(self, 'data'):
                     self.data = pd.read_csv(data)
+                    # remove all data earlier than n_days
+                    self.data = self.data[self.data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days)]
                 else:
-                    self.data = pd.concat([self.data, pd.read_csv(data)])
+                    self.append_data = pd.read_csv(data)
+                    # remove all data earlier than n_days
+                    self.append_data = self.append_data[self.append_data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days)]
+                    self.data = pd.concat([self.data, self.append_data])
         self.results = []
 
     def _get_closest_trading_date(self, input_date):
