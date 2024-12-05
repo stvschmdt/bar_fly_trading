@@ -1,4 +1,5 @@
 import pandas as pd
+from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import matplotlib.pyplot as plt
 import argparse
@@ -6,6 +7,7 @@ import logging
 from datetime import datetime
 import sys
 import os
+from pdf_overnight import SectionedPNGtoPDFConverter
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from logging_config import setup_logging
 setup_logging()
@@ -13,31 +15,35 @@ logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta
 
 class StockScreener:
-    def __init__(self, symbols, date, indicators='all', visualize=True, n_days=30, use_candlesticks=False, all_data_path='../"'):
+    def __init__(self, symbols, date, indicators='all', visualize=True, n_days=30, use_candlesticks=False, all_data_path='../"', whitelist=[]):
         self.symbols = [symbol.upper() for symbol in symbols]
         self.date = pd.to_datetime(self._get_closest_trading_date(date)).strftime('%Y-%m-%d')
         self.indicators = indicators
         self.visualize = visualize
         self.n_days = n_days
+        self.whitelist = whitelist
         # not implemented
         self.use_candlesticks = use_candlesticks
         # read in all files all_data*.csv and append them into one self.data
         for file in os.listdir(all_data_path):
             if file.startswith('all_data'):
-                data = os.path.join('../', file)
+                data = os.path.join('../api_data/', file)
                 if not hasattr(self, 'data'):
                     self.data = pd.read_csv(data)
                     # cast date to pd.datetime
                     self.data.loc[:, 'date'] = pd.to_datetime(self.data['date'], format='%Y-%m-%d')
                     # remove all data earlier than n_days
-                    self.data = self.data[self.data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days)]
+                    self.data = self.data[self.data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days+60)]
                 else:
                     self.append_data = pd.read_csv(data)
                     self.append_data.loc[:, 'date'] = pd.to_datetime(self.append_data['date'], format='%Y-%m-%d')
                     # remove all data earlier than n_days
-                    self.append_data = self.append_data[self.append_data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days)]
+                    self.append_data = self.append_data[self.append_data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days+60)]
                     self.data = pd.concat([self.data, self.append_data])
         self.results = []
+        # tail
+        # print value counts of each symbol in loop
+        #print(self.data['symbol'].value_counts())
 
     def _get_closest_trading_date(self, input_date):
         input_date = datetime.strptime(input_date, '%Y-%m-%d')
@@ -72,19 +78,19 @@ class StockScreener:
     def run_screen(self):
         # Get the two nearest dates to the target date
         nearest_dates = self.find_nearest_three_dates(self.date)
-        self.latest_date = nearest_dates[0]
-        previous_date = nearest_dates[1]
-        day_before_previous_date = nearest_dates[2]
+        self.latest_date = nearest_dates[0].strftime('%Y-%m-%d')
+        previous_date = nearest_dates[1].strftime('%Y-%m-%d')
+        day_before_previous_date = nearest_dates[2].strftime('%Y-%m-%d')
         #print dates
         #print(self.latest_date)
         #print(previous_date)
         #print(day_before_previous_date)
         # Create output directory for plots
-        output_dir = f'overnight_{self.date}'
+        output_dir = f'overnight_{self.latest_date}'
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
         self.output_dir = output_dir
-        logging.info(f'Running stock screener for symbols: {self.symbols} on date: {self.date}')
+        logging.info(f'Running stock screener for symbols: {self.symbols} on date: {self.latest_date}')
         sectors = ['XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'XLE', 'XRT', 'SPY', 'QQQ']
         for symbol in self.symbols:
             # skip sector ETFs
@@ -98,21 +104,25 @@ class StockScreener:
             previous_date_data = symbol_data[symbol_data['date'] == pd.to_datetime(previous_date)]
             day_before_previous_date_data = symbol_data[symbol_data['date'] == pd.to_datetime(day_before_previous_date)]
             if latest_date_data.empty or previous_date_data.empty:
-                logging.warning(f'No data available for symbol {symbol} on date {self.date}')
+                logging.warning(f'No data available for symbol {symbol} on date {self.latest_date}')
                 continue
             
             latest_bullish, latest_bearish, latest_signals = self._check_signals(latest_date_data, previous_date_data)
             previous_bullish, previous_bearish, previous_signals = self._check_signals(previous_date_data, day_before_previous_date_data)
-            
-            # Check if there's a change in the number of bullish or bearish signals
-            if len(latest_bullish) != len(previous_bullish) or len(latest_bearish) != len(previous_bearish):
-                if len(latest_bullish) != len(previous_bullish) or len(latest_bearish) != len(previous_bearish):
-                    self.results.append([symbol, len(latest_bullish), len(latest_bearish), *latest_signals])
-            
-            
-            if self.visualize and (len(latest_bullish) != len(previous_bullish) or len(latest_bearish) != len(previous_bearish)):
-                if abs(len(latest_bullish) - len(latest_bearish)) > 2:
-                    print('Visualizing', symbol, latest_bullish, latest_bearish)
+            # check elements in latest_signals and previous_signals that are different, add latest_signals to change_signals if so, else 0
+            change_signals = [latest_signals[i] if latest_signals[i] != previous_signals[i] else 0 for i in range(len(latest_signals))]
+            # if the number of non-zero elements in change_signals is greater than 0, add the symbol, number of bullish signals, number of bearish signals, and the signals to self.results
+            if len([signal for signal in change_signals if signal != 0]) > 0 or symbol in self.whitelist:
+                print(f'Latest bullish signals: {latest_bullish}')
+                print(f'Latest bearish signals: {latest_bearish}')
+                print(f'Previous bullish signals: {previous_bullish}')
+                print(f'Previous bearish signals: {previous_bearish}')
+                print(f'Latest signals: {latest_signals}')
+                print(f'Previous signals: {previous_signals}')
+                print(f'Change signals: {change_signals}')
+                self.results.append([symbol, len(latest_bullish), len(latest_bearish), *latest_signals])
+                # if visualize is true, log visualizing and call _visualize
+                if self.visualize:
                     self._visualize(symbol, symbol_data, latest_bullish, latest_bearish)
 
         # run the sector/market ETFs once only
@@ -222,9 +232,15 @@ class StockScreener:
         if sma_20 > sma_50:
             bullish_signals.append('bullish_sma_cross')
             signals.append(1)
+            #print(selected_date_data['date'].values[0], sma_20, sma_50, selected_date_data['symbol'].values)
+            # print signals
+            #print('bull signals', signals)
         elif sma_20 < sma_50:
             bearish_signals.append('bearish_sma_cross')
             signals.append(-1)
+            # print out the date of the bearish cross and symbol
+            #print(selected_date_data['date'].values[0], sma_20, sma_50, selected_date_data['symbol'].values)
+            #print('bear signals', signals)
         else:
             signals.append(0)
 
@@ -553,9 +569,7 @@ class StockScreener:
         #print(len(symbol_data))
 
         # Plot individual indicators if there are bullish or bearish signals
-        print(f'Bullish: {bullish}')
-        print(f'Bearish: {bearish}')
-        if len(bullish) > 1 or len(bearish) > 1:
+        if len(bullish) > 0 or len(bearish) > 0:
         #if abs(len(bullish) - len(bearish)) > 2:
             logging.info(f'Visualizing data for symbol {symbol}')
             if 'macd' in self.indicators or self.indicators == 'all':
@@ -701,7 +715,6 @@ class StockScreener:
             #sector_data = symbol_data[symbol_data['symbol'] == sector]
             # only get the last n_days
             sector_data = sector_data[-self.n_days:]
-            #print('lenge of sector data:', len(sector_data))
             # plot a chart with adjusted_close, sma_20, sma_50, sma_200, bbands_upper_20, bbands_lower_20
             # add text annotation when there are bullish or bearish signals
             plt.figure(figsize=(14, 10))
@@ -803,13 +816,16 @@ class StockScreener:
         if not self.results:
             logging.warning('No results to write.')
             return
-
+        # print results
+        for result in self.results:
+            symbol, num_bullish, num_bearish, *signals = result
+            print('Symbol:', symbol, 'Bullish:', num_bullish, 'Bearish:', num_bearish, 'Signals:', signals)
         rows_to_write = []
         for result in self.results:
             symbol, num_bullish, num_bearish, *signals = result
            # if any(signals):  # Only write rows where there is at least one signal (1 or -1)
             # only write rows where the absolute difference between bullish and bearish signals is greater than 2
-            if abs(num_bullish - num_bearish) > 2:
+            if abs(num_bullish - num_bearish) > 0:
                 rows_to_write.append([symbol, num_bullish, num_bearish, *signals])
 
         if not rows_to_write:
@@ -819,7 +835,7 @@ class StockScreener:
         # Use a fixed number of columns since the indicators are known
         columns = ['symbol', 'num_bullish', 'num_bearish', 'macd', 'adx', 'atr', 'pe_ratio', 'bollinger_band', 'rsi', 'sma_cross']
         results_df = pd.DataFrame(rows_to_write, columns=columns)
-        results_df.to_csv('screener_results_{}.csv'.format(self.date), index=False)
+        results_df.to_csv('screener_results_{}.csv'.format(self.latest_date), index=False)
 
 
 if __name__ == "__main__":
@@ -833,6 +849,8 @@ if __name__ == "__main__":
     parser.add_argument('--visualize', action='store_true', default=True, help='Flag to visualize data (default is true)')
     parser.add_argument('--n_days', type=int, default=30, help='Number of past days to visualize (default is 30)')
     parser.add_argument('--use_candlesticks', action='store_true', default=False, help='Use candlestick charts instead of line plots (default is false)')
+    # add white list - list of stocks on command line to always visualise
+    parser.add_argument('--whitelist', nargs='+', required=False, help='List of stock symbols to always visualise')
 
     args = parser.parse_args()
 
@@ -856,5 +874,9 @@ if __name__ == "__main__":
         visualize=args.visualize,
         n_days=args.n_days,
         use_candlesticks=args.use_candlesticks,
-        all_data_path=args.data)
+        all_data_path=args.data,
+        whitelist=args.whitelist)
     screener.run_screen()
+
+    converter = SectionedPNGtoPDFConverter(directory=screener.output_dir, output_pdf=f'{screener.output_dir}.pdf')
+    converter.convert()
