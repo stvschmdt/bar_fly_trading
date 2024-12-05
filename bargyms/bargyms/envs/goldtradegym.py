@@ -35,7 +35,7 @@ class GoldTradeEnv(gym.Env):
         self.n_days = 20
         # example
         # we want to show the agent window amount of data to take an action
-        self.window = 15
+        self.window = 20
         # low number of discrete shares
         self.low_shares = 10
         # high number of discrete shares
@@ -209,7 +209,7 @@ class GoldTradeEnv(gym.Env):
         # horizontally stack the state data and the account
         self.state_data = np.hstack((self.state_data, self.account))
         # the action is initialized to -1 for each of the length of self.current_data_window
-        actions = np.full((len(self.state_data), 4), -1)
+        actions = np.full((len(self.state_data), 4), 0)
         # horizontally stack the state data and the actions
         self.state = np.hstack((self.state_data, actions))
         
@@ -246,7 +246,7 @@ class GoldTradeEnv(gym.Env):
             # Check if episode is done...agent only gets so long to make a trade
             done = self.current_step >= self.window - 1
         # set all actions to 0 from -1
-        self.state_data[-(self.current_step + self.n_days)][-4:] = 0
+        #self.state_data[-(self.current_step + self.n_days)][-4:] = 0
         # some accounting for ease
         share_price = self.current_data_window.iloc[-(self.current_step+self.n_days)]['adjusted_close']
         low_cost = self.current_data_window.iloc[-(self.current_step+self.n_days)]['adjusted_close'] * self.low_shares
@@ -255,9 +255,9 @@ class GoldTradeEnv(gym.Env):
         # if action is 0, do not buy or sell
         if action == 0:
             if self.shares_owned == 0:
-                reward = -.1 # risk free rate of return
+                reward = -.2 # risk free rate of return
             else:
-                reward = -.2
+                reward = -.1
             # change the state at this step to reflect the action taken
             self.state_data[-(self.current_step + self.n_days)][-4] = 0
 
@@ -332,13 +332,9 @@ class GoldTradeEnv(gym.Env):
                 reward  = reward * (1.0 * self.trade_pl_perc)
                 if self.trade_days < 10 and reward > 0:
                     reward = reward * 1.15
-                    if self.trade_pl_perc > 5.0:
-                        reward = reward * 1.15
                 if self.trade_days < 5 and reward > 0:
-                    reward = reward * 1.25
-                    if self.trade_pl_perc > 2.0:
-                        reward = reward * 1.25
-                if self.trade_pl_perc < .25:
+                    reward = reward * 1.2
+                if self.trade_pl_perc < .2:
                     reward = reward * -1.0
                 if self.trade_pl_perc > 0:
                     self.total_positive_trades += 1
