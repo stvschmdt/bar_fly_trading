@@ -35,13 +35,13 @@ class StockScreener:
                     # cast date to pd.datetime
                     self.data.loc[:, 'date'] = pd.to_datetime(self.data['date'], format='%Y-%m-%d')
                     # remove all data earlier than n_days
-                    self.data = self.data[self.data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days+60)]
+                    self.data = self.data[self.data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days)]
                 else:
                     self.append_data = pd.read_csv(data)
                     logging.info(f'Reading data file: {data}')
                     self.append_data.loc[:, 'date'] = pd.to_datetime(self.append_data['date'], format='%Y-%m-%d')
                     # remove all data earlier than n_days
-                    self.append_data = self.append_data[self.append_data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days+60)]
+                    self.append_data = self.append_data[self.append_data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days)]
                     self.data = pd.concat([self.data, self.append_data])
         self.results = []
         # tail
@@ -97,8 +97,8 @@ class StockScreener:
         #sectors = ['XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'XLE', 'XRT', 'SPY', 'QQQ']
         for symbol in self.symbols:
             # skip sector ETFs
-            if symbol in sectors:
-                continue
+            #if symbol in sectors:
+                #continue
             symbol_data = self.data[self.data['symbol'] == symbol]
             symbol_data.loc[:, 'date'] = pd.to_datetime(symbol_data['date'], format='%Y-%m-%d')
             symbol_data = symbol_data.sort_values('date')
@@ -570,6 +570,7 @@ class StockScreener:
         #print(symbol_data['date'].iloc[-1])
         # how many rows
         #print(len(symbol_data))
+        sectors = ['XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'XLE', 'XRT', 'SPY', 'QQQ']
 
         # Plot individual indicators if there are bullish or bearish signals
         if len(bullish) > 0 or len(bearish) > 0:
@@ -586,11 +587,13 @@ class StockScreener:
             if 'bollinger_band' in self.indicators or self.indicators == 'all':
                 self._plot_bollinger_band(symbol, symbol_data)
             if 'pe_ratio' in self.indicators or self.indicators == 'all':
-                self._plot_pe_ratio(symbol, symbol_data)
+                if symbol not in sectors:
+                    self._plot_pe_ratio(symbol, symbol_data)
             self._plot_price_sma(symbol, symbol_data)
             self._plot_volume(symbol, symbol_data)
             self._plot_symbol_sharpe_ratio(symbol, symbol_data)
-            self._plot_analyst_ratings(symbol, symbol_data)
+            if symbol not in sectors:
+                self._plot_analyst_ratings(symbol, symbol_data)
 
         #output_path = os.path.join(self.output_dir, f'{symbol}_chart.png')
 
@@ -706,16 +709,6 @@ class StockScreener:
             sector_data = sector_data.sort_values('date')
             sector_data = sector_data[sector_data['date'] <= pd.to_datetime(self.latest_date)]
 
-            sector_data['sma_20'] = sector_data['adjusted_close'].rolling(window=20).mean()
-            sector_data['sma_50'] = sector_data['adjusted_close'].rolling(window=50).mean()
-            sector_data['sma_200'] = sector_data['adjusted_close'].rolling(window=200).mean()
-            # calculate bollinger bands
-            sector_data['bbands_middle_20'] = sector_data['adjusted_close'].rolling(window=20).mean()
-            sector_data['bbands_std_20'] = sector_data['adjusted_close'].rolling(window=20).std()
-            sector_data['bbands_upper_20'] = sector_data['bbands_middle_20'] + (2 * sector_data['bbands_std_20'])
-            sector_data['bbands_lower_20'] = sector_data['bbands_middle_20'] - (2 * sector_data['bbands_std_20'])
-            # for each sector, plot the chart with sma_20, sma_50, sma_200, bbands_upper_20, bbands_lower_20
-            #sector_data = symbol_data[symbol_data['symbol'] == sector]
             # only get the last n_days
             sector_data = sector_data[-self.n_days:]
             # plot a chart with adjusted_close, sma_20, sma_50, sma_200, bbands_upper_20, bbands_lower_20
