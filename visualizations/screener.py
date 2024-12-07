@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta
 
 class StockScreener:
+
     def __init__(self, symbols, date, indicators='all', visualize=True, n_days=30, use_candlesticks=False, all_data_path='../"', whitelist=[]):
+
         self.symbols = [symbol.upper() for symbol in symbols]
         self.date = pd.to_datetime(self._get_closest_trading_date(date)).strftime('%Y-%m-%d')
         self.indicators = indicators
@@ -27,18 +29,20 @@ class StockScreener:
         # read in all files all_data*.csv and append them into one self.data
         for file in os.listdir(all_data_path):
             if file.startswith('all_data'):
+
                 data = os.path.join('../api_data/', file)
                 if not hasattr(self, 'data'):
                     # log reading data file
                     self.data = pd.read_csv(data)
                     logging.info(f'Reading data file: {data}')
+
                     # cast date to pd.datetime
                     self.data.loc[:, 'date'] = pd.to_datetime(self.data['date'], format='%Y-%m-%d')
                     # remove all data earlier than n_days
                     self.data = self.data[self.data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days)]
                 else:
                     self.append_data = pd.read_csv(data)
-                    logging.info(f'Reading data file: {data}')
+
                     self.append_data.loc[:, 'date'] = pd.to_datetime(self.append_data['date'], format='%Y-%m-%d')
                     # remove all data earlier than n_days
                     self.append_data = self.append_data[self.append_data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days)]
@@ -840,6 +844,7 @@ if __name__ == "__main__":
     parser.add_argument('--symbols', nargs='+', required=False, help='List of stock symbols to check')
     parser.add_argument('--watchlist', type=str, required=False, default='../api_data/watchlist.csv', help='Watchlist of stock symbols to check')
     parser.add_argument('--data', type=str, default='../api_data/', help='Path to the CSV data files (default: ../api_data/all_data.csv)')
+
     parser.add_argument('--date', type=str, default=datetime.now().strftime('%Y-%m-%d'), help="Date to check signals for (default is today's date)")
     parser.add_argument('--indicators', type=str, nargs='+', default='all', help='List of indicators to check (default is all)')
     parser.add_argument('--visualize', action='store_true', default=True, help='Flag to visualize data (default is true)')
@@ -872,6 +877,7 @@ if __name__ == "__main__":
         use_candlesticks=args.use_candlesticks,
         all_data_path=args.data,
         whitelist=args.whitelist if args.whitelist else [])
+
     screener.run_screen()
 
     converter = SectionedPNGtoPDFConverter(directory=screener.output_dir, output_pdf=f'{screener.output_dir}.pdf')
