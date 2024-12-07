@@ -29,13 +29,16 @@ class StockScreener:
             if file.startswith('all_data'):
                 data = os.path.join('../api_data/', file)
                 if not hasattr(self, 'data'):
+                    # log reading data file
                     self.data = pd.read_csv(data)
+                    logging.info(f'Reading data file: {data}')
                     # cast date to pd.datetime
                     self.data.loc[:, 'date'] = pd.to_datetime(self.data['date'], format='%Y-%m-%d')
                     # remove all data earlier than n_days
                     self.data = self.data[self.data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days+60)]
                 else:
                     self.append_data = pd.read_csv(data)
+                    logging.info(f'Reading data file: {data}')
                     self.append_data.loc[:, 'date'] = pd.to_datetime(self.append_data['date'], format='%Y-%m-%d')
                     # remove all data earlier than n_days
                     self.append_data = self.append_data[self.append_data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days+60)]
@@ -91,7 +94,7 @@ class StockScreener:
             os.makedirs(output_dir)
         self.output_dir = output_dir
         logging.info(f'Running stock screener for symbols: {self.symbols} on date: {self.latest_date}')
-        sectors = ['XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'XLE', 'XRT', 'SPY', 'QQQ']
+        #sectors = ['XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'XLE', 'XRT', 'SPY', 'QQQ']
         for symbol in self.symbols:
             # skip sector ETFs
             if symbol in sectors:
@@ -843,7 +846,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--symbols', nargs='+', required=False, help='List of stock symbols to check')
     parser.add_argument('--watchlist', type=str, required=False, default='../api_data/watchlist.csv', help='Watchlist of stock symbols to check')
-    parser.add_argument('--data', type=str, default='../', help='Path to the CSV data files (default: ../api_data/all_data.csv)')
+    parser.add_argument('--data', type=str, default='../api_data/', help='Path to the CSV data files (default: ../api_data/all_data.csv)')
     parser.add_argument('--date', type=str, default=datetime.now().strftime('%Y-%m-%d'), help="Date to check signals for (default is today's date)")
     parser.add_argument('--indicators', type=str, nargs='+', default='all', help='List of indicators to check (default is all)')
     parser.add_argument('--visualize', action='store_true', default=True, help='Flag to visualize data (default is true)')
@@ -875,7 +878,7 @@ if __name__ == "__main__":
         n_days=args.n_days,
         use_candlesticks=args.use_candlesticks,
         all_data_path=args.data,
-        whitelist=args.whitelist)
+        whitelist=args.whitelist if args.whitelist else [])
     screener.run_screen()
 
     converter = SectionedPNGtoPDFConverter(directory=screener.output_dir, output_pdf=f'{screener.output_dir}.pdf')
