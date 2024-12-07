@@ -5,7 +5,7 @@ import os
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 
-from screener import get_closest_trading_date
+from util import get_closest_trading_date
 
 logger = logging.getLogger(__name__)
 

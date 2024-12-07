@@ -19,50 +19,23 @@ import pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from logging_config import setup_logging
+from util import get_closest_trading_date
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
 
-def get_closest_trading_date(input_date):
-    input_date = datetime.strptime(input_date, '%Y-%m-%d')
-    while input_date.weekday() > 4:  # If it's Saturday (5) or Sunday (6), move to Friday
-        input_date -= timedelta(days=1)
-    # Assuming all weekends are non-trading days, for simplicity
-    return input_date.strftime('%Y-%m-%d')
-
-
 class StockScreener:
-    def __init__(self, symbols, date, indicators='all', visualize=True, n_days=30, use_candlesticks=False, all_data_path='../"', whitelist=[], skip_sectors=False):
+    def __init__(self, symbols, date, data, indicators='all', visualize=True, n_days=30, use_candlesticks=False, all_data_path='../"', whitelist=[], skip_sectors=False):
         self.symbols = [symbol.upper() for symbol in symbols]
         self.date = pd.to_datetime(get_closest_trading_date(date)).strftime('%Y-%m-%d')
+        self.data = data
         self.indicators = indicators
         self.visualize = visualize
         self.n_days = n_days
         self.whitelist = whitelist
         # not implemented
         self.use_candlesticks = use_candlesticks
-        # read in all files all_data*.csv and append them into one self.data
-        for file in os.listdir(all_data_path):
-            if file.startswith('all_data'):
-
-                data = os.path.join('../api_data/', file)
-                if not hasattr(self, 'data'):
-                    # log reading data file
-                    self.data = pd.read_csv(data)
-                    logging.info(f'Reading data file: {data}')
-
-                    # cast date to pd.datetime
-                    self.data.loc[:, 'date'] = pd.to_datetime(self.data['date'], format='%Y-%m-%d')
-                    # remove all data earlier than n_days
-                    self.data = self.data[self.data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days)]
-                else:
-                    self.append_data = pd.read_csv(data)
-
-                    self.append_data.loc[:, 'date'] = pd.to_datetime(self.append_data['date'], format='%Y-%m-%d')
-                    # remove all data earlier than n_days
-                    self.append_data = self.append_data[self.append_data['date'] >= pd.to_datetime(self.date) - timedelta(days=n_days)]
-                    self.data = pd.concat([self.data, self.append_data])
         self.results = []
         self.skip_sectors = skip_sectors
         # tail
@@ -813,12 +786,39 @@ class StockScreener:
         results_df.to_csv('screener_results_{}.csv'.format(self.latest_date), index=False)
 
 
+def combine_csvs(all_data_path: str, n_days: int, date: str):
+    output = pd.DataFrame()
+    # read in all files all_data*.csv and append them into one self.data
+    for file in os.listdir(all_data_path):
+        if file.startswith('all_data'):
+
+            data = os.path.join(all_data_path, file)
+            if output.empty:
+                # log reading data file
+                output = pd.read_csv(data)
+                logging.info(f'Reading data file: {data}')
+
+                # cast date to pd.datetime
+                output.loc[:, 'date'] = pd.to_datetime(output['date'], format='%Y-%m-%d')
+                # remove all data earlier than n_days
+                output = output[output['date'] >= pd.to_datetime(date) - timedelta(days=n_days)]
+            else:
+                append_data = pd.read_csv(data)
+
+                append_data.loc[:, 'date'] = pd.to_datetime(append_data['date'], format='%Y-%m-%d')
+                # remove all data earlier than n_days
+                append_data = append_data[
+                    append_data['date'] >= pd.to_datetime(date) - timedelta(days=n_days)]
+                output = pd.concat([output, append_data])
+    return output
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     parser = argparse.ArgumentParser()
     parser.add_argument('--symbols', nargs='+', required=False, help='List of stock symbols to check')
     parser.add_argument('--watchlist', type=str, required=False, default='../api_data/watchlist.csv', help='Watchlist of stock symbols to check')
-    parser.add_argument('--data', type=str, default='../api_data/', help='Path to the CSV data files (default: ../api_data/all_data.csv)')
+    parser.add_argument('--data', type=str, default='../api_data/', help='Path to the CSV data files (default: ../api_data/)')
 
     parser.add_argument('--date', type=str, default=datetime.now().strftime('%Y-%m-%d'), help="Date to check signals for (default is today's date)")
     parser.add_argument('--indicators', type=str, nargs='+', default='all', help='List of indicators to check (default is all)')
@@ -831,13 +831,14 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    csv_data = combine_csvs(args.data, args.n_days, args.date)
     symbols = []
     try:
         if args.symbols:
             symbols = args.symbols
         else:
-            # read in csv file of watch list
-            symbols = pd.read_csv(args.data)['symbol'].drop_duplicates().tolist()
+            # read in csv file
+            symbols = csv_data['symbol'].drop_duplicates().tolist()
             # ticker symbol is first token after comma separation
             symbols = [symbol.upper() for symbol in symbols]
         logger.info(f"Symbols: {symbols}")
@@ -848,6 +849,7 @@ if __name__ == "__main__":
     screener = StockScreener(
         symbols=symbols,
         date=args.date,
+        data=csv_data,
         indicators=args.indicators,
         visualize=args.visualize,
         n_days=args.n_days,

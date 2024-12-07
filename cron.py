@@ -1,4 +1,5 @@
 import atexit
+import shutil
 import signal
 import subprocess
 import sys
@@ -15,7 +16,6 @@ BASE_DIR = Path(__file__).resolve().parent
 PULL_API_DATA_PATH = BASE_DIR / 'api_data' / 'pull_api_data.py'
 SCREENER_PATH = BASE_DIR / 'visualizations' / 'screener.py'
 PDF_OVERNIGHT_PATH = BASE_DIR / 'visualizations' / 'pdf_overnight.py'
-CSV_PATH = BASE_DIR / 'all_data.csv'
 TABLE_IMAGE_PNG = BASE_DIR / 'table_image.png'
 CREDENTIALS_PATH = BASE_DIR / 'service_account_credentials.json'
 DRIVE_FOLDER_ID = '1UqjZP_QPqD0tP82cqLhBWmR6B3zDV7fe'
@@ -31,7 +31,7 @@ def clean_up():
         TABLE_IMAGE_PNG.unlink()
     for path in BASE_DIR.glob('overnight_*'):
         if path.suffix == '.pdf' or path.is_dir():
-            path.unlink(missing_ok=True) if path.is_file() else path.rmdir()
+            path.unlink(missing_ok=True) if path.is_file() else shutil.rmtree(path, ignore_errors=True)
     for file in BASE_DIR.glob('screener_results_*.csv'):
         file.unlink()
 
@@ -78,7 +78,7 @@ def main():
         check=True
     )
     subprocess.run(
-        ['/usr/bin/python3', SCREENER_PATH, '--n_days', '60', '--data', CSV_PATH, '--skip_sectors'],
+        ['/usr/bin/python3', SCREENER_PATH, '--n_days', '60', '--data', BASE_DIR],
         check=True
     )
     subprocess.run(

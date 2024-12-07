@@ -2,3 +2,33 @@
 [2024-11-30 13:54:37,274] INFO in screener: Running stock screener for symbols: ['AAPL'] on date: 2024-11-29
 [2024-11-30 13:54:37,281] WARNING in screener: No results to write.
 [2024-11-30 13:54:41,885] INFO in pdf_overnight: Creating PDF for directory: overnight_2024-11-29
+[2024-12-07 13:56:48,527] INFO in screener: Reading data file: /Users/abettigole/PycharmProjects/bar_fly_trading/all_data_3.csv
+[2024-12-07 13:57:39,081] INFO in screener: Reading data file: /Users/abettigole/PycharmProjects/bar_fly_trading/all_data_3.csv
+[2024-12-07 13:59:48,015] INFO in screener: Reading data file: /Users/abettigole/PycharmProjects/bar_fly_trading/all_data_3.csv
+[2024-12-07 14:00:43,002] INFO in screener: Reading data file: /Users/abettigole/PycharmProjects/bar_fly_trading/all_data_3.csv
+[2024-12-07 14:00:43,690] INFO in screener: Symbols: ['ALL', 'LMT', 'QCOM', 'RBLX', 'TAP', 'WM', 'XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'BITO', 'DKNG', 'DWAS', 'GUSH', 'JEPI', 'JPM', 'LABU', 'LRCX', 'MA', 'MSFT', 'NUSI', 'PALL', 'QYLD', 'V', 'WMT', 'AAPL', 'NFLX', 'QQQ', 'SPY', 'SQQQ', 'TQQQ', 'XLE', 'XRT']
+[2024-12-07 14:00:59,453] INFO in screener: Reading data file: /Users/abettigole/PycharmProjects/bar_fly_trading/all_data_3.csv
+[2024-12-07 14:01:00,146] INFO in screener: Symbols: ['ALL', 'LMT', 'QCOM', 'RBLX', 'TAP', 'WM', 'XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'BITO', 'DKNG', 'DWAS', 'GUSH', 'JEPI', 'JPM', 'LABU', 'LRCX', 'MA', 'MSFT', 'NUSI', 'PALL', 'QYLD', 'V', 'WMT', 'AAPL', 'NFLX', 'QQQ', 'SPY', 'SQQQ', 'TQQQ', 'XLE', 'XRT']
+[2024-12-07 14:01:00,150] INFO in screener: Running stock screener for symbols: ['ALL', 'LMT', 'QCOM', 'RBLX', 'TAP', 'WM', 'XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'BITO', 'DKNG', 'DWAS', 'GUSH', 'JEPI', 'JPM', 'LABU', 'LRCX', 'MA', 'MSFT', 'NUSI', 'PALL', 'QYLD', 'V', 'WMT', 'AAPL', 'NFLX', 'QQQ', 'SPY', 'SQQQ', 'TQQQ', 'XLE', 'XRT'] on date: 2024-11-29
+[2024-12-07 14:01:00,152] WARNING in screener: No data available for symbol ALL on date 2024-11-29
+[2024-12-07 14:01:00,154] WARNING in screener: No data available for symbol LMT on date 2024-11-29
+[2024-12-07 14:01:00,155] WARNING in screener: No data available for symbol QCOM on date 2024-11-29
+[2024-12-07 14:01:00,157] WARNING in screener: No data available for symbol RBLX on date 2024-11-29
+[2024-12-07 14:01:00,159] WARNING in screener: No data available for symbol TAP on date 2024-11-29
+[2024-12-07 14:01:00,160] WARNING in screener: No data available for symbol WM on date 2024-11-29
+[2024-12-07 14:01:00,180] WARNING in screener: No data available for symbol BITO on date 2024-11-29
+[2024-12-07 14:01:00,181] WARNING in screener: No data available for symbol DKNG on date 2024-11-29
+[2024-12-07 14:01:00,183] WARNING in screener: No data available for symbol DWAS on date 2024-11-29
+[2024-12-07 14:01:00,185] WARNING in screener: No data available for symbol GUSH on date 2024-11-29
+[2024-12-07 14:01:00,186] WARNING in screener: No data available for symbol JEPI on date 2024-11-29
+[2024-12-07 14:01:00,188] WARNING in screener: No data available for symbol JPM on date 2024-11-29
+[2024-12-07 14:01:00,189] WARNING in screener: No data available for symbol LABU on date 2024-11-29
+[2024-12-07 14:01:00,191] WARNING in screener: No data available for symbol LRCX on date 2024-11-29
+[2024-12-07 14:01:00,192] WARNING in screener: No data available for symbol MA on date 2024-11-29
+[2024-12-07 14:01:00,194] WARNING in screener: No data available for symbol MSFT on date 2024-11-29
+[2024-12-07 14:01:00,196] WARNING in screener: No data available for symbol NUSI on date 2024-11-29
+[2024-12-07 14:01:00,197] WARNING in screener: No data available for symbol PALL on date 2024-11-29
+[2024-12-07 14:01:00,199] WARNING in screener: No data available for symbol QYLD on date 2024-11-29
+[2024-12-07 14:01:00,200] WARNING in screener: No data available for symbol V on date 2024-11-29
+[2024-12-07 14:01:00,202] WARNING in screener: No data available for symbol WMT on date 2024-11-29
+[2024-12-07 14:01:03,597] WARNING in screener: No results to write.
