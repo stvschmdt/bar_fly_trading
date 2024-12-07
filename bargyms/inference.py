@@ -86,7 +86,13 @@ class BenchmarkInference:
             print(f"Episode completed for {self.env.current_symbol}. Reward: {episode_reward}")
             total_rewards += episode_reward
             total_episodes += 1
-            break
+            # check if self.env.current_day is at least self.env.n_days before self.end_date
+            # need to convert n_days to pandas shift
+            if self.env.current_day + pd.Timedelta(days=self.env.n_days) > self.end_date:
+                break
+            # set reset options for the next episode at env.current_day
+            reset_options["start_date"] = self.env.current_day
+
 
         print(f"Inference completed: {total_episodes} episodes, Total Reward: {total_rewards}")
 
@@ -111,7 +117,8 @@ if __name__ == "__main__":
     env = gym.make("GoldTradeEnv-v0")
     model_path = "ppo_analystgym.zip"
     csv_path = None
-    symbols = ["AAPL", "GOOG", "AMZN"]
+    symbols = ["NVDA"]
+
     start_date = "2024-07-10"
     end_date = "2024-10-18"
 
