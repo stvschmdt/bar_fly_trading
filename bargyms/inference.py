@@ -117,7 +117,8 @@ if __name__ == "__main__":
     env = gym.make("GoldTradeEnv-v0")
     model_path = "ppo_analystgym.zip"
     csv_path = None
-    symbols = ["AMZN"]
+    symbols = ["NVDA"]
+
     start_date = "2024-07-10"
     end_date = "2024-10-18"
 
