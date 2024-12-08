@@ -5,4 +5,5 @@
 *pycache*
 *.swp*
 *.png
+*.jpg
 credentials.json
