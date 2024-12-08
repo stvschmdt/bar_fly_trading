@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from memory_profiler import profile
 
 from pdf_overnight import SectionedJPGtoPDFConverter
 from util import get_closest_trading_date
@@ -65,7 +64,6 @@ class StockScreener:
         nearest_dates = available_dates[-3:].sort_values(ascending=False)
         return nearest_dates.tolist()
 
-    @profile
     def run_screen(self):
         # Get the two nearest dates to the target date
         nearest_dates = self.find_nearest_three_dates(self.date)
@@ -238,7 +236,6 @@ class StockScreener:
         else:
             signals.append(0)
 
-    @profile
     def _plot_pe_ratio(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_pe_ratio.jpg')
         #plt.figure()
@@ -273,7 +270,6 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-    @profile
     def _plot_macd(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_macd.jpg')
         #plt.figure()
@@ -319,7 +315,6 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-    @profile
     def _plot_adx(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_adx.jpg')
         #plt.figure()
@@ -344,7 +339,6 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-    @profile
     def _plot_atr(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_atr.jpg')
         #plt.figure()
@@ -384,7 +378,6 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-    @profile
     def _plot_price_sma(self, symbol, symbol_data, title='daily_price'):
         output_path = os.path.join(self.output_dir, f'{symbol}_{title}.jpg')
         #plt.figure()
@@ -423,7 +416,6 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-    @profile
     def _plot_volume(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_daily_volume.jpg')
         #plt.figure()
@@ -447,7 +439,6 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-    @profile
     def _plot_analyst_ratings(self, symbol, symbol_data):
         # plot a stacked bar chart for analyst ratings, with the top being strong buy and the bottom being strong sell
         output_path = os.path.join(self.output_dir, f'{symbol}_daily_zanalyst_ratings.jpg')
@@ -479,7 +470,6 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-    @profile
     def _plot_rsi(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_rsi.jpg')
         #plt.figure()
@@ -515,7 +505,6 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-    @profile
     def _plot_bollinger_band(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_bband.jpg')
         #plt.figure()
@@ -560,7 +549,6 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-    @profile
     def _visualize(self, symbol, symbol_data, bullish, bearish):
         # Filter the data for the past n days
         symbol_data = symbol_data[-self.n_days:]
@@ -593,7 +581,6 @@ class StockScreener:
             if symbol not in sectors:
                 self._plot_analyst_ratings(symbol, symbol_data)
 
-    @profile
     def _plot_symbol_sharpe_ratio(self, symbol, symbol_data):
         # Plot Sharpe ratio
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_sharpe_ratio.jpg')
@@ -648,7 +635,6 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-    @profile
     def _process_sector_data(self, symbol_data):
         # list of sector etfs
         sectors = ['XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'XLE', 'XRT', 'SPY', 'QQQ']
@@ -763,7 +749,6 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-    @profile
     def _write_results(self):
         if not self.results:
             logging.warning('No results to write.')
@@ -786,7 +771,6 @@ class StockScreener:
         results_df = pd.DataFrame(rows_to_write, columns=columns)
         results_df.to_csv('screener_results_{}.csv'.format(self.latest_date), index=False)
 
-@profile
 def combine_csvs(all_data_path: str, n_days: int, date: str):
     output = pd.DataFrame()
     # read in all files all_data*.csv and append them into one self.data

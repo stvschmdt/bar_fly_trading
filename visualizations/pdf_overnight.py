@@ -6,7 +6,6 @@ import sys
 import img2pdf
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
-from memory_profiler import profile
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from util import get_closest_trading_date
@@ -22,7 +21,6 @@ class SectionedJPGtoPDFConverter:
         # parse the date from the directory name overnight_2021-09-01
         self.date = self.directory.split('/')[-1].split('_')[-1]
 
-    @profile
     def convert(self):
         # Dictionary to hold images by section
         sections = {
@@ -92,7 +90,6 @@ class SectionedJPGtoPDFConverter:
         else:
             print('No JPG files found in the directory.')
 
-    @profile
     def csv_to_image_table(self,csv_path='screener_results_', output_image='table_image.jpg', output_pdf='table_image.pdf'):
         # Load CSV file into DataFrame
         df = pd.read_csv(csv_path+self.date+'.csv')
