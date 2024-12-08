@@ -58,8 +58,8 @@ def main():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-w", "--watchlist", help="file containing symbols to fetch and store data in db", type=str, default='api_data/watchlist.csv')
-    parser.add_argument("-t", "--test", help="number of symbols for testing functionality", type=int, default=500)
+    parser.add_argument("-w", "--watchlist", help="file containing symbols to fetch and store data in db. Use `all` for S&P 500 + watchlist.", type=str, default='api_data/watchlist.csv')
+    parser.add_argument("-t", "--test", help="number of symbols for testing functionality", type=int, default=600)
     parser.add_argument("-s", "--symbols", help="list of symbols to fetch data for", nargs='+', type=str, default=[])
     args = parser.parse_args()
     logger.info(f"Watchlist file: {args.watchlist}")
@@ -67,11 +67,13 @@ if __name__ == "__main__":
     try:
         if args.symbols:
             SYMBOLS = args.symbols
+        elif args.watchlist == 'all':
+            watchlist = pd.read_csv('api_data/watchlist.csv')['Symbol']
+            sp500 = pd.read_csv('api_data/sp500.csv')['Symbol']
+            SYMBOLS = pd.concat([watchlist, sp500]).drop_duplicates().reset_index(drop=True).tolist()
         else:
             # read in csv file of watch list
             SYMBOLS = pd.read_csv(args.watchlist)['Symbol'].tolist()
-            # ticker symbol is first token after comma separation
-            SYMBOLS = [symbol.split(',')[0] for symbol in SYMBOLS]
             SYMBOLS = [symbol.upper() for symbol in SYMBOLS][0:args.test]
         logger.info(f"Symbols: {SYMBOLS}")
         main()
