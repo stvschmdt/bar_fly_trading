@@ -16,7 +16,7 @@ LOCK_FILE = Path('/tmp/cron.lock')
 BASE_DIR = Path(__file__).resolve().parent
 PULL_API_DATA_PATH = BASE_DIR / 'api_data' / 'pull_api_data.py'
 SCREENER_PATH = BASE_DIR / 'visualizations' / 'screener.py'
-TABLE_IMAGE_PNG = BASE_DIR / 'table_image.png'
+TABLE_IMAGE_JPG = BASE_DIR / 'table_image.jpg'
 CREDENTIALS_PATH = BASE_DIR / 'service_account_credentials.json'
 DRIVE_FOLDER_ID = '1UqjZP_QPqD0tP82cqLhBWmR6B3zDV7fe'
 
@@ -27,8 +27,8 @@ def clean_up():
         LOCK_FILE.unlink()
 
     # Delete table_image.png, overnight_<date> and screener_results_<date>.csv
-    if TABLE_IMAGE_PNG.exists():
-        TABLE_IMAGE_PNG.unlink()
+    if TABLE_IMAGE_JPG.exists():
+        TABLE_IMAGE_JPG.unlink()
     for path in BASE_DIR.glob('overnight_*'):
         if path.suffix == '.pdf' or path.is_dir():
             path.unlink(missing_ok=True) if path.is_file() else shutil.rmtree(path, ignore_errors=True)
