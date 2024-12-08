@@ -1,12 +1,15 @@
 import argparse
 import logging
 import os
+import sys
 
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from util import get_closest_trading_date
-
+from logging_config import setup_logging
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -27,7 +30,7 @@ class SectionedPNGtoPDFConverter:
 
         # Get a list of all PNG files in the directory
         png_files = [f for f in os.listdir(self.directory) if f.endswith('.png')]
-        
+
         # Sort the files to maintain order
         png_files.sort()
 

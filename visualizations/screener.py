@@ -2,25 +2,17 @@ import argparse
 import logging
 import os
 import sys
-
-from pdf_overnight import SectionedPNGtoPDFConverter
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from logging_config import setup_logging
-setup_logging()
-logger = logging.getLogger(__name__)
-
 from datetime import datetime, timedelta
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from logging_config import setup_logging
+from pdf_overnight import SectionedPNGtoPDFConverter
 from util import get_closest_trading_date
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
@@ -793,10 +785,9 @@ def combine_csvs(all_data_path: str, n_days: int, date: str):
         if file.startswith('all_data'):
 
             data = os.path.join(all_data_path, file)
+            logging.info(f'Reading data file: {data}')
             if output.empty:
-                # log reading data file
                 output = pd.read_csv(data)
-                logging.info(f'Reading data file: {data}')
 
                 # cast date to pd.datetime
                 output.loc[:, 'date'] = pd.to_datetime(output['date'], format='%Y-%m-%d')
@@ -841,7 +832,6 @@ if __name__ == "__main__":
             symbols = csv_data['symbol'].drop_duplicates().tolist()
             # ticker symbol is first token after comma separation
             symbols = [symbol.upper() for symbol in symbols]
-        logger.info(f"Symbols: {symbols}")
     except Exception as e:
         print(f"Error: {e}")
         exit()

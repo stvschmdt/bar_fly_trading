@@ -1,4 +1,5 @@
 import atexit
+import os
 import shutil
 import signal
 import subprocess
@@ -15,7 +16,6 @@ LOCK_FILE = Path('/tmp/cron.lock')
 BASE_DIR = Path(__file__).resolve().parent
 PULL_API_DATA_PATH = BASE_DIR / 'api_data' / 'pull_api_data.py'
 SCREENER_PATH = BASE_DIR / 'visualizations' / 'screener.py'
-PDF_OVERNIGHT_PATH = BASE_DIR / 'visualizations' / 'pdf_overnight.py'
 TABLE_IMAGE_PNG = BASE_DIR / 'table_image.png'
 CREDENTIALS_PATH = BASE_DIR / 'service_account_credentials.json'
 DRIVE_FOLDER_ID = '1UqjZP_QPqD0tP82cqLhBWmR6B3zDV7fe'
@@ -72,6 +72,8 @@ def main():
     signal.signal(signal.SIGINT, lambda sig, frame: sys.exit(0))
     signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
 
+    os.chdir(BASE_DIR)
+
     # Pull API data, run screener and create overnight PDF
     subprocess.run(
         ['/usr/bin/python3', PULL_API_DATA_PATH, '-w', 'all'],
@@ -79,10 +81,6 @@ def main():
     )
     subprocess.run(
         ['/usr/bin/python3', SCREENER_PATH, '--n_days', '60', '--data', BASE_DIR],
-        check=True
-    )
-    subprocess.run(
-        ['/usr/bin/python3', PDF_OVERNIGHT_PATH],
         check=True
     )
 
