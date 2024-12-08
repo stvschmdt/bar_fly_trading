@@ -7,8 +7,9 @@ from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from memory_profiler import profile
 
-from pdf_overnight import SectionedPNGtoPDFConverter
+from pdf_overnight import SectionedJPGtoPDFConverter
 from util import get_closest_trading_date
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -64,6 +65,7 @@ class StockScreener:
         nearest_dates = available_dates[-3:].sort_values(ascending=False)
         return nearest_dates.tolist()
 
+    @profile
     def run_screen(self):
         # Get the two nearest dates to the target date
         nearest_dates = self.find_nearest_three_dates(self.date)
@@ -236,8 +238,9 @@ class StockScreener:
         else:
             signals.append(0)
 
+    @profile
     def _plot_pe_ratio(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_pe_ratio.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_pe_ratio.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         pe_ratio = symbol_data['pe_ratio']
@@ -270,8 +273,9 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    @profile
     def _plot_macd(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_macd.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_macd.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         macd = symbol_data['macd']
@@ -315,8 +319,9 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    @profile
     def _plot_adx(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_adx.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_adx.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         adx = symbol_data['adx_14']
@@ -339,8 +344,9 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    @profile
     def _plot_atr(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_atr.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_atr.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         atr = symbol_data['atr_14']
@@ -378,8 +384,9 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    @profile
     def _plot_price_sma(self, symbol, symbol_data, title='daily_price'):
-        output_path = os.path.join(self.output_dir, f'{symbol}_{title}.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_{title}.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         plt.plot(symbol_data['date'], symbol_data['adjusted_close'], label='Adjusted Close', color='black')
@@ -416,9 +423,9 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-    
+    @profile
     def _plot_volume(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_daily_volume.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_daily_volume.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         plt.bar(symbol_data['date'], symbol_data['volume'], alpha=0.3, label='Volume')
@@ -440,9 +447,10 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    @profile
     def _plot_analyst_ratings(self, symbol, symbol_data):
         # plot a stacked bar chart for analyst ratings, with the top being strong buy and the bottom being strong sell
-        output_path = os.path.join(self.output_dir, f'{symbol}_daily_zanalyst_ratings.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_daily_zanalyst_ratings.jpg')
         plt.figure(figsize=(14, 10))
         
         # get the most recent analyst ratings
@@ -471,9 +479,9 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-
+    @profile
     def _plot_rsi(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_rsi.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_rsi.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         plt.plot(symbol_data['date'], symbol_data['rsi_14'], label='RSI 14')
@@ -507,9 +515,9 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
-
+    @profile
     def _plot_bollinger_band(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_bband.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_bband.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         adj_close = symbol_data['adjusted_close']
@@ -552,6 +560,7 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    @profile
     def _visualize(self, symbol, symbol_data, bullish, bearish):
         # Filter the data for the past n days
         symbol_data = symbol_data[-self.n_days:]
@@ -584,9 +593,10 @@ class StockScreener:
             if symbol not in sectors:
                 self._plot_analyst_ratings(symbol, symbol_data)
 
+    @profile
     def _plot_symbol_sharpe_ratio(self, symbol, symbol_data):
         # Plot Sharpe ratio
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_sharpe_ratio.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_sharpe_ratio.jpg')
         plt.figure(figsize=(14, 10))
         plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))
         plt.gca().xaxis.set_major_locator(plt.matplotlib.dates.AutoDateLocator())
@@ -638,6 +648,7 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    @profile
     def _process_sector_data(self, symbol_data):
         # list of sector etfs
         sectors = ['XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'XLE', 'XRT', 'SPY', 'QQQ']
@@ -649,7 +660,7 @@ class StockScreener:
         # for each sector etf we need to manually calculate sma_20, sma_50, sma_200, bbands_upper_20, bbands_lower_20
         for industry, sector in zip(industries, sectors):
 
-            output_path = os.path.join(self.output_dir, f'{sector}_sector_analysis.png')
+            output_path = os.path.join(self.output_dir, f'{sector}_sector_analysis.jpg')
 
             sector_data = self.data[self.data['symbol'] == sector]
             sector_data.loc[:, 'date'] = pd.to_datetime(sector_data['date'], format='%Y-%m-%d')
@@ -712,7 +723,7 @@ class StockScreener:
             plt.close()
         # for all sectors and SPY, QQQ, plot the n_day rolling % change
         # plot the daily % change for all sectors and SPY, QQQ on one chart -> use dotted lines for sectors, bold lines for SPY/QQQ
-        output_path = os.path.join(self.output_dir, 'market_returns.png')
+        output_path = os.path.join(self.output_dir, 'market_returns.jpg')
         plt.figure(figsize=(14, 10))
         # need more than 10 colors from plt color cycle
         colors = plt.cm.tab20(np.linspace(0, 1, len(sectors) + 2))
@@ -752,17 +763,15 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    @profile
     def _write_results(self):
         if not self.results:
             logging.warning('No results to write.')
             return
-        # print results
-        for result in self.results:
-            symbol, num_bullish, num_bearish, *signals = result
-            print('Symbol:', symbol, 'Bullish:', num_bullish, 'Bearish:', num_bearish, 'Signals:', signals)
         rows_to_write = []
         for result in self.results:
             symbol, num_bullish, num_bearish, *signals = result
+            print('Symbol:', symbol, 'Bullish:', num_bullish, 'Bearish:', num_bearish, 'Signals:', signals)
             # if any(signals):  # Only write rows where there is at least one signal (1 or -1)
             # only write rows where the absolute difference between bullish and bearish signals is greater than 2
             if abs(num_bullish - num_bearish) > 0:
@@ -777,7 +786,7 @@ class StockScreener:
         results_df = pd.DataFrame(rows_to_write, columns=columns)
         results_df.to_csv('screener_results_{}.csv'.format(self.latest_date), index=False)
 
-
+@profile
 def combine_csvs(all_data_path: str, n_days: int, date: str):
     output = pd.DataFrame()
     # read in all files all_data*.csv and append them into one self.data
@@ -851,5 +860,5 @@ if __name__ == "__main__":
 
     screener.run_screen()
 
-    converter = SectionedPNGtoPDFConverter(directory=screener.output_dir, output_pdf=f'{screener.output_dir}.pdf')
+    converter = SectionedJPGtoPDFConverter(directory=screener.output_dir, output_pdf=f'{screener.output_dir}.pdf')
     converter.convert()
