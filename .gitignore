@@ -1,8 +1,9 @@
 .idea/*
-api_data/logs/*
 *all_data*
-logs/*
+*/logs/*
 *.ipynb
 *pycache*
 *.swp*
 *.png
+*.jpg
+credentials.json
