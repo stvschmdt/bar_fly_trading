@@ -200,7 +200,7 @@ class StockScreener:
     def _check_pe_ratio(self, selected_date_data, bullish_signals, bearish_signals, signals):
         pe_ratio = selected_date_data['pe_ratio'].values[0]
         # Append a signal for PE ratio
-        if pe_ratio < 15:
+        if pe_ratio < 15 and pe_ratio > 0:
             bullish_signals.append('bullish_pe_ratio')
             signals.append(1)
         elif pe_ratio > 35:
@@ -252,7 +252,7 @@ class StockScreener:
             signals.append(0)
 
     def _plot_pe_ratio(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_pe_ratio.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_ttm_pe_ratio.png')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         pe_ratio = symbol_data['pe_ratio']
@@ -279,8 +279,8 @@ class StockScreener:
 
         plt.xlabel('Date')
         plt.xticks(rotation=45)
-        plt.ylabel('P/E Ratio')
-        plt.title(f'{symbol} - PE Ratio Analysis')
+        plt.ylabel('TTM P/E Ratio')
+        plt.title(f'{symbol} - TTM PE Ratio Analysis')
         plt.tight_layout()
         plt.savefig(output_path)
         plt.close()
