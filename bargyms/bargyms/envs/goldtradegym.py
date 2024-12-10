@@ -27,12 +27,12 @@ class GoldTradeEnv(gym.Env):
                     # remove all data not in symbols or spy or sector
                 #    self.data = self.data[self.data['symbol'].isin(stock_symbols + [self.spy_symbol, self.sector_symbol])]
                     # only keep data since 2016
-                    self.data = self.data[self.data['date'] >= '2016-01-01']
+                    self.data = self.data[self.data['date'] >= '2015-01-01']
                 else:
                     self.append_data = pd.read_csv(data)
                     logging.info(f'Reading data file: {data}')
                     # only keep data since 2016
-                    self.append_data = self.append_data[self.append_data['date'] >= '2016-01-01']
+                    self.append_data = self.append_data[self.append_data['date'] >= '2015-01-01']
                     # remove all data not in symbols or spy or sector
                  #   self.append_data = self.append_data[self.append_data['symbol'].isin(stock_symbols + [self.spy_symbol, self.sector_symbol])]
                     self.data = pd.concat([self.data, self.append_data])
@@ -54,11 +54,11 @@ class GoldTradeEnv(gym.Env):
         self.balance = initial_balance
         
         # we give the agent n_days to learn the environment (window view)
-        self.n_days = 20
+        self.n_days = 30
         # example
         # we want to show the agent window amount of data to take an action
 
-        self.window = 45
+        self.window = 30
 
         # low number of discrete shares
         self.low_shares = 10
@@ -284,7 +284,7 @@ class GoldTradeEnv(gym.Env):
 
                 reward = -.2 # risk free rate of return
             else:
-                reward = -.1
+                reward = -1.0
 
             # change the state at this step to reflect the action taken
             self.state_data[-(self.current_step + self.n_days)][-4] = 0
@@ -357,14 +357,13 @@ class GoldTradeEnv(gym.Env):
                 self.state_data[-(self.current_step + self.n_days)][-6] = self.shares_owned
                 # craft reward and info around positive and negative trades
                 reward = self.final_cost - self.trade_price
-                reward  = reward * (1.0 * self.trade_pl_perc)
+                reward= reward * (1.0 + self.trade_pl_perc)
                 if self.trade_days < 10 and reward > 0:
-                    reward = reward * 1.15
+                    reward = reward * 1.2
 
                 if self.trade_days < 5 and reward > 0:
                     reward = reward * 1.2
-                if self.trade_pl_perc < .2:
-
+                if self.trade_pl_perc < .2 and self.trade_pl_perc > 0:
                     reward = reward * -1.0
                 if self.trade_pl_perc > 0:
                     self.total_positive_trades += 1
@@ -467,6 +466,8 @@ class GoldTradeEnv(gym.Env):
             self.info['reward_perc'] = ((self.current_pl-self.initial_balance) / self.initial_balance) * 100
             # print episode pl and total pl
             # print win rate (positive trades / positive trades + negative trades)
+            if self.illegal_trades:
+                reward = -100000
             win_rate = self.total_positive_trades / max((self.total_positive_trades + self.total_negative_trades), 1)
             self.info['win_rate'] = win_rate
             self.info['total_pl'] = self.win_trade_pl - self.loss_trade_pl
