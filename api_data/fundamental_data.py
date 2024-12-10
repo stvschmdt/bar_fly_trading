@@ -10,6 +10,8 @@ from api_data.storage import delete_company_overview_row, store_data
 from api_data.util import drop_existing_rows, get_table_write_option, graceful_df_to_numeric
 from logging_config import setup_logging
 
+import ipdb
+
 setup_logging()
 logger = logging.getLogger(__name__)
 
@@ -28,7 +30,7 @@ DATA_TYPE_TABLES = {
     },
     FundamentalDataType.EARNINGS: {
         'table_name': 'quarterly_earnings',
-        'columns': ['reported_eps', 'estimated_eps', 'surprise', 'surprise_percentage'],
+        'columns': ['reported_eps', 'estimated_eps', 'surprise', 'surprise_percentage', 'ttm_eps', 'latest_trading_day', 'symbol'],
         'include_index': True,
         'date_col': 'fiscal_date_ending'
     },
@@ -88,7 +90,28 @@ def parse_earnings(data: dict, symbol: str):
 
     # All this data is numeric, but it's possible to have Nones. We don't need to apply numeric gracefully because
     # if it fails, due to the data being None, it will convert to NaN, which is fine because it becomes NULL in MySQL.
+    # create a column for ttm_eps which is the last 4 quarters of reported_eps, unless it is NULL then estimated_eps is used
+    # this needs to be from the most recent quarter to the least recent quarter and the df is not guaranteed to be in that order
+    # if reported_eps is NULL, use estimated_eps
+    df['ttm_eps'] = df['reported_eps']
+    df['ttm_eps'] = np.where(df['ttm_eps'].isnull(), df['estimated_eps'], df['ttm_eps'])
+    # sort the df by date in descending order
+    df = df.sort_index(ascending=True)
+    # calculate the ttm_eps
+    df['ttm_eps'] = df['ttm_eps'].rolling(4).sum()
+    # round ttm_eps to 2 decimal places
+    df['ttm_eps'] = df['ttm_eps'].round(2)
+
     df = df.apply(pd.to_numeric, errors='coerce')
+    df['latest_trading_day'] = df.index
+    df['latest_trading_day'] = np.where(df['latest_trading_day'].dt.dayofweek == 5, df['latest_trading_day'] - pd.Timedelta(days=1), df['latest_trading_day'])
+    df['latest_trading_day'] = np.where(df['latest_trading_day'].dt.dayofweek == 6, df['latest_trading_day'] - pd.Timedelta(days=2), df['latest_trading_day'])
+    # convert the latest_trading_day to sql DATETIME format
+    df['latest_trading_day'] = pd.to_datetime(df['latest_trading_day'], unit='ns', errors='coerce')
+
+    # print the data type of index and latest_trading_day
+    # Format for MySQL
+    df['latest_trading_day'] = df['latest_trading_day'].dt.strftime('%Y-%m-%d')
 
     # We add in the symbol after converting to numeric because it's not a numeric column.
     df['symbol'] = symbol
