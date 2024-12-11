@@ -76,11 +76,11 @@ def main():
 
     # Pull API data, run screener and create overnight PDF
     subprocess.run(
-        ['/usr/bin/python3', PULL_API_DATA_PATH, '-w', 'all'],
+        [sys.executable, PULL_API_DATA_PATH, '-w', 'all'],
         check=True
     )
     subprocess.run(
-        ['/usr/bin/python3', SCREENER_PATH, '--n_days', '60', '--data', BASE_DIR],
+        [sys.executable, SCREENER_PATH, '--n_days', '60', '--data', BASE_DIR],
         check=True
     )
 
