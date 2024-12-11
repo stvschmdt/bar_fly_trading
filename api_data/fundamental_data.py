@@ -10,8 +10,6 @@ from api_data.storage import delete_company_overview_row, store_data
 from api_data.util import drop_existing_rows, get_table_write_option, graceful_df_to_numeric
 from logging_config import setup_logging
 
-import ipdb
-
 setup_logging()
 logger = logging.getLogger(__name__)
 
