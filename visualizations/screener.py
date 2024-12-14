@@ -252,7 +252,7 @@ class StockScreener:
             signals.append(0)
 
     def _plot_pe_ratio(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_ttm_pe_ratio.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_ttm_pe_ratio.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         pe_ratio = symbol_data['pe_ratio']
@@ -286,7 +286,7 @@ class StockScreener:
         plt.close()
 
     def _plot_macd(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_macd.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_macd.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         macd = symbol_data['macd']
@@ -331,7 +331,7 @@ class StockScreener:
         plt.close()
 
     def _plot_adx(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_adx.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_adx.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         adx = symbol_data['adx_14']
@@ -355,7 +355,7 @@ class StockScreener:
         plt.close()
 
     def _plot_atr(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_atr.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_atr.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         atr = symbol_data['atr_14']
@@ -394,7 +394,7 @@ class StockScreener:
         plt.close()
 
     def _plot_price_sma(self, symbol, symbol_data, title='daily_price'):
-        output_path = os.path.join(self.output_dir, f'{symbol}_{title}.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_{title}.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         plt.plot(symbol_data['date'], symbol_data['adjusted_close'], label='Adjusted Close', color='black')
@@ -433,7 +433,7 @@ class StockScreener:
 
     
     def _plot_volume(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_daily_volume.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_daily_volume.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         plt.bar(symbol_data['date'], symbol_data['volume'], alpha=0.3, label='Volume')
@@ -457,7 +457,7 @@ class StockScreener:
 
     def _plot_analyst_ratings(self, symbol, symbol_data):
         # plot a stacked bar chart for analyst ratings, with the top being strong buy and the bottom being strong sell
-        output_path = os.path.join(self.output_dir, f'{symbol}_daily_zanalyst_ratings.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_daily_zanalyst_ratings.jpg')
         plt.figure(figsize=(14, 10))
         
         # get the most recent analyst ratings
@@ -488,7 +488,7 @@ class StockScreener:
 
 
     def _plot_rsi(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_rsi.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_rsi.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         plt.plot(symbol_data['date'], symbol_data['rsi_14'], label='RSI 14')
@@ -524,7 +524,7 @@ class StockScreener:
 
 
     def _plot_bollinger_band(self, symbol, symbol_data):
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_bband.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_bband.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         adj_close = symbol_data['adjusted_close']
@@ -629,7 +629,7 @@ class StockScreener:
 
     def _plot_symbol_sharpe_ratio(self, symbol, symbol_data):
         # Plot Sharpe ratio
-        output_path = os.path.join(self.output_dir, f'{symbol}_technical_sharpe_ratio.png')
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_sharpe_ratio.jpg')
         plt.figure(figsize=(14, 10))
         plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))
         plt.gca().xaxis.set_major_locator(plt.matplotlib.dates.AutoDateLocator())
@@ -706,7 +706,7 @@ class StockScreener:
         # for each sector etf we need to manually calculate sma_20, sma_50, sma_200, bbands_upper_20, bbands_lower_20
         for industry, sector in zip(industries, sectors):
 
-            output_path = os.path.join(self.output_dir, f'{sector}_sector_analysis.png')
+            output_path = os.path.join(self.output_dir, f'{sector}_sector_analysis.jpg')
 
             sector_data = self.data[self.data['symbol'] == sector]
             sector_data.loc[:, 'date'] = pd.to_datetime(sector_data['date'], format='%Y-%m-%d')
@@ -769,7 +769,7 @@ class StockScreener:
             plt.close()
         # for all sectors and SPY, QQQ, plot the n_day rolling % change
         # plot the daily % change for all sectors and SPY, QQQ on one chart -> use dotted lines for sectors, bold lines for SPY/QQQ
-        output_path = os.path.join(self.output_dir, 'market_returns.png')
+        output_path = os.path.join(self.output_dir, 'market_returns.jpg')
         plt.figure(figsize=(14, 10))
         # need more than 10 colors from plt color cycle
         colors = plt.cm.tab20(np.linspace(0, 1, len(sectors) + 2))
