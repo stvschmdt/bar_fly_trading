@@ -233,7 +233,7 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
         AND core.symbol = quart.symbol
         LEFT JOIN company_overview as comp
         ON core.symbol = comp.symbol
-        WHERE core.date > {earliest_date}
+        WHERE core.date > '{earliest_date}'
         AND core.symbol in ({', '.join([f"'{symbol}'" for symbol in symbols])})
         LIMIT {limit};
     """
