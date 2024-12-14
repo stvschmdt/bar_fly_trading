@@ -1,12 +1,20 @@
-from PIL import Image, ImageDraw, ImageFont
-import os
 import argparse
-import pandas as pd
 import logging
+import os
+import sys
+
+import img2pdf
+import pandas as pd
+from PIL import Image, ImageDraw, ImageFont
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from util import get_closest_trading_date
+from logging_config import setup_logging
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
-class SectionedPNGtoPDFConverter:
+class SectionedJPGtoPDFConverter:
     def __init__(self, directory, output_pdf):
         self.directory = directory
         self.output_pdf = output_pdf
@@ -21,14 +29,14 @@ class SectionedPNGtoPDFConverter:
             "Market Analysis": []
         }
 
-        # Get a list of all PNG files in the directory
-        png_files = [f for f in os.listdir(self.directory) if f.endswith('.png')]
-        
+        # Get a list of all JPG files in the directory
+        jpg_files = [f for f in os.listdir(self.directory) if f.endswith('.jpg')]
+
         # Sort the files to maintain order
-        png_files.sort()
+        jpg_files.sort()
 
         # Categorize images into sections
-        for file in png_files:
+        for file in jpg_files:
             file_path = os.path.join(self.directory, file)
             if 'daily' in file.lower() or 'technical' in file.lower():
                 sections["Stock Analysis"].append(file_path)
@@ -40,11 +48,10 @@ class SectionedPNGtoPDFConverter:
         # List to hold the image objects
         images = []
         # first read in the results csv to create a table image as first pdf page
-        title_img = self.csv_to_image_table()
-        title_img = Image.open('table_image.png').convert('RGB')
-        # ensure size is a full normal page
-#        title_img = title_img.resize((2500, 2500))
-        images.append(title_img)
+        self.csv_to_image_table()
+        with Image.open('table_image.jpg').convert('RGB') as img:
+            img.verify()
+            images.append('table_image.jpg')
 
         # Define a simple font and image size for the section titles
         font = ImageFont.load_default()
@@ -60,25 +67,30 @@ class SectionedPNGtoPDFConverter:
                 text_bbox = draw.textbbox((0, 0), section, font=font)
                 text_width, text_height = text_bbox[2] - text_bbox[0], text_bbox[3] - text_bbox[1]
                 text_position = ((title_image_size[0] - text_width) // 2, (title_image_size[1] - text_height) // 2)
-                
+
                 # Draw the text on the title image
                 draw.text(text_position, section, fill='black', font=font)
-                images.append(title_image)
+                # Save title image as a JPG
+                title_image.save(f'{section}.jpg')
+                images.append(f'{section}.jpg')
 
                 for file in files:
-                    img = Image.open(file).convert('RGB')
-                    images.append(img)
+                    try:
+                        with Image.open(file).convert('RGB') as img:
+                            img.verify()
+                            images.append(file)
+                    except (IOError, SyntaxError) as e:
+                        print(f"Invalid image file: {file} - {e}")
 
         # Save all images as a PDF
         if images:
-            # The first image is the base image, the others are appended
-            images[0].save(self.output_pdf, save_all=True, append_images=images[1:])
+            with open(self.output_pdf, "wb") as f:
+                f.write(img2pdf.convert(images))
             print(f'PDF created successfully: {self.output_pdf}')
         else:
-            print('No PNG files found in the directory.')
+            print('No JPG files found in the directory.')
 
-
-    def csv_to_image_table(self,csv_path='screener_results_', output_image='table_image.png', output_pdf='table_image.pdf'):
+    def csv_to_image_table(self,csv_path='screener_results_', output_image='table_image.jpg', output_pdf='table_image.pdf'):
         # Load CSV file into DataFrame
         df = pd.read_csv(csv_path+self.date+'.csv')
         # sort by symbol and reset index
@@ -137,24 +149,19 @@ class SectionedPNGtoPDFConverter:
         # Save the image
         img.save(output_image)
 
-        # Convert image to PDF and save
-        #img_pdf = img.convert('RGB')
-        #img_pdf.save(output_pdf)
-
-
 
 if __name__ == '__main__':
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Convert sectioned PNG files to a single PDF')
+    parser = argparse.ArgumentParser(description='Convert sectioned JPG files to a single PDF')
     # add directory argument
-    parser.add_argument('-d', '--directory', default='overnight_'+pd.Timestamp.now().strftime('%Y-%m-%d'), help='Directory containing sectioned PNG files')
+    parser.add_argument('-d', '--directory', default='overnight_'+get_closest_trading_date(pd.Timestamp.now().strftime('%Y-%m-%d')), help='Directory containing sectioned JPG files')
     # if no directory is provided, try the current date appended to overnight_
-    try:
-        args = parser.parse_args()
-        logger.info('Creating PDF for directory: %s', args.directory)
-        # Get date from directory for output PDF name
-        output_date = args.directory.split('_')[-1]
-        converter = SectionedPNGtoPDFConverter(directory=args.directory, output_pdf=f'overnight_{output_date}.pdf')
-        converter.convert()
-    except:
-        print('No directory provided and unable to determine current date')
+    # try:
+    args = parser.parse_args()
+    logger.info('Creating PDF for directory: %s', args.directory)
+    # Get date from directory for output PDF name
+    output_date = get_closest_trading_date(args.directory.split('_')[-1])
+    converter = SectionedJPGtoPDFConverter(directory=args.directory, output_pdf=f'overnight_{output_date}.pdf')
+    converter.convert()
+    # except:
+    #     print('Unable to create PDF')

@@ -20,7 +20,7 @@ dbname = 'bar_fly_trading'
 TABLE_CREATES = {
     'core_stock': 'CREATE TABLE core_stock(date DATETIME, open DOUBLE, high DOUBLE, low DOUBLE, adjusted_close DOUBLE, volume BIGINT, symbol VARCHAR(5), PRIMARY KEY (date, symbol));',
     'company_overview': 'CREATE TABLE company_overview(exchange VARCHAR(10), country VARCHAR(20), sector VARCHAR(30), industry VARCHAR(60), market_capitalization bigint, book_value DOUBLE, dividend_yield DOUBLE, eps DOUBLE, price_to_book_ratio DOUBLE, beta DOUBLE, 52_week_high DOUBLE, shares_outstanding BIGINT, 52_week_low DOUBLE, analyst_rating_strong_buy INT, analyst_rating_buy INT, analyst_rating_hold INT, analyst_rating_sell INT, analyst_rating_strong_sell INT, forward_pe DOUBLE, symbol VARCHAR(5), PRIMARY KEY (symbol));',
-    'quarterly_earnings': 'CREATE TABLE quarterly_earnings(fiscal_date_ending DATETIME, reported_eps DOUBLE, estimated_eps DOUBLE, surprise DOUBLE, surprise_percentage DOUBLE, symbol VARCHAR(5), PRIMARY KEY (fiscal_date_ending, symbol));',
+    'quarterly_earnings': 'CREATE TABLE quarterly_earnings(fiscal_date_ending DATETIME, reported_eps DOUBLE, estimated_eps DOUBLE, ttm_eps DOUBLE, latest_trading_day DATETIME, surprise DOUBLE, surprise_percentage DOUBLE, symbol VARCHAR(5), PRIMARY KEY (fiscal_date_ending, symbol));',
     'economic_indicators': 'CREATE TABLE economic_indicators(date DATETIME, treasury_yield_2year DOUBLE, treasury_yield_10year DOUBLE, ffer DOUBLE, cpi DOUBLE, inflation DOUBLE, retail_sales DOUBLE, durables DOUBLE, unemployment DOUBLE, nonfarm_payroll DOUBLE, PRIMARY KEY (date));',
     'technical_indicators': 'CREATE TABLE technical_indicators(date DATETIME, sma_20 DOUBLE, sma_50 DOUBLE, sma_200 DOUBLE, ema_20 DOUBLE, ema_50 DOUBLE, ema_200 DOUBLE, macd DOUBLE, rsi_14 DOUBLE, adx_14 DOUBLE, atr_14 DOUBLE, bbands_upper_20 DOUBLE, bbands_middle_20 DOUBLE, bbands_lower_20 DOUBLE, symbol VARCHAR(5), PRIMARY KEY (date, symbol));',
     'stock_splits': 'CREATE TABLE stock_splits(symbol VARCHAR(5), effective_date DATETIME, split_factor DOUBLE, PRIMARY KEY (symbol, effective_date));',
@@ -200,6 +200,7 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
             quart.fiscal_date_ending,
             quart.reported_eps,
             quart.estimated_eps,
+            quart.ttm_eps,
             quart.surprise,
             quart.surprise_percentage,
             comp.exchange,
@@ -228,11 +229,11 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
         LEFT JOIN economic_indicators as econ
         ON core.date = econ.date
         LEFT JOIN quarterly_earnings as quart
-        ON core.date = quart.fiscal_date_ending
+        ON core.date = quart.latest_trading_day
         AND core.symbol = quart.symbol
         LEFT JOIN company_overview as comp
         ON core.symbol = comp.symbol
-        WHERE core.date > {earliest_date}
+        WHERE core.date > '{earliest_date}'
         AND core.symbol in ({', '.join([f"'{symbol}'" for symbol in symbols])})
         LIMIT {limit};
     """
@@ -255,9 +256,9 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
     df['estimated_eps'] = df.groupby('symbol')['estimated_eps'].ffill()
     df['surprise'] = df.groupby('symbol')['surprise'].ffill()
     df['surprise_percentage'] = df.groupby('symbol')['surprise_percentage'].ffill()
+    df['ttm_eps'] = df.groupby('symbol')['ttm_eps'].ffill()
 
-    # calculate price to earnings ratio
-    df['pe_ratio'] = df['adjusted_close'] / df['reported_eps']
+    df['pe_ratio'] = df['adjusted_close'] / df['ttm_eps']
 
     # economic_indicators filldown
     df['treasury_yield_2year'] = df['treasury_yield_2year'].ffill()

@@ -8,3 +8,9 @@ jupyter
 scipy
 gym
 pytest
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+numpy
+img2pdf
