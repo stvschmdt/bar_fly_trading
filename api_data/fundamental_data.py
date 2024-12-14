@@ -93,7 +93,7 @@ def parse_earnings(data: dict, symbol: str):
     # if reported_eps is NULL, use estimated_eps
     df['ttm_eps'] = df['reported_eps']
     df['ttm_eps'] = np.where(df['ttm_eps'].isnull(), df['estimated_eps'], df['ttm_eps'])
-    # sort the df by date in descending order
+    # sort the df by date in ascending order
     df = df.sort_index(ascending=True)
     # calculate the ttm_eps
     df['ttm_eps'] = df['ttm_eps'].rolling(4).sum()
@@ -105,9 +105,8 @@ def parse_earnings(data: dict, symbol: str):
     df['latest_trading_day'] = np.where(df['latest_trading_day'].dt.dayofweek == 5, df['latest_trading_day'] - pd.Timedelta(days=1), df['latest_trading_day'])
     df['latest_trading_day'] = np.where(df['latest_trading_day'].dt.dayofweek == 6, df['latest_trading_day'] - pd.Timedelta(days=2), df['latest_trading_day'])
     # convert the latest_trading_day to sql DATETIME format
-    df['latest_trading_day'] = pd.to_datetime(df['latest_trading_day'], unit='ns', errors='coerce')
+    df['latest_trading_day'] = pd.to_datetime(df['latest_trading_day'], errors='coerce')
 
-    # print the data type of index and latest_trading_day
     # Format for MySQL
     df['latest_trading_day'] = df['latest_trading_day'].dt.strftime('%Y-%m-%d')
 
