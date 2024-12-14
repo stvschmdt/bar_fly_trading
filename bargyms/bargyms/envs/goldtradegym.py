@@ -1,4 +1,6 @@
 import gymnasium as gym
+import os
+import logging
 from gymnasium import spaces
 import numpy as np
 import pandas as pd
@@ -8,16 +10,38 @@ class GoldTradeEnv(gym.Env):
     def __init__(self, csv_path=None, stock_symbols=None, render_mode=None, initial_balance=100000):
         super(GoldTradeEnv, self).__init__()
         if csv_path is None:
-            csv_path = "../api_data/all_data.csv"  # Update with actual path to your CSV
+            csv_path = "../api_data/"  # Update with actual path to your CSV
         if stock_symbols is None:
-            stock_symbols = ["AAPL", "NVDA", "MSFT", "AVGO","QCOM", "AMD", "LRCX"]
+            stock_symbols = ['AAPL', 'NVDA', 'MSFT', 'AVGO', 'AMD', 'QCOM', 'MU']
         self.render_mode = render_mode
-        # Load data from CSV file
-        self.data = pd.read_csv(csv_path)
+        self.spy_symbol = 'SPY'  # SPY for benchmarking
+        self.sector_symbol = 'XLK'  # SOXL for benchmarking chips
+        for file in os.listdir(csv_path):
+            if file.startswith('all_data'):
+                data = os.path.join('../api_data/', file)
+                if not hasattr(self, 'data'):
+                    # log reading data file
+                    self.data = pd.read_csv(data)
+                    logging.info(f'Reading data file: {data}')
+
+                    # remove all data not in symbols or spy or sector
+                #    self.data = self.data[self.data['symbol'].isin(stock_symbols + [self.spy_symbol, self.sector_symbol])]
+                    # only keep data since 2016
+                    self.data = self.data[self.data['date'] >= '2015-01-01']
+                else:
+                    self.append_data = pd.read_csv(data)
+                    logging.info(f'Reading data file: {data}')
+                    # only keep data since 2016
+                    self.append_data = self.append_data[self.append_data['date'] >= '2015-01-01']
+                    # remove all data not in symbols or spy or sector
+                 #   self.append_data = self.append_data[self.append_data['symbol'].isin(stock_symbols + [self.spy_symbol, self.sector_symbol])]
+                    self.data = pd.concat([self.data, self.append_data])
         # cast date to datetime
         self.data['date'] = pd.to_datetime(self.data['date'])
         # ensure the data is sorted by date most recent first
         self.data = self.data.sort_values(by='date', ascending=False)
+        # print how much data we have
+        print(f"Data shape: {self.data.shape}")
         # example data
         # all_data containts
         # 1-1-2023 -> 12-31-2023
@@ -26,26 +50,24 @@ class GoldTradeEnv(gym.Env):
         self.stock_symbols = stock_symbols
         self.symbols_map = {symbol: i for i, symbol in enumerate(self.stock_symbols)}
         self.symbols_pl = {symbol: 0.0 for i, symbol in enumerate(self.stock_symbols)}
-        self.spy_symbol = 'SPY'  # SPY for benchmarking
-        self.sector_symbol = 'XLK'  # SOXL for benchmarking chips
         self.initial_balance = initial_balance
         self.balance = initial_balance
         
         # we give the agent n_days to learn the environment (window view)
-        self.n_days = 20
+        self.n_days = 30
         # example
         # we want to show the agent window amount of data to take an action
 
-        self.window = 20
+        self.window = 30
 
         # low number of discrete shares
         self.low_shares = 10
         # high number of discrete shares
         self.high_shares = 100
         
-        self.cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'ema_20', 'ema_50', 'bbands_upper_20', 'bbands_lower_20', 'rsi_14', 'adx_14', 'atr_14', 'macd','treasury_yield_2year', 'treasury_yield_10year', 'day_of_week_num', 'day_of_year', 'year']
-        self.spy_cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'bbands_upper_20', 'bbands_lower_20']
-        self.sector_cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'bbands_upper_20', 'bbands_lower_20']
+        self.cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'ema_20', 'ema_50', 'bbands_upper_20', 'bbands_lower_20', 'rsi_14', 'adx_14', 'atr_14', 'macd','pe_ratio', 'treasury_yield_2year', 'treasury_yield_10year', 'day_of_week_num', 'day_of_year', 'year']
+        self.spy_cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'bbands_upper_20', 'bbands_lower_20', 'rsi_14']
+        self.sector_cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'bbands_upper_20', 'bbands_lower_20', 'rsi_14']
         # Define observation and action spaces
         self.action_cols = 7
         space_cols = len(self.cols) + len(self.spy_cols) + len(self.sector_cols) + self.action_cols
@@ -123,6 +145,8 @@ class GoldTradeEnv(gym.Env):
             # max start date is 20 days from the end of the data
             max_start_index = len(symbol_data) - (self.n_days + self.window + 1)
             # select a random start date in the range of min, max
+            print('min_start_index', min_start_index)
+            print('max_start_index', max_start_index)
             self.current_index = random.randint(min_start_index, max_start_index)
             # get the data for the selected date range, starting from the current index and adding 20 days
             self.current_data_window = symbol_data.iloc[self.current_index : self.current_index + (self.n_days + self.window + 1)]
@@ -260,7 +284,7 @@ class GoldTradeEnv(gym.Env):
 
                 reward = -.2 # risk free rate of return
             else:
-                reward = -.1
+                reward = -1.0
 
             # change the state at this step to reflect the action taken
             self.state_data[-(self.current_step + self.n_days)][-4] = 0
@@ -333,14 +357,13 @@ class GoldTradeEnv(gym.Env):
                 self.state_data[-(self.current_step + self.n_days)][-6] = self.shares_owned
                 # craft reward and info around positive and negative trades
                 reward = self.final_cost - self.trade_price
-                reward  = reward * (1.0 * self.trade_pl_perc)
+                reward= reward * (1.0 + self.trade_pl_perc)
                 if self.trade_days < 10 and reward > 0:
-                    reward = reward * 1.15
+                    reward = reward * 1.2
 
                 if self.trade_days < 5 and reward > 0:
                     reward = reward * 1.2
-                if self.trade_pl_perc < .2:
-
+                if self.trade_pl_perc < .2 and self.trade_pl_perc > 0:
                     reward = reward * -1.0
                 if self.trade_pl_perc > 0:
                     self.total_positive_trades += 1
@@ -443,6 +466,8 @@ class GoldTradeEnv(gym.Env):
             self.info['reward_perc'] = ((self.current_pl-self.initial_balance) / self.initial_balance) * 100
             # print episode pl and total pl
             # print win rate (positive trades / positive trades + negative trades)
+            if self.illegal_trades:
+                reward = -100000
             win_rate = self.total_positive_trades / max((self.total_positive_trades + self.total_negative_trades), 1)
             self.info['win_rate'] = win_rate
             self.info['total_pl'] = self.win_trade_pl - self.loss_trade_pl
