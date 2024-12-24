@@ -4,7 +4,6 @@ import shutil
 import signal
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
 from google.oauth2 import service_account
@@ -84,10 +83,13 @@ def main():
         check=True
     )
 
-    # Upload overnight PDF to Google Drive
-    date = datetime.now().strftime('%Y-%m-%d')
-    overnight_pdf = str(BASE_DIR / f'overnight_{date}.pdf')
-    upload_to_drive(overnight_pdf, f'overnight_{date}.pdf')
+    # Upload most recent overnight PDF to Google Drive
+    pdf_files = list(BASE_DIR.glob('overnight_*.pdf'))
+    if not pdf_files:
+        print('found no overnight pdf files')
+
+    most_recent_file = max(pdf_files, key=os.path.getmtime)
+    upload_to_drive(most_recent_file.name, most_recent_file.name)
 
 
 if __name__ == '__main__':
