@@ -104,17 +104,19 @@ class StockScreener:
             change_signals = [latest_signals[i] if latest_signals[i] != previous_signals[i] else 0 for i in range(len(latest_signals))]
             # if the number of non-zero elements in change_signals is greater than 0, add the symbol, number of bullish signals, number of bearish signals, and the signals to self.results
             if len([signal for signal in change_signals if signal != 0]) > 0 or symbol in self.whitelist:
-                print(f'Latest bullish signals: {latest_bullish}')
-                print(f'Latest bearish signals: {latest_bearish}')
-                print(f'Previous bullish signals: {previous_bullish}')
-                print(f'Previous bearish signals: {previous_bearish}')
-                print(f'Latest signals: {latest_signals}')
-                print(f'Previous signals: {previous_signals}')
-                print(f'Change signals: {change_signals}')
-                self.results.append([symbol, len(latest_bullish), len(latest_bearish), *latest_signals])
-                # if visualize is true, log visualizing and call _visualize
-                if self.visualize:
-                    self._visualize(symbol, symbol_data, latest_bullish, latest_bearish)
+                # check of sum of the difference between the number of bullish and bearish signals is greater than 1 or more than 2 things changes
+                if abs(len(latest_bullish) - len(latest_bearish)) > 1 or len([signal for signal in change_signals if signal != 0]) > 1:
+                    print(f'Latest bullish signals: {latest_bullish}')
+                    print(f'Latest bearish signals: {latest_bearish}')
+                    print(f'Previous bullish signals: {previous_bullish}')
+                    print(f'Previous bearish signals: {previous_bearish}')
+                    print(f'Latest signals: {latest_signals}')
+                    print(f'Previous signals: {previous_signals}')
+                    print(f'Change signals: {change_signals}')
+                    self.results.append([symbol, len(latest_bullish), len(latest_bearish), *latest_signals])
+                    # if visualize is true, log visualizing and call _visualize
+                    if self.visualize:
+                        self._visualize(symbol, symbol_data, latest_bullish, latest_bearish)
 
         # run the sector/market ETFs once only
         try:
