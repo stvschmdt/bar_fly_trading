@@ -105,7 +105,7 @@ class StockScreener:
             # if the number of non-zero elements in change_signals is greater than 0, add the symbol, number of bullish signals, number of bearish signals, and the signals to self.results
             if len([signal for signal in change_signals if signal != 0]) > 0 or symbol in self.whitelist:
                 # check of sum of the difference between the number of bullish and bearish signals is greater than 1 or more than 2 things changes
-                if abs(len(latest_bullish) - len(latest_bearish)) > 1 or len([signal for signal in change_signals if signal != 0]) > 2:
+                if abs(len(latest_bullish) - len(latest_bearish)) > 1 or len([signal for signal in change_signals if signal != 0]) > 1:
                     print(f'Latest bullish signals: {latest_bullish}')
                     print(f'Latest bearish signals: {latest_bearish}')
                     print(f'Previous bullish signals: {previous_bullish}')
