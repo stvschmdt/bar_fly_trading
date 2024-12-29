@@ -281,9 +281,6 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
     # add year column based on date
     df['year'] = df['date'].dt.year
     # add columns for the percent gain n+3, n+10, n+30 days from current date 
-    # calculate the n_day_pct columns as sum of adjusted_close_pct for n days from current date
-    # Adding percent change columns for each symbol in the dataframe
-    # Correct the column calculations with the updated dataframe name
     df["future_3_day_pct"] = (
         df.groupby("symbol")["adjusted_close"]
         .apply(lambda x: (x.shift(-3) - x) / x * 100)
