@@ -280,6 +280,23 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
     df['day_of_year'] = df['date'].dt.dayofyear
     # add year column based on date
     df['year'] = df['date'].dt.year
+    # add columns for the percent gain n+3, n+10, n+30 days from current date 
+    df["future_3_day_pct"] = (
+        df.groupby("symbol")["adjusted_close"]
+        .apply(lambda x: (x.shift(-3) - x) / x * 100)
+        .reset_index(level=0, drop=True)
+    )
+    df["future_10_day_pct"] = (
+        df.groupby("symbol")["adjusted_close"]
+        .apply(lambda x: (x.shift(-10) - x) / x * 100)
+        .reset_index(level=0, drop=True)
+    )
+    df["future_30_day_pct"] = (
+        df.groupby("symbol")["adjusted_close"]
+        .apply(lambda x: (x.shift(-30) - x) / x * 100)
+        .reset_index(level=0, drop=True)
+    )
+
 
     # Adjust open, high, low for stock splits
     df = adjust_for_stock_splits(df)
