@@ -301,6 +301,7 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
         .apply(lambda x: (x.shift(-30) - x) / x * 100)
         .reset_index(level=0, drop=True)
     )
+
     # Adjust open, high, low for stock splits
     df = adjust_for_stock_splits(df)
     # get unique list of symbols
