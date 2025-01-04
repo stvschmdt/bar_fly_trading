@@ -7,15 +7,15 @@ import pandas as pd
 import random
 
 class GoldTradeEnv(gym.Env):
-    def __init__(self, csv_path=None, stock_symbols=None, render_mode=None, initial_balance=100000):
+    def __init__(self, csv_path=None, stock_symbols=None, render_mode=None, initial_balance=25000):
         super(GoldTradeEnv, self).__init__()
         if csv_path is None:
             csv_path = "../api_data/"  # Update with actual path to your CSV
         if stock_symbols is None:
-            stock_symbols = ['AAPL', 'NVDA', 'MSFT', 'AVGO', 'AMD', 'QCOM', 'MU']
+            stock_symbols = ['NVDA', 'AVGO', 'NFLX', 'WMT', 'AMZN']
         self.render_mode = render_mode
         self.spy_symbol = 'SPY'  # SPY for benchmarking
-        self.sector_symbol = 'XLK'  # SOXL for benchmarking chips
+        self.sector_symbol = 'QQQ'  # QQQ for benchmarking
         for file in os.listdir(csv_path):
             if file.startswith('all_data'):
                 data = os.path.join('../api_data/', file)
@@ -24,17 +24,13 @@ class GoldTradeEnv(gym.Env):
                     self.data = pd.read_csv(data)
                     logging.info(f'Reading data file: {data}')
 
-                    # remove all data not in symbols or spy or sector
-                #    self.data = self.data[self.data['symbol'].isin(stock_symbols + [self.spy_symbol, self.sector_symbol])]
-                    # only keep data since 2016
-                    self.data = self.data[self.data['date'] >= '2015-01-01']
+                    # only keep data since a certain date
+                    self.data = self.data[self.data['date'] >= '2016-01-01']
                 else:
                     self.append_data = pd.read_csv(data)
                     logging.info(f'Reading data file: {data}')
-                    # only keep data since 2016
-                    self.append_data = self.append_data[self.append_data['date'] >= '2015-01-01']
-                    # remove all data not in symbols or spy or sector
-                 #   self.append_data = self.append_data[self.append_data['symbol'].isin(stock_symbols + [self.spy_symbol, self.sector_symbol])]
+                    # only keep data since a certain date
+                    self.append_data = self.append_data[self.append_data['date'] >= '2016-01-01']
                     self.data = pd.concat([self.data, self.append_data])
         # cast date to datetime
         self.data['date'] = pd.to_datetime(self.data['date'])
@@ -42,9 +38,6 @@ class GoldTradeEnv(gym.Env):
         self.data = self.data.sort_values(by='date', ascending=False)
         # print how much data we have
         print(f"Data shape: {self.data.shape}")
-        # example data
-        # all_data containts
-        # 1-1-2023 -> 12-31-2023
         
         # Store the list of symbols to be used for training
         self.stock_symbols = stock_symbols
@@ -54,22 +47,32 @@ class GoldTradeEnv(gym.Env):
         self.balance = initial_balance
         
         # we give the agent n_days to learn the environment (window view)
-        self.n_days = 30
-        # example
+        self.n_days = 20
         # we want to show the agent window amount of data to take an action
-
-        self.window = 30
+        self.window = 20
 
         # low number of discrete shares
         self.low_shares = 10
         # high number of discrete shares
         self.high_shares = 100
         
-        self.cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'ema_20', 'ema_50', 'bbands_upper_20', 'bbands_lower_20', 'rsi_14', 'adx_14', 'atr_14', 'macd','pe_ratio', 'treasury_yield_2year', 'treasury_yield_10year', 'day_of_week_num', 'day_of_year', 'year']
-        self.spy_cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'bbands_upper_20', 'bbands_lower_20', 'rsi_14']
-        self.sector_cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'bbands_upper_20', 'bbands_lower_20', 'rsi_14']
+        self.cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'ema_20', 'ema_50', 'bbands_upper_20', 'bbands_lower_20', 'rsi_14', 'adx_14', 'atr_14', 'macd','pe_ratio', 'macd_signal', 'adx_signal', 'atr_signal', 'pe_ratio_signal', 'bollinger_bands_signal', 'rsi_signal', 'sma_cross_signal', 'bull_bear_delta', 'treasury_yield_2year', 'treasury_yield_10year', 'day_of_week_num', 'day_of_year', 'year']
+        self.spy_cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'bbands_upper_20', 'bbands_lower_20', 'rsi_14', 'macd_signal', 'adx_signal',
+       'atr_signal', 'pe_ratio_signal', 'bollinger_bands_signal', 'rsi_signal', 'sma_cross_signal', 'bull_bear_delta']
+        self.sector_cols = ['adjusted_open', 'adjusted_high', 'adjusted_low', 'adjusted_close', 'sma_20', 'sma_50', 'bbands_upper_20', 'bbands_lower_20', 'rsi_14', 'macd_signal', 'adx_signal',
+       'atr_signal', 'pe_ratio_signal', 'bollinger_bands_signal', 'rsi_signal', 'sma_cross_signal', 'bull_bear_delta']
         # Define observation and action spaces
         self.action_cols = 7
+        # set enums for easier access to state space
+        # account balance | shares owned | hold | low buy | high buy | sell
+        # enums should be the corresponding index in the state space after cols, spy_cols, sector_cols
+        self.account_balance_idx = len(self.cols) + len(self.spy_cols) + len(self.sector_cols) + 1 # plus one for symbol
+        self.shares_owned_idx = self.account_balance_idx + 1
+        self.hold_idx = self.shares_owned_idx + 1
+        self.low_buy_idx = self.hold_idx + 1
+        self.high_buy_idx = self.low_buy_idx + 1
+        self.sell_idx = self.high_buy_idx + 1
+
         space_cols = len(self.cols) + len(self.spy_cols) + len(self.sector_cols) + self.action_cols
         self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.n_days, space_cols), dtype=np.float32)
         self.action_space = gym.spaces.Discrete(3)  # 0: Hold, 1: Buy, 2: Sell
@@ -143,10 +146,8 @@ class GoldTradeEnv(gym.Env):
             # randomly select a start index, with a minimum of 10 days from the earliest date
             min_start_index = self.n_days + 30
             # max start date is 20 days from the end of the data
-            max_start_index = len(symbol_data) - (self.n_days + self.window + 1)
+            max_start_index = len(symbol_data) - (self.n_days + self.window + 30)
             # select a random start date in the range of min, max
-            print('min_start_index', min_start_index)
-            print('max_start_index', max_start_index)
             self.current_index = random.randint(min_start_index, max_start_index)
             # get the data for the selected date range, starting from the current index and adding 20 days
             self.current_data_window = symbol_data.iloc[self.current_index : self.current_index + (self.n_days + self.window + 1)]
@@ -183,20 +184,6 @@ class GoldTradeEnv(gym.Env):
         # get the sector data for the same date range
         #print(self.sector_start_index, self.sector_end_index)
         self.sector_data = self.sector_data.iloc[self.sector_end_index : self.sector_start_index + 1]
-        #print the first day in sector data
-        #print(self.sector_data.iloc[0]['date'])
-        # print the -n_days date for testing
-        #print(self.sector_data.iloc[-self.n_days]['date'])
-        #print("**************")
-        #print(len(self.current_data_window), len(self.spy_data), len(self.sector_data))
-
-
-        # print the first date in each of the data frames
-        #print(self.current_data_window.iloc[0]['date'], self.spy_data.iloc[0]['date'], self.sector_data.iloc[0]['date'])
-        # print the last date in each of the data frames
-        #print(self.current_data_window.iloc[-1]['date'], self.spy_data.iloc[-1]['date'], self.sector_data.iloc[-1]['date'])
-        # print the -n_days for each of the data frames
-        #print(self.current_data_window.iloc[-self.n_days]['date'], self.spy_data.iloc[-self.n_days]['date'], self.sector_data.iloc[-self.n_days]['date'])
         # Reset account, holdings, and state
         self.current_balance = self.initial_balance
         self.initial_cost = 0
@@ -209,31 +196,41 @@ class GoldTradeEnv(gym.Env):
         self.enter_trade_step = -1
         self.exit_trade_step = -1
         self.num_trades = 0
+        self.max_shares = 0
         self.illegal_trades = 0
+
+        # get the max value of the symbol for the current episode
+        self.max_value = self.current_data_window['adjusted_close'].max()
+        # set high shares to nearest integer without going over the initial balance
+        self.high_shares = int(self.initial_balance / self.max_value)
+        # set low shares to 10% of high shares
+        self.low_shares = int(self.high_shares * 0.1)
         
         # Set up the initial 10-day observation window
         self.state_data = self.current_data_window[self.cols].values
-        # get the same columns for the spy data
-        self.spy_data_arr = self.spy_data[self.spy_cols].values
-        # create the action element of the state vector, which is a vector of 1 element for each day in the window
         # get the digit of the symbol we are using
         sym = np.full((len(self.state_data), 1), self.symbols_map[self.current_symbol])
         # horizontally stack the state data and the sym vector
         self.state_data = np.hstack((self.state_data, sym))
+        # get the same columns for the spy data
+        self.spy_data_arr = self.spy_data[self.spy_cols].values
         # get the columns for the sector data
         self.sector_data = self.sector_data[self.sector_cols].values
         # horizontally stack the state data and the sector data
         self.state_data = np.hstack((self.state_data, self.sector_data))
         # horizontally stack the state data and the spy data
         self.state_data = np.hstack((self.state_data, self.spy_data_arr))
-        # the state shares is initialized to 0 for each of the length of self.current_data_window
-        self.shares = np.full((len(self.state_data), 1), self.shares_owned)
-        # horizontally stack the state data and the shares state
-        self.state_data = np.hstack((self.state_data, self.shares))
+
+        # account balance | shares owned | hold | low buy | high buy | sell
+        
         # create an account vector same as action
         self.account = np.full((len(self.state_data), 1), self.initial_balance)
         # horizontally stack the state data and the account
         self.state_data = np.hstack((self.state_data, self.account))
+        # the state shares is initialized to 0 for each of the length of self.current_data_window
+        self.shares = np.full((len(self.state_data), 1), self.shares_owned)
+        # horizontally stack the state data and the shares state
+        self.state_data = np.hstack((self.state_data, self.shares))
         # the action is initialized to -1 for each of the length of self.current_data_window
         actions = np.full((len(self.state_data), 4), 0)
         # horizontally stack the state data and the actions
@@ -253,7 +250,7 @@ class GoldTradeEnv(gym.Env):
         # agent episode details for logging wrap all these in the info dict
         #self.info = {'trade_days': self.trade_days, 'max_profit': self.max_profit, 'agent_pl': self.agent_pl, 'agent_pl_perc': self.agent_pl_perc, 'spy_pl': self.spy_pl, 'spy_pl_perc': self.spy_pl_perc, 'reward':0, 'current_pl':0, 'end_pl':0}
 
-        return self.state.astype(np.float32)[-self.n_days:], {}
+        return np.round(self.state.astype(np.float32)[-self.n_days:], decimals=2), {}
         #return self.state.astype(np.float32)[0:10], {}
 
     # step and reward functions follow as previously outlined.
@@ -271,7 +268,6 @@ class GoldTradeEnv(gym.Env):
         else:
             # Check if episode is done...agent only gets so long to make a trade
             done = self.current_step >= self.window - 1
-        # set all actions to 0 from -1
 
         # some accounting for ease
         share_price = self.current_data_window.iloc[-(self.current_step+self.n_days)]['adjusted_close']
@@ -282,32 +278,39 @@ class GoldTradeEnv(gym.Env):
         if action == 0:
             if self.shares_owned == 0:
 
-                reward = -.2 # risk free rate of return
+                reward = -1.0 # risk free rate of return
             else:
-                reward = -1.0
+                # reward is the daily gain or loss from previous day
+                reward = share_price - self.current_data_window.iloc[-(self.current_step+self.n_days+1)]['adjusted_close']
+                # take into account shares owned
+                # synthetic theta decay of 10% of low costper day
+                reward =  -0.1 * low_cost
 
             # change the state at this step to reflect the action taken
-            self.state_data[-(self.current_step + self.n_days)][-4] = 0
+            self.state_data[-(self.current_step + self.n_days)][self.hold_idx] = 1
 
         # if the action is to buy low shares
         if action == 1:
             # make sure we have enough money to buy the shares
             if self.current_balance >= low_cost and self.shares_owned == 0:
-                self.shares_owned += 10
+                self.shares_owned += self.low_shares
                 self.num_trades += 1
-                self.trade_price = share_price * self.shares_owned
+                self.trade_price = low_cost
                 self.enter_trade_step = self.current_step
-                # update the state
-                self.state_data[-(self.current_step + self.n_days)][-3] = 1
-                self.state_data[-(self.current_step + self.n_days)][-5] += -low_cost
-                self.state_data[-(self.current_step + self.n_days)][-6] += self.shares_owned
                 self.current_balance -= low_cost
+                # update the state shares owned
+                self.state_data[-(self.current_step + self.n_days)][self.shares_owned_idx] = self.shares_owned
+                # update the state account balance
+                self.state_data[-(self.current_step + self.n_days)][self.account_balance_idx] = self.current_balance
+                # update the state to reflect the low buy action
+                self.state_data[-(self.current_step + self.n_days)][self.low_buy_idx] = 1
+                # no reward for buying low shares
                 reward = 0.0
             else:
                 print('invalid buy action')
-                # change the state at this step to reflect the action taken
-                self.state_data[-(self.current_step + self.n_days)][-4] = -1
-                reward = -100000
+                # change the state for low buy attemtp to -1 for invalid
+                self.state_data[-(self.current_step + self.n_days)][self.low_buy_idx] = -1
+                reward = -10000 # punish agent for illegal trade
                 self.illegal_trades = 1
                 #done = True
                 
@@ -315,21 +318,23 @@ class GoldTradeEnv(gym.Env):
         elif action == 2:
             # make sure we have enough money to buy the shares
             if self.current_balance >= high_cost and self.shares_owned == 0:
-                self.shares_owned += 100
+                self.shares_owned += self.high_shares
                 self.num_trades += 1
-                self.trade_price = share_price * self.shares_owned
+                self.trade_price = high_cost
                 self.enter_trade_step = self.current_step
-                # assume minimal risk for entering into a position
-                self.state_data[-(self.current_step + self.n_days)][-2] = 1 
-                self.state_data[-(self.current_step + self.n_days)][-5] += -high_cost
-                self.state_data[-(self.current_step + self.n_days)][-6] += self.shares_owned
                 self.current_balance -= high_cost
+                # update the state shares owned
+                self.state_data[-(self.current_step + self.n_days)][self.shares_owned_idx] = self.shares_owned
+                # update the state account balance
+                self.state_data[-(self.current_step + self.n_days)][self.account_balance_idx] = self.current_balance
+                # update the state to reflect the high buy action
+                self.state_data[-(self.current_step + self.n_days)][self.high_buy_idx] = 1
                 reward = 0.0 # risk free rate of return
             else:
                 print('invalid buy action')
-                # change the state at this step to reflect the action taken
-                self.state_data[-(self.current_step + self.n_days)][-4] = -1
-                reward = -100000
+                # change the state for high buy attemtp to -1 for invalid
+                self.state_data[-(self.current_step + self.n_days)][self.high_buy_idx] = -1
+                reward = -10000 # punish agent for illegal trade
                 self.illegal_trades = 1
                 #done = True
         
@@ -337,6 +342,7 @@ class GoldTradeEnv(gym.Env):
         elif action == 3:
             # make sure you own the stock first
             if self.shares_owned >= 0:
+                self.max_shares = self.shares_owned
                 # sell shares -> the current day opening price
                 self.final_cost = share_price * self.shares_owned
                 #self.initial_cost = (share_price  * self.shares_owned) / self.num_trades
@@ -351,20 +357,22 @@ class GoldTradeEnv(gym.Env):
                 # current pl
                 self.current_pl = self.current_balance - self.initial_balance
                 # calculate percent profit or loss
-                # update the state to reflect the action taken
-                self.state_data[-(self.current_step + self.n_days)][-1] = 1
-                self.state_data[-(self.current_step + self.n_days)][-5] += low_cost
-                self.state_data[-(self.current_step + self.n_days)][-6] = self.shares_owned
+                # update the state shares owned
+                self.state_data[-(self.current_step + self.n_days)][self.shares_owned_idx] = self.shares_owned
+                # update the state account balance
+                self.state_data[-(self.current_step + self.n_days)][self.account_balance_idx] = self.current_balance
+                # update the state to reflect the sell action
+                self.state_data[-(self.current_step + self.n_days)][self.sell_idx] = 1
                 # craft reward and info around positive and negative trades
                 reward = self.final_cost - self.trade_price
-                reward= reward * (1.0 + self.trade_pl_perc)
-                if self.trade_days < 10 and reward > 0:
-                    reward = reward * 1.2
-
-                if self.trade_days < 5 and reward > 0:
-                    reward = reward * 1.2
-                if self.trade_pl_perc < .2 and self.trade_pl_perc > 0:
-                    reward = reward * -1.0
+                # round self.trade_pl_perc to nearest whole number
+                reward = reward * (1.0 + round(self.trade_pl_perc))
+                # extra positive reward if trade is positive and trade_days is less than 10
+                if self.trade_pl_perc > 1.5 and self.trade_days < 10:
+                    reward = reward * 3.0
+                # extra positive reward if trade is positive and trade_days is less than 5
+                if self.trade_pl_perc > .25 and self.trade_days < 5:
+                    reward = reward * 1.5
                 if self.trade_pl_perc > 0:
                     self.total_positive_trades += 1
                     self.info['positive_trade'] = self.total_positive_trades
@@ -373,8 +381,8 @@ class GoldTradeEnv(gym.Env):
                     self.win_trade += 1
                     self.win_trade_pl += self.trade_pl_perc
                     self.info['avg_win_trade'] = self.win_trade_pl / self.win_trade
-                elif self.trade_pl_perc < 0:
-                    reward = reward * 7.0
+                elif self.trade_pl_perc < 1.0:
+                    reward = reward * 5.0
                     self.total_negative_trades += 1
                     self.info['negative_trade'] = self.total_negative_trades
                     self.info['negative_amount'] = reward
@@ -383,11 +391,12 @@ class GoldTradeEnv(gym.Env):
                     self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
                 # craft reward and info around positive and negative trades
                 else:
-                    reward = 0.0
+                    reward = reward * 1.1
 
             else:
-                reward = -100000
-                self.state_data[-(self.current_step+self.n_days)][-4] = -1
+                # update the state to reflect the sell action
+                self.state_data[-(self.current_step + self.n_days)][self.sell_idx] = -1
+                reward = -10000 # punish agent for illegal trade
                 print('invalid sell action')
                 self.illegal_trades = 1
             #if not self.inference:
@@ -408,21 +417,42 @@ class GoldTradeEnv(gym.Env):
         # if its the last step, sell all shares
         if done:
             self.day_one_cost = self.current_data_window.iloc[-self.n_days]['adjusted_close']
+            # find the max profit possible for the last n_days where a trade could have been made
+            # max profit is calculated as max gain from any day in the window to any other day AFTER that day in the window
+            # must check all possible entry days and exit days for largest spread in self.window
+
+            max_profit = 0  # Initialize maximum profit
+
+            # Iterate over potential buy points relative to -self.n_days
+            for i in range(-self.n_days, -1):  # Start from -self.n_days, stop before the last index
+                for j in range(i + 1, 0):  # Ensure sell (j) is after buy (i)
+                    buy_price = self.current_data_window.iloc[i]['adjusted_close']
+                    sell_price = self.current_data_window.iloc[j]['adjusted_close']
+                    profit = sell_price - buy_price
+                    max_profit = max(max_profit, profit)  # Update max profit if higher
+
+            self.max_profit = max_profit
+
             # get the max adjusted_close over the last n_days
             self.max_entry = self.current_data_window.iloc[-(self.current_step+self.n_days):self.n_days]['adjusted_close'].max()
             # get the min adjusted_close over the last n_days
             self.first_entry = self.current_data_window.iloc[-self.n_days]['adjusted_close']
-            # get the same for spy
-            self.spy_max_entry = self.spy_data.iloc[-(self.current_step+self.n_days):self.n_days]['adjusted_close'].max()
-            self.spy_first_entry = self.spy_data.iloc[-self.n_days]['adjusted_close']
+            # get the same for spy as we did for max_profit
+            spy_max_profit = 0  # Initialize maximum profit
+            # Iterate over potential buy points relative to -self.n_days
+            for i in range(-self.n_days, -1):  # Start from -self.n_days, stop before the last index
+                for j in range(i + 1, 0):
+                    buy_price = self.spy_data.iloc[i]['adjusted_close']
+                    sell_price = self.spy_data.iloc[j]['adjusted_close']
+                    profit = sell_price - buy_price
+                    spy_max_profit = max(spy_max_profit, profit)
+            self.spy_max_profit = spy_max_profit
             self.spy_trade_entry = self.spy_data.iloc[-(self.enter_trade_step+self.n_days)]['adjusted_close']
             self.spy_trade_exit = self.spy_data.iloc[-(self.exit_trade_step+self.n_days)]['adjusted_close']
-            # calculate the max profit
-            self.max_profit = self.max_entry - self.first_entry
-            # calculate the spy max profit
-            self.spy_max_profit = self.spy_max_entry - self.spy_first_entry
-    
-            if self.shares_owned > 0:
+   
+            # trading window is over, the agent should have closed out all trades
+            if self.shares_owned > 0: # case where agent has shares left over
+                self.max_shares = self.shares_owned
                 # we are done, get the final cost of the stock and close out
                 self.final_cost = self.current_data_window.iloc[-(self.current_step+self.n_days)]['adjusted_close']
                 # sell all shares
@@ -437,15 +467,16 @@ class GoldTradeEnv(gym.Env):
                 self.trade_pl_perc = ((self.final_cost - self.trade_price) / self.trade_price) * 100
                 # extra negative reward
                 if self.agent_pl < 0:
-                    reward = self.agent_pl * 2.0
+                    reward = self.agent_pl
+                    reward = self.agent_pl * 5.0
                     self.total_negative_trades += 1
                     self.info['negative_trade'] = self.total_negative_trades
                     self.info['negative_amount'] = self.current_pl
                     self.loss_trade += 1
                     self.loss_trade_pl += self.trade_pl_perc
                     self.info['avg_loss_trade'] = self.loss_trade_pl / self.loss_trade
-                else:
-                    reward = self.agent_pl * .1
+                else: # agent was holding profit, but didnt close out in time
+                    reward = self.agent_pl * .3
                     self.total_positive_trades += 1
                     self.info['positive_trade'] = self.total_positive_trades
                     self.info['positive_amount'] = self.current_pl
@@ -455,7 +486,11 @@ class GoldTradeEnv(gym.Env):
                     self.info['avg_win_trade'] = self.win_trade_pl / self.win_trade
             else:
                 if self.enter_trade_step < 0: # no trades
-                    reward = -3.0
+                    # check if there was profit to be made
+                    if self.max_profit > 500:
+                        reward = -self.max_profit * self.low_shares
+                    else:
+                        reward = 100.0
                     self.trade_days = 0
                     self.agent_pl = 0
                     self.trade_pl_perc = 0
@@ -467,7 +502,7 @@ class GoldTradeEnv(gym.Env):
             # print episode pl and total pl
             # print win rate (positive trades / positive trades + negative trades)
             if self.illegal_trades:
-                reward = -100000
+                reward = -10000
             win_rate = self.total_positive_trades / max((self.total_positive_trades + self.total_negative_trades), 1)
             self.info['win_rate'] = win_rate
             self.info['total_pl'] = self.win_trade_pl - self.loss_trade_pl
@@ -476,23 +511,24 @@ class GoldTradeEnv(gym.Env):
             self.info['current_pl'] = self.current_pl
             self.info['current_balance'] = self.current_balance
             self.info['trade_days'] = self.trade_days
-            self.info['max_profit'] = self.max_profit
-            self.info['spy_max_profit'] = self.spy_max_profit
+            self.info['max_profit'] = self.max_profit * self.high_shares
+            self.info['spy_max_profit'] = self.spy_max_profit * self.max_shares
             self.info['agent_pl'] = self.agent_pl
             self.info['agent_pl_perc'] = self.trade_pl_perc
-            self.info['agent_trade_alpha'] = self.agent_pl - (self.spy_trade_entry - self.spy_trade_exit)
-            self.info['agent_alpha'] = self.agent_pl - self.spy_max_profit
-            self.info['agent_alpha_avg'] = self.info['agent_alpha'] / (self.current_episode)
+            self.info['agent_trade_alpha'] = self.agent_pl - (self.spy_trade_entry * self.max_shares - self.spy_trade_exit * self.max_shares)
+            self.info['agent_trade_alpha_avg'] = self.info['agent_trade_alpha'] / max(self.num_trades, 1)
+            self.info['agent_possible_alpha'] = self.max_profit * self.max_shares - self.spy_max_profit * self.max_shares
+            self.info['agent_alpha_avg'] = self.info['agent_possible_alpha'] / (self.current_episode)
 
             self.symbols_pl[self.current_symbol] += self.total_pl
-            if reward != 0.0 and reward > -10000:
+            if reward != 0.0 and reward > -1000:
                 # cap to 2 decimal places
                 print(f"Ep P/L: {self.current_balance-self.initial_balance:.2f}, WR: {win_rate:.2f}, Agent P/L: {self.agent_pl:.2f}, Agent P/L %: {self.trade_pl_perc:.2f}, Max PL: {self.max_profit:.2f}, Spy Max PL: {self.spy_max_profit:.2f}, Reward: {reward:.2f}")
             if self.current_balance > self.max_balance:
                 self.max_balance = self.current_balance
                 print(f"******* NEW MAX BALANCE: {self.max_balance}, {self.current_symbol} ********")
         if self.illegal_trades:
-            reward = -100000
+            reward = -1000
         self.current_step += 1
         self.state = self.state_data[-(self.current_step + self.n_days ) : -(self.current_step)].astype(np.float32)
         #print(self.state)

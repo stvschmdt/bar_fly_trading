@@ -3,7 +3,9 @@ import gymnasium as gym
 from gymnasium.wrappers import RecordEpisodeStatistics
 import os
 import yaml
+import torch
 from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import EvalCallback
 from register import register_env
 
@@ -36,6 +38,22 @@ class InfoDictTensorboardCallback(BaseCallback):
             else:
                 # Print the key and value type to diagnose other potential issues
                 print(f"Skipping non-scalar info key '{key}' with value: {value} (type: {type(value)})")
+        # Access the observations from the environment
+        obs = self.locals["rollout_buffer"].observations
+        obs_tensor = torch.tensor(obs, dtype=torch.float32)
+
+        # Get the policy network
+        policy = self.model.policy
+
+        # Forward pass to get the logits
+        with torch.no_grad():
+            distribution = policy.get_distribution(obs_tensor)
+            logits = distribution.distribution.logits  # Logits from the Categorical distribution
+
+        # Check for NaN or Inf in the logits
+        if torch.isnan(logits).any() or torch.isinf(logits).any():
+            raise ValueError("Logits contain NaN or Inf values during training")
+
         return True
 
 def load_config(config_file):

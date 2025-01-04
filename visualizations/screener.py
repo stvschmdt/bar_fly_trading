@@ -2,16 +2,16 @@ import argparse
 import logging
 import os
 import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from datetime import datetime, timedelta
+from util import get_closest_trading_date
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from pdf_overnight import SectionedJPGtoPDFConverter
-from util import get_closest_trading_date
+from visualizations.pdf_overnight import SectionedJPGtoPDFConverter
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -130,10 +130,11 @@ class StockScreener:
 
     def _check_macd(self, selected_date_data, bullish_signals, bearish_signals, signals):
         macd = selected_date_data['macd'].values[0]
-        if macd > 0:
+        ema = selected_date_data['macd_9_ema'].values[0]
+        if macd > ema:
             bullish_signals.append('bullish_macd')
             signals.append(1)
-        elif macd < 0:
+        elif macd < ema:
             bearish_signals.append('bearish_macd')
             signals.append(-1)
         else:
@@ -279,7 +280,8 @@ class StockScreener:
         macd = symbol_data['macd']
         max_abs_macd = max(abs(macd.min()), abs(macd.max()))
         plt.ylim(-max_abs_macd, max_abs_macd)
-        signal_line = symbol_data['macd']
+        # get the 9 day ewm of the macd
+        signal_line = symbol_data['macd_9_ema']
         plt.plot(symbol_data['date'], macd, label='MACD', color='blue')
         plt.plot(symbol_data['date'], signal_line, label='Signal Line', color='red')
         
@@ -305,6 +307,29 @@ class StockScreener:
                              fontsize=8,
                              bbox=dict(boxstyle='round,pad=0.3', edgecolor='red', facecolor='white'),
                              arrowprops=dict(arrowstyle='->', color='red'))
+        # add annotations for bullish and bearish crossovers
+        for i in range(1, len(symbol_data)):
+            if macd.iloc[i] > signal_line.iloc[i] and macd.iloc[i - 1] <= signal_line.iloc[i - 1]:
+                plt.annotate('Bullish MACD Crossover', 
+                             xy=(symbol_data['date'].iloc[i-1], macd.iloc[i-1]), 
+                             xytext=(0, 20),
+                             textcoords='offset points',
+                             ha='center',
+                             color='green',
+                             fontsize=8,
+                             bbox=dict(boxstyle='round,pad=0.3', edgecolor='green', facecolor='white'),
+                             arrowprops=dict(arrowstyle='->', color='green'))
+            elif macd.iloc[i] < signal_line.iloc[i] and macd.iloc[i - 1] >= signal_line.iloc[i - 1]:
+                plt.annotate('Bearish MACD Crossover', 
+                             xy=(symbol_data['date'].iloc[i-1], macd.iloc[i-1]), 
+                             xytext=(0, -20),
+                             textcoords='offset points',
+                             ha='center',
+                             color='red',
+                             fontsize=8,
+                             bbox=dict(boxstyle='round,pad=0.3', edgecolor='red', facecolor='white'),
+                             arrowprops=dict(arrowstyle='->', color='red'))
+
         
         plt.axhline(0, color='black', linestyle='--')
         plt.xlabel('Date')
