@@ -11,7 +11,7 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 # The actual rate-limit is 150, but we want to be able to make a few ad-hoc requests while things are running.
-DEFAULT_MAX_REQUESTS_PER_MIN = 140
+DEFAULT_MAX_REQUESTS_PER_MIN = 110
 
 
 class AlphaVantageClient:
