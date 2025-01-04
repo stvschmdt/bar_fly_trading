@@ -1,11 +1,14 @@
 import logging
 import os
+import sys
 from enum import Enum
 
 import pandas as pd
 from sqlalchemy import create_engine, text
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from logging_config import setup_logging
+from visualizations.screener import StockScreener
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -257,6 +260,8 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
     df['surprise'] = df.groupby('symbol')['surprise'].ffill()
     df['surprise_percentage'] = df.groupby('symbol')['surprise_percentage'].ffill()
     df['ttm_eps'] = df.groupby('symbol')['ttm_eps'].ffill()
+    # calculate the 9 day exponential moving average of the macd for each symbol
+    df["macd_9_ema"] = df.groupby("symbol")["macd"].transform(lambda x: x.ewm(span=9, adjust=False).mean())
 
     df['pe_ratio'] = df['adjusted_close'] / df['ttm_eps']
 
@@ -297,9 +302,46 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
         .reset_index(level=0, drop=True)
     )
 
-
     # Adjust open, high, low for stock splits
     df = adjust_for_stock_splits(df)
+    # get unique list of symbols
+    symbols = df["symbol"].unique()
+    # get the latest date in the df
+    latest_date = df["date"].max()
+    # change latest_date to a string
+    latest_date = latest_date.strftime("%Y-%m-%d")
+    # create a StockScreener object to use _check functions
+    stock_screener = StockScreener(symbols, latest_date, df.head())
+    # for each row in the df, use each of the _check functions to create a new column for each
+    # the _check functions will build a list of -1,0,1 for each _check function
+    # append this list to the df as new columns
+    # the check functions are _check macd, adx, atr, pe_ratio, bollinger_bands, rsi, sma_cross
+    # the check functions take the df row as input and three lists, we will dummy the first two
+    # the finsl list 'signals' will be appended to for each row 
+    full_cols = []
+    for index, row in df.iterrows():
+        signals = []
+        # get the df for the row symbol and date
+        screen_df = df[(df.symbol == row['symbol']) & (df.date == row['date'])]
+        stock_screener._check_macd(screen_df, [], [], signals)
+        stock_screener._check_adx(screen_df, [], [], signals)
+        stock_screener._check_atr(screen_df, [], [], signals)
+        stock_screener._check_pe_ratio(screen_df, [], [], signals)
+        stock_screener._check_bollinger_band(screen_df, [], [], signals)
+        stock_screener._check_rsi(screen_df, [], [], signals)
+        stock_screener._check_sma_cross(screen_df, [], [], signals)
+        # append the row of signals, to the full_cols list
+        full_cols.append(signals)
+
+    # create a dataframe from the full_cols list with the signals as columns
+    signals_df = pd.DataFrame(full_cols, columns=["macd_signal", "adx_signal", "atr_signal", "pe_ratio_signal", "bollinger_bands_signal", "rsi_signal", "sma_cross_signal"])
+    # concat the signals_df as new columns to the df
+    df = pd.concat([df, signals_df], axis=1)
+    
+    # create a new column for the sum of all the signals
+    df["bull_bear_delta"] = df["macd_signal"] + df["adx_signal"] + df["atr_signal"] + df["pe_ratio_signal"] + df["bollinger_bands_signal"] + df["rsi_signal"] + df["sma_cross_signal"]
+
+
     df.to_csv(f'all_data_{batch_num}.csv')
 
 

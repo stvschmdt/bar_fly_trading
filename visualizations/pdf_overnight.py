@@ -8,8 +8,8 @@ import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from util import get_closest_trading_date
 from logging_config import setup_logging
+from util import get_closest_trading_date
 setup_logging()
 logger = logging.getLogger(__name__)
 

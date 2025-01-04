@@ -13,8 +13,6 @@ from googleapiclient.http import MediaFileUpload
 DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.file']
 LOCK_FILE = Path('/tmp/cron.lock')
 BASE_DIR = Path(__file__).resolve().parent
-PULL_API_DATA_PATH = BASE_DIR / 'api_data' / 'pull_api_data.py'
-SCREENER_PATH = BASE_DIR / 'visualizations' / 'screener.py'
 TABLE_IMAGE_JPG = BASE_DIR / 'table_image.jpg'
 CREDENTIALS_PATH = BASE_DIR / 'service_account_credentials.json'
 DRIVE_FOLDER_ID = '1UqjZP_QPqD0tP82cqLhBWmR6B3zDV7fe'
@@ -75,11 +73,11 @@ def main():
 
     # Pull API data, run screener and create overnight PDF
     subprocess.run(
-        [sys.executable, PULL_API_DATA_PATH, '-w', 'all'],
+        [sys.executable, '-m', 'api_data.pull_api_data', '-w', 'all'],
         check=True
     )
     subprocess.run(
-        [sys.executable, SCREENER_PATH, '--n_days', '60', '--data', BASE_DIR],
+        [sys.executable, '-m', 'visualizations.screener', '--n_days', '60', '--data', BASE_DIR],
         check=True
     )
 
