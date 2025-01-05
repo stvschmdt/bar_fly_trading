@@ -10,9 +10,10 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
+from constants import BASE_DIR
+
 DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.file']
 LOCK_FILE = Path('/tmp/cron.lock')
-BASE_DIR = Path(__file__).resolve().parent
 TABLE_IMAGE_JPG = BASE_DIR / 'table_image.jpg'
 CREDENTIALS_PATH = BASE_DIR / 'service_account_credentials.json'
 DRIVE_FOLDER_ID = '1UqjZP_QPqD0tP82cqLhBWmR6B3zDV7fe'
