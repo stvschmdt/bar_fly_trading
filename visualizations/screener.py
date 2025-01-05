@@ -153,12 +153,25 @@ class StockScreener:
 
     def _check_atr(self, selected_date_data, bullish_signals, bearish_signals, signals):
         atr = selected_date_data['atr_14'].values[0]
+        # latest close
+        latest_close = selected_date_data['adjusted_close'].values[0]
         # Define ATR thresholds based on volatility conditions
-        if atr > 2:
+        if latest_close > atr * 2:
             bearish_signals.append('bearish_atr')
             signals.append(-1)
-        elif atr < 1:
+        elif latest_close < atr * 2:
             bullish_signals.append('bullish_atr')
+            signals.append(1)
+        else:
+            signals.append(0)
+
+    def _check_cci(self, selected_date_data, bullish_signals, bearish_signals, signals):
+        cci = selected_date_data['cci_14'].values[0]
+        if cci >= 100:
+            bearish_signals.append('bullish_cci')
+            signals.append(-1)
+        elif cci <= -100:
+            bullish_signals.append('bearish_cci')
             signals.append(1)
         else:
             signals.append(0)
@@ -168,20 +181,22 @@ class StockScreener:
         bearish_signals = []
         signals = []
 
-        if self.indicators == 'all' or 'macd' in self.indicators:
-            self._check_macd(selected_date_data, bullish_signals, bearish_signals, signals)
-        if self.indicators == 'all' or 'adx' in self.indicators:
-            self._check_adx(selected_date_data, bullish_signals, bearish_signals, signals)
-        if self.indicators == 'all' or 'atr' in self.indicators:
-            self._check_atr(selected_date_data, bullish_signals, bearish_signals, signals)
-        if self.indicators == 'all' or 'pe_ratio' in self.indicators:
-            self._check_pe_ratio(selected_date_data, bullish_signals, bearish_signals, signals)
+        if self.indicators == 'all' or 'sma_cross' in self.indicators:
+            self._check_sma_cross(selected_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'bollinger_band' in self.indicators:
             self._check_bollinger_band(selected_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'rsi' in self.indicators:
             self._check_rsi(selected_date_data, bullish_signals, bearish_signals, signals)
-        if self.indicators == 'all' or 'sma_cross' in self.indicators:
-            self._check_sma_cross(selected_date_data, bullish_signals, bearish_signals, signals)
+        if self.indicators == 'all' or 'macd' in self.indicators:
+            self._check_macd(selected_date_data, bullish_signals, bearish_signals, signals)
+        if self.indicators == 'all' or 'adx' in self.indicators:
+            self._check_adx(selected_date_data, bullish_signals, bearish_signals, signals)
+        if self.indicators == 'all' or 'cci' in self.indicators:
+            self._check_cci(selected_date_data, bullish_signals, bearish_signals, signals)
+        if self.indicators == 'all' or 'atr' in self.indicators:
+            self._check_atr(selected_date_data, bullish_signals, bearish_signals, signals)
+        if self.indicators == 'all' or 'pe_ratio' in self.indicators:
+            self._check_pe_ratio(selected_date_data, bullish_signals, bearish_signals, signals)
 
         return bullish_signals, bearish_signals, signals
 
@@ -269,6 +284,60 @@ class StockScreener:
         plt.xticks(rotation=45)
         plt.ylabel('TTM P/E Ratio')
         plt.title(f'{symbol} - TTM PE Ratio Analysis')
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+
+    def _plot_cci(self, symbol, symbol_data):
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_cci.jpg')
+        #plt.figure()
+        plt.figure(figsize=(14, 10))
+        cci = symbol_data['cci_14']
+        plt.plot(symbol_data['date'], cci, label='CCI 14')
+        plt.axhline(100, color='green', linestyle='--', label='Bullish Level (+100)')
+        plt.axhline(-100, color='red', linestyle='--', label='Bearish Level (-100)')
+        # plot zero line
+        plt.axhline(0, color='black', linestyle='--', label='Zero Line')
+        
+        # Add markers for CCI signals, annotate all bullish and bearish signals and zero crosses
+        first_bearish = True
+        first_bullish = True
+        first_zero_below = False
+        first_zero_above = False
+        for i, row in symbol_data.iterrows():
+            if row['cci_14'] >= 100 and first_bullish:
+                plt.annotate('Bullish Trend', (row['date'], row['cci_14']), textcoords="offset points", xytext=(0,10), ha='center', color='green')
+                first_bearish = True
+                first_bullish = False
+            elif row['cci_14'] <= -100 and first_bearish:
+                plt.annotate('Bearish Trend', (row['date'], row['cci_14']), textcoords="offset points", xytext=(0,10), ha='center', color='red')
+                first_bullish = True
+                first_bearish = False
+            # if previous cci was below zero and current cci is above zero, annotate zero cross using zero_cross varaibles
+            if row['cci_14'] > 0 and first_zero_below and first_zero_above:
+                plt.annotate('Bullish Zero Cross', (row['date'], row['cci_14']), textcoords="offset points", xytext=(0,10), ha='center', color='green')
+                first_zero_below = False
+                first_zero_above = True
+            elif row['cci_14'] < 0 and first_zero_above and first_zero_below:
+                plt.annotate('Bearish Zero Cross', (row['date'], row['cci_14']), textcoords="offset points", xytext=(0,10), ha='center', color='red')
+                first_zero_above = True
+                first_zero_below = False
+            # if cci drops below 100, reset first_bullish, if it rises above -100, reset first_bearish
+            if row['cci_14'] < 100 and first_bullish == False:
+                first_bullish = True
+            if row['cci_14'] > -100 and first_bearish == False:
+                first_bearish = True
+            # reset zero_cross variables if cci crosses zero
+            if row['cci_14'] > 0 and first_zero_below == False:
+                first_zero_below = True
+            if row['cci_14'] < 0 and first_zero_above == False:
+                first_zero_above = True
+        
+        plt.xlabel('Date')
+        plt.xticks(rotation=45)
+        plt.ylabel('CCI')
+        plt.title(f'{symbol} - CCI Indicator')
+        plt.legend()
         plt.tight_layout()
         plt.savefig(output_path)
         plt.close()
@@ -378,8 +447,8 @@ class StockScreener:
         # plt.plot(symbol_data['date'], atr, label='ATR', color='blue')
         
         # Calculate take profit and stop loss levels based on the most recent date's adjusted close and ATR
-        most_recent_close = adjusted_close.iloc[-1]
-        most_recent_atr = atr.iloc[-1]
+        most_recent_close = adjusted_close.iloc[0]
+        most_recent_atr = atr.iloc[0]
         take_profit_level = most_recent_close + 2 * most_recent_atr
         stop_loss_level = most_recent_close - 2 * most_recent_atr
         
@@ -589,16 +658,18 @@ class StockScreener:
         if len(bullish) > 0 or len(bearish) > 0:
         #if abs(len(bullish) - len(bearish)) > 2:
             logging.info(f'Visualizing data for symbol {symbol}')
+            if 'bollinger_band' in self.indicators or self.indicators == 'all':
+                self._plot_bollinger_band(symbol, symbol_data)
+            if 'rsi' in self.indicators or self.indicators == 'all':
+                self._plot_rsi(symbol, symbol_data)
             if 'macd' in self.indicators or self.indicators == 'all':
                 self._plot_macd(symbol, symbol_data)
             if 'adx' in self.indicators or self.indicators == 'all':
                 self._plot_adx(symbol, symbol_data)
+            if 'cci' in self.indicators or self.indicators == 'all':
+                self._plot_cci(symbol, symbol_data)
             if 'atr' in self.indicators or self.indicators == 'all':
                 self._plot_atr(symbol, symbol_data)
-            if 'rsi' in self.indicators or self.indicators == 'all':
-                self._plot_rsi(symbol, symbol_data)
-            if 'bollinger_band' in self.indicators or self.indicators == 'all':
-                self._plot_bollinger_band(symbol, symbol_data)
             if 'pe_ratio' in self.indicators or self.indicators == 'all':
                 if symbol not in sectors:
                     self._plot_pe_ratio(symbol, symbol_data)
@@ -794,7 +865,7 @@ class StockScreener:
             return
 
         # Use a fixed number of columns since the indicators are known
-        columns = ['symbol', 'num_bullish', 'num_bearish', 'macd', 'adx', 'atr', 'pe_ratio', 'bollinger_band', 'rsi', 'sma_cross']
+        columns = ['symbol', 'num_bullish', 'num_bearish', 'sma_cross', 'bollinger_band', 'rsi', 'macd', 'adx', 'cci', 'atr', 'pe_ratio']
         results_df = pd.DataFrame(rows_to_write, columns=columns)
         results_df.to_csv('screener_results_{}.csv'.format(self.latest_date), index=False)
 

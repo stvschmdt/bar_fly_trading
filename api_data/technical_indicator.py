@@ -16,6 +16,7 @@ class TechnicalIndicatorType(Enum):
     ADX = 'ADX'
     ATR = 'ATR'
     BBANDS = 'BBANDS'
+    CCI = 'CCI'
 
 
 TYPE_TIME_PERIODS = {
@@ -26,6 +27,7 @@ TYPE_TIME_PERIODS = {
     TechnicalIndicatorType.ADX: [14],
     TechnicalIndicatorType.ATR: [14],
     TechnicalIndicatorType.BBANDS: [20],
+    TechnicalIndicatorType.CCI: [14],
 }
 
 TECHNICAL_INDICATORS_TABLE_NAME = 'technical_indicators'
