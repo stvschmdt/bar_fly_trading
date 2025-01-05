@@ -153,11 +153,13 @@ class StockScreener:
 
     def _check_atr(self, selected_date_data, bullish_signals, bearish_signals, signals):
         atr = selected_date_data['atr_14'].values[0]
+        # latest close
+        latest_close = selected_date_data['adjusted_close'].values[0]
         # Define ATR thresholds based on volatility conditions
-        if atr > 2:
+        if latest_close > atr * 2:
             bearish_signals.append('bearish_atr')
             signals.append(-1)
-        elif atr < 1:
+        elif latest_close < atr * 2:
             bullish_signals.append('bullish_atr')
             signals.append(1)
         else:
@@ -378,8 +380,8 @@ class StockScreener:
         # plt.plot(symbol_data['date'], atr, label='ATR', color='blue')
         
         # Calculate take profit and stop loss levels based on the most recent date's adjusted close and ATR
-        most_recent_close = adjusted_close.iloc[-1]
-        most_recent_atr = atr.iloc[-1]
+        most_recent_close = adjusted_close.iloc[0]
+        most_recent_atr = atr.iloc[0]
         take_profit_level = most_recent_close + 2 * most_recent_atr
         stop_loss_level = most_recent_close - 2 * most_recent_atr
         
