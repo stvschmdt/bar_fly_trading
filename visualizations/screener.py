@@ -358,7 +358,7 @@ class StockScreener:
         for i in range(1, len(symbol_data)):
             if macd.iloc[i] > 0 and macd.iloc[i - 1] <= 0:
                 plt.annotate('Bullish Zero Crossover', 
-                             xy=(symbol_data['date'].iloc[i-1], macd.iloc[i-1]), 
+                             xy=(symbol_data['date'].iloc[i], macd.iloc[i]), 
                              xytext=(0, 20),
                              textcoords='offset points',
                              ha='center',
@@ -368,7 +368,7 @@ class StockScreener:
                              arrowprops=dict(arrowstyle='->', color='green'))
             elif macd.iloc[i] < 0 and macd.iloc[i - 1] >= 0:
                 plt.annotate('Bearish Zero Crossover', 
-                             xy=(symbol_data['date'].iloc[i-1], macd.iloc[i-1]), 
+                             xy=(symbol_data['date'].iloc[i], macd.iloc[i]), 
                              xytext=(0, -20),
                              textcoords='offset points',
                              ha='center',
@@ -380,7 +380,7 @@ class StockScreener:
         for i in range(1, len(symbol_data)):
             if macd.iloc[i] > signal_line.iloc[i] and macd.iloc[i - 1] <= signal_line.iloc[i - 1]:
                 plt.annotate('Bullish MACD Crossover', 
-                             xy=(symbol_data['date'].iloc[i-1], macd.iloc[i-1]), 
+                             xy=(symbol_data['date'].iloc[i], macd.iloc[i]), 
                              xytext=(0, 20),
                              textcoords='offset points',
                              ha='center',
@@ -390,7 +390,7 @@ class StockScreener:
                              arrowprops=dict(arrowstyle='->', color='green'))
             elif macd.iloc[i] < signal_line.iloc[i] and macd.iloc[i - 1] >= signal_line.iloc[i - 1]:
                 plt.annotate('Bearish MACD Crossover', 
-                             xy=(symbol_data['date'].iloc[i-1], macd.iloc[i-1]), 
+                             xy=(symbol_data['date'].iloc[i], macd.iloc[i]), 
                              xytext=(0, -20),
                              textcoords='offset points',
                              ha='center',
