@@ -73,7 +73,7 @@ if __name__ == "__main__":
         if args.symbols:
             symbols = args.symbols
         elif args.watchlist == 'all':
-            watchlist = pd.read_csv(WATCHLIST_PATH)
+            watchlist = pd.read_csv(WATCHLIST_PATH)['Symbol']
             sp500 = pd.read_csv(SP500_PATH)['Symbol']
             symbols = pd.concat([watchlist, sp500]).drop_duplicates().reset_index(drop=True).tolist()
         else:
