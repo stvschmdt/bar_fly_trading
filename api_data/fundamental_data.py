@@ -132,8 +132,11 @@ def parse_splits(data: dict, symbol: str):
     return df
 
 
-def update_all_fundamental_data(api_client: AlphaVantageClient, symbol: str, incremental: bool = True):
+def update_all_fundamental_data(api_client: AlphaVantageClient, symbol: str, incremental: bool = True, is_etf = False):
     for data_type in FundamentalDataType:
+        if is_etf and data_type in [FundamentalDataType.OVERVIEW, FundamentalDataType.EARNINGS]:
+            logger.info(f"Skipping {data_type} for ETF {symbol}")
+            continue
         response = fetch_fundamental_data(api_client, symbol, data_type)
 
         # An empty response indicates that the symbol isn't a company (e.g. index, ETF, etc.)
