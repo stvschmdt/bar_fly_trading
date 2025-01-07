@@ -279,6 +279,9 @@ class StockScreener:
             elif row['pe_ratio'] > 35 and first_bearish:
                 plt.annotate('Bearish (High PE)', (row['date'], row['pe_ratio']), textcoords="offset points", xytext=(0,10), ha='center', color='red')
                 first_bearish = False
+        # add a horizontal line for 35 and 15 markers (dotted)  
+        plt.axhline(35, color='red', linestyle='--', label='Warm PE Ratio (35)')
+        plt.axhline(15, color='green', linestyle='--', label='Cold PE Ratio (15)')
 
         plt.xlabel('Date')
         plt.xticks(rotation=45)
