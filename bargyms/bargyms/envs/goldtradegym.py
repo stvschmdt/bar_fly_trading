@@ -10,7 +10,7 @@ class GoldTradeEnv(gym.Env):
     def __init__(self, csv_path=None, stock_symbols=None, render_mode=None, initial_balance=25000):
         super(GoldTradeEnv, self).__init__()
         if csv_path is None:
-            csv_path = "../api_data/"  # Update with actual path to your CSV
+            csv_path = "../"  # Update with actual path to your CSV
         if stock_symbols is None:
             stock_symbols = ['NVDA', 'AVGO', 'NFLX', 'WMT', 'AMZN']
         self.render_mode = render_mode
@@ -18,7 +18,7 @@ class GoldTradeEnv(gym.Env):
         self.sector_symbol = 'QQQ'  # QQQ for benchmarking
         for file in os.listdir(csv_path):
             if file.startswith('all_data'):
-                data = os.path.join('../api_data/', file)
+                data = os.path.join('..', file)
                 if not hasattr(self, 'data'):
                     # log reading data file
                     self.data = pd.read_csv(data)
@@ -47,7 +47,7 @@ class GoldTradeEnv(gym.Env):
         self.balance = initial_balance
         
         # we give the agent n_days to learn the environment (window view)
-        self.n_days = 20
+        self.n_days = 5
         # we want to show the agent window amount of data to take an action
         self.window = 20
 
@@ -147,8 +147,11 @@ class GoldTradeEnv(gym.Env):
             min_start_index = self.n_days + 30
             # max start date is 20 days from the end of the data
             max_start_index = len(symbol_data) - (self.n_days + self.window + 30)
+            # assert that the max start index is greater than the min start index
             # select a random start date in the range of min, max
             self.current_index = random.randint(min_start_index, max_start_index)
+            # print out the current index, min and max start index
+            print(self.current_index, min_start_index, max_start_index)    
             # get the data for the selected date range, starting from the current index and adding 20 days
             self.current_data_window = symbol_data.iloc[self.current_index : self.current_index + (self.n_days + self.window + 1)]
             # get the date of the first day in the window
@@ -548,7 +551,7 @@ class GoldTradeEnv(gym.Env):
 
 if __name__ == "__main__":
     # Initialize environment parameters
-    csv_path = "../api_data/all_data.csv"  # Update with actual path to your CSV
+    csv_path = "../"  # Update with actual path to your CSV
     stock_symbols = ["AAPL", "NVDA", "AMD"]  # Example stock symbols
     stock_symbols = ["AAPL"]
     env = GoldTradeEnv(csv_path=csv_path, stock_symbols=stock_symbols, initial_balance=500000)
