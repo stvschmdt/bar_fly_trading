@@ -15,6 +15,7 @@ from api_data.storage import select_all_by_symbol
 from strategy.base_strategy import BaseStrategy
 from strategy.bollinger_bands_strategy import BollingerBandsStrategy
 from strategy.buy_hold_strategy import BuyHoldStrategy
+from strategy.technical_heuristics_strategy import TechnicalHeuristicsStrategy
 from strategy.technical_strategy import TechnicalStrategy
 from strategy.test_strategy import TestStrategy
 
@@ -77,6 +78,8 @@ def get_strategy(strategy_name: str, account: Account, symbols: set[str]) -> Bas
         return TechnicalStrategy(account, symbols)
     elif strategy_name == "BuyHoldStrategy":
         return BuyHoldStrategy(account, symbols)
+    elif strategy_name == "TechnicalHeuristicsStrategy":
+        return TechnicalHeuristicsStrategy(account, symbols)
 
     raise ValueError(f"Unknown strategy_name: {strategy_name}")
 

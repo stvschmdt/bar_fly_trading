@@ -15,7 +15,7 @@ class BollingerBandsStrategy(BaseStrategy):
     def __init__(self, account, symbols):
         super().__init__(account, symbols)
         self.historical_data = pd.read_csv('api_data/all_data.csv')
-        # Remove any columns where symbol is not in symbols
+        # Remove any rows where symbol is not in symbols
         self.historical_data = self.historical_data[self.historical_data['symbol'].isin(symbols)]
 
     def evaluate(self, date: datetime.date, current_prices: pd.DataFrame) -> list[Order]:

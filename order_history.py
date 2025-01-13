@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-from order import Order
+from order import Order, OrderOperation
 
 
 def convert_to_defaultdict(orders: dict[str, dict[str, Order]]):
@@ -46,7 +46,7 @@ class OrderHistory:
     def get_orders(self):
         return self._orders
 
-    def get_filtered_order_history(self, symbol: str = None, start_date: str = None, end_date: str = None, order_types: list[type] = None):
+    def get_filtered_order_history(self, symbol: str = None, start_date: str = None, end_date: str = None, order_types: list[type] = None, order_operation: OrderOperation = None):
         """
         Get a list of orders, sorted by date descending, that match the provided filters. If any filter is not provided,
         it will not be applied. e.g. if no symbol is provided, we'll return orders for all symbols.
@@ -55,6 +55,7 @@ class OrderHistory:
             start_date: Earliest date to include orders from (inclusive)
             end_date: Latest date to include orders from (inclusive)
             order_types: List of Order subclasses to filter on (e.g. [StockOrder, OptionOrder])
+            order_operation: Operation to filter on (BUY, SELL)
 
         Raises:
             ValueError: If no filters are provided
@@ -81,6 +82,8 @@ class OrderHistory:
                 if end_date and order.order_date > end_date:
                     continue
                 if order_types and type(order) not in order_types:
+                    continue
+                if order_operation and order.order_operation != order_operation:
                     continue
                 filtered_orders[order.symbol][order_id][order_date] = order
 
