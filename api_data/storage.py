@@ -4,6 +4,7 @@ import sys
 from enum import Enum
 
 import pandas as pd
+import numpy as np
 from sqlalchemy import create_engine, text
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -331,16 +332,17 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
         stock_screener._check_bollinger_band(screen_df, [], [], signals)
         stock_screener._check_rsi(screen_df, [], [], signals)
         stock_screener._check_sma_cross(screen_df, [], [], signals)
+        stock_screener._check_cci(screen_df, [], [], signals)
         # append the row of signals, to the full_cols list
         full_cols.append(signals)
 
     # create a dataframe from the full_cols list with the signals as columns
-    signals_df = pd.DataFrame(full_cols, columns=["macd_signal", "adx_signal", "atr_signal", "pe_ratio_signal", "bollinger_bands_signal", "rsi_signal", "sma_cross_signal"])
+    signals_df = pd.DataFrame(full_cols, columns=["macd_signal", "adx_signal", "atr_signal", "pe_ratio_signal", "bollinger_bands_signal", "rsi_signal", "sma_cross_signal", "cci_signal"])
     # concat the signals_df as new columns to the df
     df = pd.concat([df, signals_df], axis=1)
     
     # create a new column for the sum of all the signals
-    df["bull_bear_delta"] = df["macd_signal"] + df["adx_signal"] + df["atr_signal"] + df["pe_ratio_signal"] + df["bollinger_bands_signal"] + df["rsi_signal"] + df["sma_cross_signal"]
+    df["bull_bear_delta"] = df["macd_signal"] + df["adx_signal"] + df["atr_signal"] + df["pe_ratio_signal"] + df["bollinger_bands_signal"] + df["rsi_signal"] + df["sma_cross_signal"] + df["cci_signal"]
 
 
     df.to_csv(f'all_data_{batch_num}.csv')
