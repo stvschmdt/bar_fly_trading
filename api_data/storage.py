@@ -4,8 +4,8 @@ import sys
 from enum import Enum
 
 import pandas as pd
-import numpy as np
 from sqlalchemy import create_engine, text
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from logging_config import setup_logging
@@ -28,6 +28,7 @@ TABLE_CREATES = {
     'economic_indicators': 'CREATE TABLE economic_indicators(date DATETIME, treasury_yield_2year DOUBLE, treasury_yield_10year DOUBLE, ffer DOUBLE, cpi DOUBLE, inflation DOUBLE, retail_sales DOUBLE, durables DOUBLE, unemployment DOUBLE, nonfarm_payroll DOUBLE, PRIMARY KEY (date));',
     'technical_indicators': 'CREATE TABLE technical_indicators(date DATETIME, sma_20 DOUBLE, sma_50 DOUBLE, sma_200 DOUBLE, ema_20 DOUBLE, ema_50 DOUBLE, ema_200 DOUBLE, macd DOUBLE, rsi_14 DOUBLE, adx_14 DOUBLE, atr_14 DOUBLE, cci_14 DOUBLE, bbands_upper_20 DOUBLE, bbands_middle_20 DOUBLE, bbands_lower_20 DOUBLE, symbol VARCHAR(5), PRIMARY KEY (date, symbol));',
     'stock_splits': 'CREATE TABLE stock_splits(symbol VARCHAR(5), effective_date DATETIME, split_factor DOUBLE, PRIMARY KEY (symbol, effective_date));',
+    'historical_options': 'CREATE TABLE historical_options(contract_id VARCHAR(30), date DATE, symbol VARCHAR(8), type ENUM(\'call\', \'put\'), expiration DATE, strike FLOAT, last FLOAT, mark FLOAT, bid FLOAT, ask FLOAT, volume INT, implied_volatility FLOAT, delta FLOAT, gamma FLOAT, theta FLOAT, vega FLOAT, rho FLOAT, PRIMARY KEY (contract_id, date));'
 }
 
 
@@ -61,16 +62,6 @@ def store_data(df, table_name, write_option: TableWriteOption, include_index=Tru
     df.to_sql(table_name, engine, if_exists=TableWriteOption.APPEND.value, index=include_index)
 
 
-def select_all_from_table(table_name: str, order_by: str, limit: int = 10):
-    query = f"""
-    SELECT * from {table_name} {f'ORDER BY {order_by} desc' if order_by else ''} LIMIT {limit};
-    """
-    df = pd.read_sql_query(query, engine)
-    print(f'First {limit} rows from {table_name}:')
-    pd.set_option('display.max_columns', None)
-#    print(df)
-
-
 def select_all_by_symbol(table_name: str, symbols: set[str], order_by: str = None, start_date: str = None, end_date: str = None):
     symbols_str = ', '.join([f"'{symbol}'" for symbol in symbols])
 
@@ -100,6 +91,21 @@ def get_last_updated_date(table_name: str, date_col: str, symbol: str):
         result = connection.execute(query, {"symbol": symbol})
         last_updated_date = pd.to_datetime(result.fetchone()[0])
     return last_updated_date
+
+
+# Get the dates that already exist in a table for a given symbol. start_date and end_date are inclusive.
+def get_dates_for_symbol(table_name: str, symbol: str, date_col: str, start_date: str = None, end_date: str = None):
+    and_clause = ''
+    if start_date:
+        and_clause += f" AND {date_col} >= '{start_date}'"
+    if end_date:
+        and_clause += f" AND {date_col} <= '{end_date}'"
+    query = f"SELECT DISTINCT({date_col}) FROM {table_name} WHERE symbol = '{symbol}'{and_clause} ORDER BY {date_col} ASC;"
+
+    with engine.connect() as connection:
+        result = connection.execute(query)
+        dates = [row[0] for row in result.fetchall()]
+    return dates
 
 
 def drop_table(table_name: str):
