@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 
 from api_data.collector import alpha_client
-from api_data.historical_option_data import get_option_data
+from simulations.historical_option_data import get_option_data
 
 
 class OrderOperation(Enum):

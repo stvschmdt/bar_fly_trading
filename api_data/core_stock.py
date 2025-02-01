@@ -9,7 +9,7 @@ from api_data.util import drop_existing_rows, get_last_updated_date, get_table_w
 logger = logging.getLogger(__name__)
 
 CORE_STOCK_TABLE_NAME = 'core_stock'
-CORE_STOCK_COLUMNS = ['open', 'high', 'low', 'adjusted_close', 'volume']
+CORE_STOCK_COLUMNS = ['open', 'high', 'low', 'close', 'adjusted_close', 'volume']
 DATE_COL = 'date'
 
 

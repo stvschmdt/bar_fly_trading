@@ -1,8 +1,9 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
+
 from api_data.core_stock import fetch_daily_adjusted_data, parse_daily_adjusted_data
-from api_data.historical_option_data import get_option_data
-from simulations.spreads.util import find_nearest_strike, parse_historical_options_data, fetch_historical_options_data, get_expiration_date, MarketClosedError
+from simulations.historical_option_data import get_option_data
+from simulations.spreads.util import find_nearest_strike, get_expiration_date, MarketClosedError
 
 BUY_CALL_PERCENT_ABOVE_START = 0.05     # 5% above the start price
 SELL_CALL_PERCENT_ABOVE_START = 0.12    # 12% above the start price

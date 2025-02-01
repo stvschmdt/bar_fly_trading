@@ -3,6 +3,10 @@ import pandas as pd
 from api_data.collector import AlphaVantageClient
 
 
+# This is just for testing/simulation purposes.
+# To fetch historical options data that we store in the DB, use api_data/historical_options.py.
+
+
 def fetch_historical_options_data(api_client: AlphaVantageClient, symbol: str, start_date: str) -> dict:
     params = {
         'function': 'HISTORICAL_OPTIONS',

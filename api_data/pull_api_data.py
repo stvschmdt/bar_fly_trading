@@ -5,17 +5,18 @@ import sys
 
 import pandas as pd
 
+from api_data.core_stock import update_core_stock_data
+from api_data.economic_indicator import update_all_economic_indicators
+from api_data.fundamental_data import update_all_fundamental_data
+from api_data.historical_options import update_historical_options
+from api_data.storage import process_gold_table_in_batches
+from api_data.technical_indicator import update_all_technical_indicators
 from constants import WATCHLIST_PATH, SP500_PATH, SECTORS_PATH
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 
 from api_data.collector import alpha_client
-from api_data.core_stock import update_core_stock_data
-from api_data.economic_indicator import update_all_economic_indicators
-from api_data.fundamental_data import update_all_fundamental_data
-from api_data.storage import process_gold_table_in_batches
-from api_data.technical_indicator import update_all_technical_indicators
 from logging_config import setup_logging
 
 setup_logging()
@@ -51,6 +52,13 @@ def main():
                 update_all_fundamental_data(alpha_client, symbol, incremental=incremental, is_etf=symbol in etfs)
             except Exception as e:
                 print(f"Error fetching fundamental data: {e}")
+
+            # Update historical options data
+            try:
+                # We don't pass a start_date because we want it to fetch the most recent data.
+                update_historical_options(alpha_client, symbol)
+            except Exception as e:
+                print(f"Error fetching historical options data: {e}")
 
             # If incremental is False, that means we want to drop the existing tables and re-insert all the data.
             # To avoid dropping the tables on every iteration, we set incremental to True after the first iteration.
