@@ -67,7 +67,7 @@ def update_historical_options(api_client: AlphaVantageClient, symbol: str, start
 
 
 def update_historical_options_for_date(api_client: AlphaVantageClient, symbol: str, drop_existing_data: bool,
-                                       num_strikes_on_each_side: int = 5, num_expirations: int = 10,
+                                       num_strikes_on_each_side: int = 10, num_expirations: int = 10,
                                        date: str = None, close_price: float = None):
     if close_price and not date:
         raise ValueError('A close price was provided without a date')
