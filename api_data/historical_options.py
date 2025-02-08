@@ -76,7 +76,6 @@ def update_historical_options(api_client: AlphaVantageClient, symbol: str, start
     for date in date_range:
         # convert date to a datetime and check if it's in existing
         if date in existing_dates:
-            logger.info(f'{symbol} historical options data already exists for {date}, skipping')
             continue
 
         # Get close price on this date
