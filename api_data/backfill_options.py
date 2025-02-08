@@ -1,5 +1,7 @@
 import argparse
 import logging
+from concurrent import futures
+from functools import partial
 
 import pandas as pd
 
@@ -36,6 +38,7 @@ if __name__ == '__main__':
         symbols = pd.read_csv(args.watchlist)['Symbol'].tolist()
         symbols = [symbol.upper() for symbol in symbols][0:args.test]
 
-    for symbol in symbols:
-        logger.info(f'Backfilling historical options for {symbol} from {args.start_date} to {args.end_date}')
-        historical_options.update_historical_options(alpha_client, symbol, args.start_date, args.end_date)
+    # Process 3 symbols at a time. Any more and we'll hit rate limits too quickly.
+    with futures.ThreadPoolExecutor(max_workers=3) as executor:
+        update_options = partial(historical_options.update_historical_options, alpha_client, start_date=args.start_date, end_date=args.end_date)
+        list(executor.map(update_options, symbols))
