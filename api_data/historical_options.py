@@ -75,6 +75,11 @@ def update_historical_options(api_client: AlphaVantageClient, symbol: str, start
             continue
 
         # Get close price on this date
+        row = close_prices[close_prices['date'] == date]
+        if row.empty:
+            # Skip day if we don't have a closing price for it, may have been a holiday
+            logger.info(f'No close price found for {symbol} on {date}')
+            continue
         stock_price = close_prices[close_prices['date'] == date]['close'].values[0]
 
         # We don't need to drop existing data because we're already skipping dates that are in the table.
