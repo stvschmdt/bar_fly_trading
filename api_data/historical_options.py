@@ -1,6 +1,8 @@
 import logging
 
 import pandas as pd
+from pandas.tseries.holiday import USFederalHolidayCalendar
+from pandas.tseries.offsets import CustomBusinessDay
 from sqlalchemy.exc import ProgrammingError
 
 from api_data.collector import AlphaVantageClient
@@ -50,11 +52,24 @@ def update_historical_options(api_client: AlphaVantageClient, symbol: str, start
 
     # Default end_date to today if not provided
     end_date = end_date or pd.Timestamp.today().strftime('%Y-%m-%d')
+
     # Get dates in DB that already have historical options data
-    existing_dates = set(get_dates_for_symbol(symbol, HISTORICAL_OPTIONS_TABLE_NAME, DATE_COL, start_date, end_date))
+    existing_dates = set(get_dates_for_symbol(HISTORICAL_OPTIONS_TABLE_NAME, symbol, DATE_COL, start_date, end_date))
+    holidays = CustomBusinessDay(holidays=USFederalHolidayCalendar().holidays(start=start_date, end=end_date))
+
     # Get core stock data for each date in the range for close prices, so we can trim down the strike prices we store.
     close_prices = select_all_by_symbol(CORE_STOCK_TABLE_NAME, symbols={symbol}, order_by='date ASC', start_date=start_date, end_date=end_date)[['date', 'close']]
-    for date in pd.date_range(start=start_date, end=end_date, freq='D').strftime('%Y-%m-%d'):
+    if close_prices.empty:
+        logger.error(f'No core stock data found for {symbol} between {start_date} and {end_date}')
+        return
+
+    # Make start_date the first date in the core stock data
+    start_date = close_prices['date'].iloc[0].strftime('%Y-%m-%d')
+    logger.info(f'Updating historical options data for {symbol} between {start_date} and {end_date}')
+
+    # Iterate through days between start_date and end_date (inclusive), skipping weekends and holidays
+    for date in pd.bdate_range(start=start_date, end=end_date, freq=holidays).strftime('%Y-%m-%d'):
+        # convert date to a datetime and check if it's in existing
         if date in existing_dates:
             logger.info(f'{symbol} historical options data already exists for {date}, skipping')
             continue
@@ -63,7 +78,7 @@ def update_historical_options(api_client: AlphaVantageClient, symbol: str, start
         stock_price = close_prices[close_prices['date'] == date]['close'].values[0]
 
         # We don't need to drop existing data because we're already skipping dates that are in the table.
-        update_historical_options_for_date(api_client, symbol, False, date, stock_price)
+        update_historical_options_for_date(api_client, symbol, False, date=date, close_price=stock_price)
 
 
 def update_historical_options_for_date(api_client: AlphaVantageClient, symbol: str, drop_existing_data: bool,
@@ -79,6 +94,10 @@ def update_historical_options_for_date(api_client: AlphaVantageClient, symbol: s
         return
 
     df = parse_historical_options(response['data'])
+    # There might be some holidays we missed, so check one more time if the data is empty.
+    if df.empty:
+        logger.info(f'No historical options data found for {symbol} on {date}')
+        return
 
     # If we weren't given a date, fetch it from the API response. The date will be the same in all entries because it's
     # the last date the market was open, so we can just grab the first one.
