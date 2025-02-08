@@ -56,6 +56,11 @@ def update_historical_options(api_client: AlphaVantageClient, symbol: str, start
     # Get dates in DB that already have historical options data
     existing_dates = set(get_dates_for_symbol(HISTORICAL_OPTIONS_TABLE_NAME, symbol, DATE_COL, start_date, end_date))
     holidays = CustomBusinessDay(holidays=USFederalHolidayCalendar().holidays(start=start_date, end=end_date))
+    date_range = pd.bdate_range(start=start_date, end=end_date, freq=holidays).strftime('%Y-%m-%d')
+
+    if len(existing_dates) == len(date_range):
+        logger.info(f'{symbol} historical options data already exists between {start_date} and {end_date}, skipping')
+        return
 
     # Get core stock data for each date in the range for close prices, so we can trim down the strike prices we store.
     close_prices = select_all_by_symbol(CORE_STOCK_TABLE_NAME, symbols={symbol}, order_by='date ASC', start_date=start_date, end_date=end_date)[['date', 'close']]
@@ -68,7 +73,7 @@ def update_historical_options(api_client: AlphaVantageClient, symbol: str, start
     logger.info(f'Updating historical options data for {symbol} between {start_date} and {end_date}')
 
     # Iterate through days between start_date and end_date (inclusive), skipping weekends and holidays
-    for date in pd.bdate_range(start=start_date, end=end_date, freq=holidays).strftime('%Y-%m-%d'):
+    for date in date_range:
         # convert date to a datetime and check if it's in existing
         if date in existing_dates:
             logger.info(f'{symbol} historical options data already exists for {date}, skipping')
