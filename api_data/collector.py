@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 from datetime import datetime
 from time import sleep
 
@@ -13,6 +14,9 @@ logger = logging.getLogger(__name__)
 # The actual rate-limit is 150, but we want to be able to make a few ad-hoc requests while things are running.
 DEFAULT_MAX_REQUESTS_PER_MIN = 140
 RATE_LIMIT_STRING = 'Thank you for using Alpha Vantage! Please contact premium@alphavantage.co if you are targeting a higher API call volume.'
+
+# This lock is used to ensure that the rate-limiting logic is thread-safe.
+lock = threading.Lock()
 
 
 class AlphaVantageClient:
@@ -32,10 +36,15 @@ class AlphaVantageClient:
                 sleep_time = 60 - elapsed_time + 5
                 logger.info(f"Internal rate limit reached. Sleeping for {sleep_time} seconds.")
                 sleep(sleep_time)
-                self.requests_in_window = 0
-                self.window_start_time = datetime.now()
 
-        self.requests_in_window += 1
+            with lock:
+                # We check the requests_in_window again because it could have been updated by another thread.
+                if self.requests_in_window >= self.max_requests_per_min:
+                    self.requests_in_window = 0
+            self.window_start_time = datetime.now()
+
+        with lock:
+            self.requests_in_window += 1
         kwargs['apikey'] = self.api_key
         response = requests.get(self.base_url, params=kwargs)
         response.raise_for_status()
@@ -43,7 +52,10 @@ class AlphaVantageClient:
         if response.get('Information', '') == RATE_LIMIT_STRING:
             logger.info(f"AlphaVantage rate limit reached (requests_in_window={self.requests_in_window}). Sleeping for 60 seconds.")
             sleep(60)
-            self.requests_in_window = 0
+            with lock:
+                # We check the requests_in_window again because it could have been updated by another thread.
+                if self.requests_in_window >= self.max_requests_per_min:
+                    self.requests_in_window = 0
             self.window_start_time = datetime.now()
 
             # Retry if we haven't already

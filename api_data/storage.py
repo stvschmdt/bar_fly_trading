@@ -94,17 +94,17 @@ def get_last_updated_date(table_name: str, date_col: str, symbol: str):
 
 
 # Get the dates that already exist in a table for a given symbol. start_date and end_date are inclusive.
-def get_dates_for_symbol(table_name: str, symbol: str, date_col: str, start_date: str = None, end_date: str = None):
+def get_dates_for_symbol(table_name: str, symbol: str, date_col: str, start_date: str = None, end_date: str = None) -> list[str]:
     and_clause = ''
     if start_date:
         and_clause += f" AND {date_col} >= '{start_date}'"
     if end_date:
         and_clause += f" AND {date_col} <= '{end_date}'"
-    query = f"SELECT DISTINCT({date_col}) FROM {table_name} WHERE symbol = '{symbol}'{and_clause} ORDER BY {date_col} ASC;"
+    query = text(f"SELECT DISTINCT({date_col}) FROM {table_name} WHERE symbol = '{symbol}'{and_clause} ORDER BY {date_col} ASC;")
 
     with engine.connect() as connection:
         result = connection.execute(query)
-        dates = [row[0] for row in result.fetchall()]
+        dates = [row[0].strftime('%Y-%m-%d') for row in result.fetchall()]
     return dates
 
 
