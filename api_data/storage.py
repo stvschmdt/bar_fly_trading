@@ -28,7 +28,7 @@ TABLE_CREATES = {
     'economic_indicators': 'CREATE TABLE economic_indicators(date DATETIME, treasury_yield_2year DOUBLE, treasury_yield_10year DOUBLE, ffer DOUBLE, cpi DOUBLE, inflation DOUBLE, retail_sales DOUBLE, durables DOUBLE, unemployment DOUBLE, nonfarm_payroll DOUBLE, PRIMARY KEY (date));',
     'technical_indicators': 'CREATE TABLE technical_indicators(date DATETIME, sma_20 DOUBLE, sma_50 DOUBLE, sma_200 DOUBLE, ema_20 DOUBLE, ema_50 DOUBLE, ema_200 DOUBLE, macd DOUBLE, rsi_14 DOUBLE, adx_14 DOUBLE, atr_14 DOUBLE, cci_14 DOUBLE, bbands_upper_20 DOUBLE, bbands_middle_20 DOUBLE, bbands_lower_20 DOUBLE, symbol VARCHAR(5), PRIMARY KEY (date, symbol));',
     'stock_splits': 'CREATE TABLE stock_splits(symbol VARCHAR(5), effective_date DATETIME, split_factor DOUBLE, PRIMARY KEY (symbol, effective_date));',
-    'historical_options': 'CREATE TABLE historical_options (contract_id VARCHAR(30) NOT NULL, date DATETIME NOT NULL, symbol VARCHAR(8) NOT NULL, type ENUM('call', 'put'), expiration DATE, strike FLOAT, last FLOAT, mark FLOAT, bid FLOAT, ask FLOAT, volume INT, implied_volatility FLOAT, delta FLOAT, gamma FLOAT, theta FLOAT, vega FLOAT, rho FLOAT, PRIMARY KEY (contract_id, date, symbol)) PARTITION BY KEY (symbol) PARTITIONS 16;'
+    'historical_options': 'CREATE TABLE historical_options (contract_id VARCHAR(30) NOT NULL, date DATETIME NOT NULL, symbol VARCHAR(8) NOT NULL, type ENUM(\'call\', \'put\'), expiration DATE, strike FLOAT, last FLOAT, mark FLOAT, bid FLOAT, ask FLOAT, volume INT, implied_volatility FLOAT, delta FLOAT, gamma FLOAT, theta FLOAT, vega FLOAT, rho FLOAT, PRIMARY KEY (contract_id, date, symbol)) PARTITION BY KEY (symbol) PARTITIONS 16;'
 }
 
 TABLE_COLS = {
