@@ -3,12 +3,11 @@ import logging
 import pandas as pd
 from pandas.tseries.holiday import USFederalHolidayCalendar
 from pandas.tseries.offsets import CustomBusinessDay
-from sqlalchemy.exc import ProgrammingError
 
 from api_data.collector import AlphaVantageClient
 from api_data.core_stock import CORE_STOCK_TABLE_NAME
-from api_data.storage import store_data, get_dates_for_symbol, select_all_by_symbol
-from api_data.util import graceful_df_to_numeric, get_table_write_option, drop_existing_rows
+from api_data.storage import get_dates_for_symbol, select_all_by_symbol, insert_ignore_data
+from api_data.util import graceful_df_to_numeric
 from logging_config import setup_logging
 
 setup_logging()
@@ -37,8 +36,6 @@ def parse_historical_options(data: list[dict]) -> pd.DataFrame:
     # Convert numeric columns to actual numbers
     df = graceful_df_to_numeric(df)
 
-    df.set_index('date', inplace=True)
-    df.index = pd.to_datetime(df.index)
     return df
 
 
@@ -47,7 +44,7 @@ def parse_historical_options(data: list[dict]) -> pd.DataFrame:
 def update_historical_options(api_client: AlphaVantageClient, symbol: str, start_date: str = None, end_date: str = None):
     # If no start date was given, just fetch the most recent data.
     if not start_date:
-        update_historical_options_for_date(api_client, symbol, True)
+        update_historical_options_for_date(api_client, symbol)
         return
 
     # Default end_date to today if not provided
@@ -84,15 +81,13 @@ def update_historical_options(api_client: AlphaVantageClient, symbol: str, start
             # Skip day if we don't have a closing price for it, may have been a holiday
             logger.info(f'No close price found for {symbol} on {date}')
             continue
+
         stock_price = close_prices[close_prices['date'] == date]['close'].values[0]
-
-        # We don't need to drop existing data because we're already skipping dates that are in the table.
-        update_historical_options_for_date(api_client, symbol, False, date=date, close_price=stock_price)
+        update_historical_options_for_date(api_client, symbol, date=date, close_price=stock_price)
 
 
-def update_historical_options_for_date(api_client: AlphaVantageClient, symbol: str, drop_existing_data: bool,
-                                       num_strikes_on_each_side: int = 10, num_expirations: int = 10,
-                                       date: str = None, close_price: float = None):
+def update_historical_options_for_date(api_client: AlphaVantageClient, symbol: str, num_strikes_on_each_side: int = 10,
+                                       num_expirations: int = 10, date: str = None, close_price: float = None):
     if close_price and not date:
         raise ValueError('A close price was provided without a date')
 
@@ -124,13 +119,7 @@ def update_historical_options_for_date(api_client: AlphaVantageClient, symbol: s
     expirations = df['expiration'].unique()[:num_expirations]
     df = df[df['expiration'].isin(expirations)]
 
-    if drop_existing_data:
-        try:
-            df = drop_existing_rows(df, HISTORICAL_OPTIONS_TABLE_NAME, DATE_COL, symbol)
-        # Catch a SQL exception for when the table doesn't exist yet. That just means we don't need to drop anything.
-        except ProgrammingError as e:
-            logger.error(f'Not dropping historical options data because table doesn\'t exist: {e}')
-    store_data(df, table_name=HISTORICAL_OPTIONS_TABLE_NAME, write_option=get_table_write_option(True), include_index=True)
+    insert_ignore_data(df, table_name=HISTORICAL_OPTIONS_TABLE_NAME)
 
 
 def get_nearby_strikes(strike_prices, stock_price, num_strikes_on_each_side):

@@ -28,7 +28,11 @@ TABLE_CREATES = {
     'economic_indicators': 'CREATE TABLE economic_indicators(date DATETIME, treasury_yield_2year DOUBLE, treasury_yield_10year DOUBLE, ffer DOUBLE, cpi DOUBLE, inflation DOUBLE, retail_sales DOUBLE, durables DOUBLE, unemployment DOUBLE, nonfarm_payroll DOUBLE, PRIMARY KEY (date));',
     'technical_indicators': 'CREATE TABLE technical_indicators(date DATETIME, sma_20 DOUBLE, sma_50 DOUBLE, sma_200 DOUBLE, ema_20 DOUBLE, ema_50 DOUBLE, ema_200 DOUBLE, macd DOUBLE, rsi_14 DOUBLE, adx_14 DOUBLE, atr_14 DOUBLE, cci_14 DOUBLE, bbands_upper_20 DOUBLE, bbands_middle_20 DOUBLE, bbands_lower_20 DOUBLE, symbol VARCHAR(5), PRIMARY KEY (date, symbol));',
     'stock_splits': 'CREATE TABLE stock_splits(symbol VARCHAR(5), effective_date DATETIME, split_factor DOUBLE, PRIMARY KEY (symbol, effective_date));',
-    'historical_options': 'CREATE TABLE historical_options(contract_id VARCHAR(30), date DATE, symbol VARCHAR(8), type ENUM(\'call\', \'put\'), expiration DATE, strike FLOAT, last FLOAT, mark FLOAT, bid FLOAT, ask FLOAT, volume INT, implied_volatility FLOAT, delta FLOAT, gamma FLOAT, theta FLOAT, vega FLOAT, rho FLOAT, PRIMARY KEY (contract_id, date));'
+    'historical_options': 'CREATE TABLE historical_options (contract_id VARCHAR(30) NOT NULL, date DATETIME NOT NULL, symbol VARCHAR(8) NOT NULL, type ENUM('call', 'put'), expiration DATE, strike FLOAT, last FLOAT, mark FLOAT, bid FLOAT, ask FLOAT, volume INT, implied_volatility FLOAT, delta FLOAT, gamma FLOAT, theta FLOAT, vega FLOAT, rho FLOAT, PRIMARY KEY (contract_id, date, symbol)) PARTITION BY KEY (symbol) PARTITIONS 16;'
+}
+
+TABLE_COLS = {
+    'historical_options': {'date': str, 'contract_id': str, 'symbol': str, 'type': str, 'expiration': str, 'strike': float, 'last': float, 'mark': float, 'bid': float, 'ask': float, 'volume': int, 'implied_volatility': float, 'delta': float, 'gamma': float, 'theta': float, 'vega': float, 'rho': float},
 }
 
 
@@ -60,6 +64,27 @@ def store_data(df, table_name, write_option: TableWriteOption, include_index=Tru
     # If we wanted to REPLACE, we've already dropped and recreated the table. That means we can always do our write as
     # an APPEND. This ensures our tables keep their exact types (e.g. VARCHAR vs. text) and primary keys.
     df.to_sql(table_name, engine, if_exists=TableWriteOption.APPEND.value, index=include_index)
+
+
+def insert_ignore_data(df, table_name):
+    """
+    Insert data that doesn't already exist into the given table. For non-numerical column types,
+    wrap their values in single quotes.
+    """
+    columns = TABLE_COLS[table_name]
+    if df.empty:
+        print(f'No data to store in {table_name}.')
+        return
+
+    rows = []
+    for _, row in df.iterrows():
+        cols = ', '.join([f"'{row[col]}'" if col_type not in {int, float} else str(row[col]) for col, col_type in columns.items()])
+        rows.append(f'({cols})')
+    rows = ', '.join(rows)
+    with engine.connect() as connection:
+        query = text(f'INSERT IGNORE INTO {table_name} VALUES {rows};')
+        connection.execute(query)
+        connection.commit()
 
 
 def select_all_by_symbol(table_name: str, symbols: set[str], order_by: str = None, start_date: str = None, end_date: str = None):
