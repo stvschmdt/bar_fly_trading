@@ -32,7 +32,7 @@ TABLE_CREATES = {
 }
 
 TABLE_COLS = {
-    'historical_options': {'date': str, 'contract_id': str, 'symbol': str, 'type': str, 'expiration': str, 'strike': float, 'last': float, 'mark': float, 'bid': float, 'ask': float, 'volume': int, 'implied_volatility': float, 'delta': float, 'gamma': float, 'theta': float, 'vega': float, 'rho': float},
+    'historical_options': {'contract_id': str, 'date': str, 'symbol': str, 'type': str, 'expiration': str, 'strike': float, 'last': float, 'mark': float, 'bid': float, 'ask': float, 'volume': int, 'implied_volatility': float, 'delta': float, 'gamma': float, 'theta': float, 'vega': float, 'rho': float},
 }
 
 
