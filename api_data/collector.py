@@ -53,20 +53,22 @@ class AlphaVantageClient:
             response = requests.get(self.base_url, params=kwargs)
             response.raise_for_status()
             response = response.json()
+
+            if response.get('Information', '') == RATE_LIMIT_STRING:
+                logger.info(
+                    f"AlphaVantage rate limit reached (requests_in_window={self.requests_in_window}). Sleeping for 60 seconds.")
+                sleep(60)
+                with lock:
+                    # We check the requests_in_window again because it could have been updated by another thread.
+                    if self.requests_in_window >= self.max_requests_per_min:
+                        self.requests_in_window = 0
+                self.window_start_time = datetime.now()
+                self.retry(num_attempt, **kwargs)
         except Exception as e:
             logger.error(f"Error fetching data from AlphaVantage - url:{self.base_url}, kwargs:{get_kwargs_without_api_key(kwargs)}, error={e}")
             sleep(2)
             self.retry(num_attempt, **kwargs)
 
-        if response.get('Information', '') == RATE_LIMIT_STRING:
-            logger.info(f"AlphaVantage rate limit reached (requests_in_window={self.requests_in_window}). Sleeping for 60 seconds.")
-            sleep(60)
-            with lock:
-                # We check the requests_in_window again because it could have been updated by another thread.
-                if self.requests_in_window >= self.max_requests_per_min:
-                    self.requests_in_window = 0
-            self.window_start_time = datetime.now()
-            self.retry(num_attempt, **kwargs)
         return response
 
     def retry(self, num_attempt, **kwargs):
