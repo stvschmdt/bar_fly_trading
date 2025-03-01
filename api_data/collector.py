@@ -26,7 +26,7 @@ class AlphaVantageClient:
         self.requests_in_window = 0
         self.window_start_time = datetime.now()
         self.base_url = "https://www.alphavantage.co/query"
-        self.max_attempts = 3
+        self.max_attempts = 5
 
     def fetch(self, num_attempt=1, **kwargs):
         if self.requests_in_window >= self.max_requests_per_min:
@@ -48,7 +48,6 @@ class AlphaVantageClient:
             self.requests_in_window += 1
         kwargs['apikey'] = self.api_key
 
-        response = {}
         try:
             response = requests.get(self.base_url, params=kwargs)
             response.raise_for_status()
@@ -63,11 +62,11 @@ class AlphaVantageClient:
                     if self.requests_in_window >= self.max_requests_per_min:
                         self.requests_in_window = 0
                 self.window_start_time = datetime.now()
-                self.retry(num_attempt, **kwargs)
+                return self.retry(num_attempt, **kwargs)
         except Exception as e:
             logger.error(f"Error fetching data from AlphaVantage - url:{self.base_url}, kwargs:{get_kwargs_without_api_key(kwargs)}, error={e}")
             sleep(2)
-            self.retry(num_attempt, **kwargs)
+            return self.retry(num_attempt, **kwargs)
 
         return response
 
