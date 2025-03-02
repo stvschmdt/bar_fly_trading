@@ -9,7 +9,7 @@ from api_data.core_stock import update_core_stock_data
 from api_data.economic_indicator import update_all_economic_indicators
 from api_data.fundamental_data import update_all_fundamental_data
 from api_data.historical_options import update_historical_options
-from api_data.storage import process_gold_table_in_batches
+from api_data.storage import process_gold_table_in_batches, connect_database
 from api_data.technical_indicator import update_all_technical_indicators
 from constants import WATCHLIST_PATH, SP500_PATH, SECTORS_PATH
 
@@ -74,6 +74,7 @@ if __name__ == "__main__":
     parser.add_argument("-t", "--test", help="number of symbols for testing functionality", type=int, default=600)
     parser.add_argument("-s", "--symbols", help="list of symbols to fetch data for", nargs='+', type=str, default=[])
     parser.add_argument("--gold-table-only", help="only update the gold table", action="store_true")
+    parser.add_argument("-d", "--db", help="database to use, either 'local' or 'remote' - defaults to local.", type=str, default='local')
     args = parser.parse_args()
     logger.info(f"Watchlist file: {args.watchlist}")
     logger.info(f"Test Size: {args.test}")
@@ -92,6 +93,7 @@ if __name__ == "__main__":
         sectors = set(pd.read_csv(SECTORS_PATH)['Symbol'])
         etfs = set(pd.read_csv(WATCHLIST_PATH).query('`Is ETF` == 1')['Symbol'])
         etfs.update(sectors)
+        connect_database(args.db)
         main()
     except Exception as e:
         print(f"Error: {e}")

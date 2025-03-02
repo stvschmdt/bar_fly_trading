@@ -11,7 +11,8 @@ from account.account import Account
 from account.account_values import AccountValues
 from account.backtest_account import BacktestAccount
 from api_data.core_stock import CORE_STOCK_TABLE_NAME
-from api_data.storage import select_all_by_symbol
+from api_data.historical_options import HISTORICAL_OPTIONS_TABLE_NAME
+from api_data.storage import select_all_by_symbol, connect_database
 from strategy.base_strategy import BaseStrategy
 from strategy.bollinger_bands_strategy import BollingerBandsStrategy
 from strategy.buy_hold_strategy import BuyHoldStrategy
@@ -23,15 +24,15 @@ from strategy.test_strategy import TestStrategy
 def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_date: str) -> AccountValues:
     # Iterate through every day between start_date and end_date, and call the strategy's evaluate method
     # on each day. The strategy will return positions traded on that day.
-    df = select_all_by_symbol(CORE_STOCK_TABLE_NAME, symbols, start_date=start_date, end_date=end_date)
-
-    # TODO: Store historical option data in the DB and fetch it here, then pass to update_account_values below
+    core_stock_df = select_all_by_symbol(CORE_STOCK_TABLE_NAME, symbols, start_date=start_date, end_date=end_date)
+    # TODO: Pass options data to update_account_values below
+    historical_options_df = select_all_by_symbol(HISTORICAL_OPTIONS_TABLE_NAME, symbols, start_date=start_date, end_date=end_date)
 
     daily_account_values = []
     daily_positions = []  # List of tuples (date, position)
     for date in pd.date_range(start_date, end_date):
         # Get the 'symbol' and 'open' columns for every row where the 'date' column matches the current date
-        current_prices = df.loc[df['date'] == date, ['symbol', 'open', 'adjusted_close', 'high', 'low']]
+        current_prices = core_stock_df.loc[core_stock_df['date'] == date, ['symbol', 'open', 'adjusted_close', 'high', 'low']]
 
         # Skip weekends/holidays
         if current_prices.shape[0] == 0:
@@ -90,6 +91,7 @@ if __name__ == "__main__":
     parser.add_argument("--start_date", type=str, required=True, help="Start date for the backtest in YYYY-MM-DD format")
     parser.add_argument("--end_date", type=str, required=True, help="End date for the backtest in YYYY-MM-DD format")
     parser.add_argument("--symbols", type=str, nargs="+", help="List of symbols to backtest. Leave empty to backtest on entire watchlist.")
+    parser.add_argument("--db", help="database to use, either 'local' or 'remote' - defaults to local.", type=str, default='local')
 
     # Args for testing with a real account
     parser.add_argument("--account_id", type=str, help="Account ID to backtest with a real account. Leave empty for dummy account")
@@ -101,6 +103,7 @@ if __name__ == "__main__":
 
     account = get_account(args.account_id, args.start_cash_balance, args.start_date)
     strategy = get_strategy(args.strategy_name, account, set(args.symbols))
+    connect_database(args.db)
 
     account_values = backtest(strategy, set(args.symbols), args.start_date, args.end_date)
     print(f"Final account values: {account_values}")
