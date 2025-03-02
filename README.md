@@ -40,7 +40,7 @@ ssh -L 3307:localhost:3306 username@54.90.246.184 -N -i <path_to_private_key>
 - If running `pull_api_data.py` or `backtest.py`, set the `--db` flag to `remote`.
 - If you just want to query the remote DB from a MySQL shell:
 ```
-mysql -h 127.0.0.1 -P 3307 -u root -p
+mysql -h 127.0.0.1 -P 3307 -u readonly_user -p
 ```
 ```
 
