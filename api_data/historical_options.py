@@ -94,7 +94,7 @@ def update_historical_options_for_date(api_client: AlphaVantageClient, symbol: s
     response = fetch_historical_options(api_client, symbol, date)
     if not response.get('data'):
         # Since we default end_date to today, we may not have data for today yet.
-        logger.info(f'No historical options data found for {symbol}')
+        logger.info(f'No historical options data found for {symbol} on date {date}')
         return
 
     df = parse_historical_options(response['data'])
