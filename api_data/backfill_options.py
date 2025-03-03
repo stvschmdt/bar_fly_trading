@@ -7,6 +7,7 @@ import pandas as pd
 
 from api_data import historical_options
 from api_data.collector import alpha_client
+from api_data.storage import connect_database
 from constants import WATCHLIST_PATH, SP500_PATH
 from logging_config import setup_logging
 
@@ -25,6 +26,8 @@ if __name__ == '__main__':
                         type=str, default='api_data/watchlist.csv')
     parser.add_argument('--start_date', type=str, help='The start date to backfill from')
     parser.add_argument('--end_date', type=str, help='The end date to backfill to')
+    parser.add_argument("-d", "--db", help="database to use, either 'local' or 'remote' - defaults to local.", type=str,
+                        default='local')
     args = parser.parse_args()
 
     if args.symbols:
@@ -37,6 +40,8 @@ if __name__ == '__main__':
         # read in csv file of watch list
         symbols = pd.read_csv(args.watchlist)['Symbol'].tolist()
         symbols = [symbol.upper() for symbol in symbols][0:args.test]
+
+    connect_database(args.db)
 
     # Process 3 symbols at a time. Any more and we'll hit rate limits too quickly.
     with futures.ThreadPoolExecutor(max_workers=3) as executor:

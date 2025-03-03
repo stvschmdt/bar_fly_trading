@@ -106,7 +106,5 @@ def update_all_economic_indicators(api_client: AlphaVantageClient, incremental: 
     if incremental:
         df = drop_existing_rows(df, ECONOMIC_INDICATOR_TABLE_NAME, DATE_COL)
 
-    #print('economic_indicator data')
     pd.set_option('display.max_columns', None)
-    #print(df.head())
     store_data(df, table_name=ECONOMIC_INDICATOR_TABLE_NAME, write_option=get_table_write_option(incremental))
