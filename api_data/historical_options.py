@@ -106,7 +106,7 @@ def update_historical_options_for_date(api_client: AlphaVantageClient, symbol: s
     # If we weren't given a date, fetch it from the API response. The date will be the same in all entries because it's
     # the last date the market was open, so we can just grab the first one.
     if not close_price:
-        date = df.index[0]
+        date = df['date'].iloc[0]
         close_price = select_all_by_symbol(CORE_STOCK_TABLE_NAME, symbols={symbol}, start_date=date)['close'].values[0]
 
     # Get the nearby strike prices
