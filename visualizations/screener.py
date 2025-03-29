@@ -67,6 +67,7 @@ class StockScreener:
     def run_screen(self):
         # Get the two nearest dates to the target date
         nearest_dates = self.find_nearest_three_dates(self.date)
+        print(nearest_dates)
         self.latest_date = nearest_dates[0].strftime('%Y-%m-%d')
         previous_date = nearest_dates[1].strftime('%Y-%m-%d')
         day_before_previous_date = nearest_dates[2].strftime('%Y-%m-%d')
@@ -140,6 +141,17 @@ class StockScreener:
         else:
             signals.append(0)
 
+    def _check_macd_zero(self, selected_date_data, bullish_signals, bearish_signals, signals):
+        macd = selected_date_data['macd'].values[0]
+        if macd > 0:
+            bullish_signals.append('bullish_macd_zero')
+            signals.append(1)
+        elif macd < 0:
+            bearish_signals.append('bearish_macd_zero')
+            signals.append(-1)
+        else:
+            signals.append(0)
+
     def _check_adx(self, selected_date_data, bullish_signals, bearish_signals, signals):
         adx = selected_date_data['adx_14'].values[0]
         if adx > 25:
@@ -168,10 +180,10 @@ class StockScreener:
     def _check_cci(self, selected_date_data, bullish_signals, bearish_signals, signals):
         cci = selected_date_data['cci_14'].values[0]
         if cci >= 100:
-            bearish_signals.append('bullish_cci')
+            bearish_signals.append('bearing_cci')
             signals.append(-1)
         elif cci <= -100:
-            bullish_signals.append('bearish_cci')
+            bullish_signals.append('bullish_cci')
             signals.append(1)
         else:
             signals.append(0)
@@ -189,6 +201,8 @@ class StockScreener:
             self._check_rsi(selected_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'macd' in self.indicators:
             self._check_macd(selected_date_data, bullish_signals, bearish_signals, signals)
+        if self.indicators == 'all' or 'macd_zero' in self.indicators:
+            self._check_macd_zero(selected_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'adx' in self.indicators:
             self._check_adx(selected_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'cci' in self.indicators:
@@ -259,6 +273,7 @@ class StockScreener:
         #plt.figure()
         plt.figure(figsize=(14, 10))
         pe_ratio = symbol_data['pe_ratio']
+        forward_pe_ratio = symbol_data['forward_pe']
 
         # Plot PE Ratio with different colors based on thresholds
         for i in range(len(symbol_data) - 1):
@@ -268,6 +283,9 @@ class StockScreener:
                 plt.plot([symbol_data['date'].iloc[i], symbol_data['date'].iloc[i + 1]], [pe_ratio.iloc[i], pe_ratio.iloc[i + 1]], color='green')
             else:
                 plt.plot([symbol_data['date'].iloc[i], symbol_data['date'].iloc[i + 1]], [pe_ratio.iloc[i], pe_ratio.iloc[i + 1]], color='black')
+        # plot forward pe ratio as horizontal line
+        plt.axhline(forward_pe_ratio.iloc[0], color='blue', linestyle='--', label='Forward PE Ratio')
+        
 
         # Add annotations for the first bullish and bearish signals
         first_bullish = True
@@ -288,6 +306,7 @@ class StockScreener:
         plt.ylabel('TTM P/E Ratio')
         plt.title(f'{symbol} - TTM PE Ratio Analysis')
         plt.tight_layout()
+        plt.legend()
         plt.savefig(output_path)
         plt.close()
 
@@ -309,11 +328,11 @@ class StockScreener:
         first_zero_above = False
         for i, row in symbol_data.iterrows():
             if row['cci_14'] >= 100 and first_bullish:
-                plt.annotate('Bullish Trend', (row['date'], row['cci_14']), textcoords="offset points", xytext=(0,10), ha='center', color='green')
+                plt.annotate('Overbought Trend', (row['date'], row['cci_14']), textcoords="offset points", xytext=(0,10), ha='center', color='red')
                 first_bearish = True
                 first_bullish = False
             elif row['cci_14'] <= -100 and first_bearish:
-                plt.annotate('Bearish Trend', (row['date'], row['cci_14']), textcoords="offset points", xytext=(0,10), ha='center', color='red')
+                plt.annotate('Oversold Trend', (row['date'], row['cci_14']), textcoords="offset points", xytext=(0,10), ha='center', color='green')
                 first_bullish = True
                 first_bearish = False
             # if previous cci was below zero and current cci is above zero, annotate zero cross using zero_cross varaibles
@@ -515,6 +534,150 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    def _plot_master_adjusted_close(self, symbol, symbol_data, title=None, output_path=None):
+        # plot all technical indicator bullish and bearish signals that share a y-axis with adjusted close
+        # this includes sma, atr, bbands, fibonacci levels (23, 38, 50, 61)
+        # any bullish/buy signals will be green, any bearish/sell signals will be red
+        if title is None:
+            title = 'daily_price'
+        if output_path is None:
+            output_path = os.path.join(self.output_dir, f'{symbol}_{title}.jpg')
+        #plt.figure()
+        plt.figure(figsize=(14, 10))
+        plt.plot(symbol_data['date'], symbol_data['adjusted_close'], label='Adjusted Close', color='black')
+        plt.plot(symbol_data['date'], symbol_data['sma_20'], label='SMA 20', color='yellow', linestyle='solid')
+        plt.plot(symbol_data['date'], symbol_data['sma_50'], label='SMA 50', color='orange', linestyle='solid')
+        plt.plot(symbol_data['date'], symbol_data['sma_200'], label='SMA 200', color='pink', linestyle='solid')
+       
+        # Add annotations for SMA crossovers
+        for i in range(1, len(symbol_data)):
+            if symbol_data['sma_20'].iloc[i] > symbol_data['sma_50'].iloc[i] and symbol_data['sma_20'].iloc[i - 1] <= symbol_data['sma_50'].iloc[i - 1]:
+                plt.annotate('Bullish Cross 20/50', (symbol_data['date'].iloc[i], symbol_data['sma_20'].iloc[i]),
+                             textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='green', arrowprops=dict(arrowstyle='->', color='green'), rotation=60)
+            elif symbol_data['sma_20'].iloc[i] < symbol_data['sma_50'].iloc[i] and symbol_data['sma_20'].iloc[i - 1] >= symbol_data['sma_50'].iloc[i - 1]:
+                plt.annotate('Bearish Cross 20/50', (symbol_data['date'].iloc[i], symbol_data['sma_20'].iloc[i]),
+                             textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='red', arrowprops=dict(arrowstyle='->', color='red'), rotation=60)
+            if symbol_data['sma_20'].iloc[i] > symbol_data['sma_200'].iloc[i] and symbol_data['sma_20'].iloc[i - 1] <= symbol_data['sma_200'].iloc[i - 1]:
+                plt.annotate('Bullish Cross 20/200', (symbol_data['date'].iloc[i], symbol_data['sma_200'].iloc[i]),
+                             textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='green', arrowprops=dict(arrowstyle='->', color='green'), rotation=60)
+            elif symbol_data['sma_20'].iloc[i] < symbol_data['sma_200'].iloc[i] and symbol_data['sma_20'].iloc[i - 1] >= symbol_data['sma_200'].iloc[i - 1]:
+                plt.annotate('Bearish Cross 20/200', (symbol_data['date'].iloc[i], symbol_data['sma_200'].iloc[i]),
+                             textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='red', arrowprops=dict(arrowstyle='->', color='red'), rotation=60)
+
+
+        # add in atr levels
+        # Calculate take profit and stop loss levels based on the most recent date's adjusted close and ATR
+        atr = symbol_data['atr_14']
+        adjusted_close = symbol_data['adjusted_close']
+        most_recent_close = adjusted_close.iloc[0]
+        most_recent_atr = atr.iloc[0]
+        take_profit_level = most_recent_close + 2 * most_recent_atr
+        stop_loss_level = most_recent_close - 2 * most_recent_atr
+        
+        # Plot take profit and stop loss levels
+        plt.axhline(take_profit_level, color='red', linestyle='dotted', label='Take Profit Level (2 ATR)')
+        plt.axhline(stop_loss_level, color='red', linestyle='dotted', label='Stop Loss Level (-2 ATR)')
+
+        # Add annotations for 'Buy Watch' and 'Sell Watch'
+        take_profit_one_percent = take_profit_level - (take_profit_level * 0.01)
+        stop_loss_one_percent = stop_loss_level + (stop_loss_level * 0.01)
+        for i, row in symbol_data.iterrows():
+            if row['adjusted_close'] >= take_profit_one_percent and row['adjusted_close'] <= take_profit_level:
+                plt.annotate('Profit Cap Watch', (row['date'], row['adjusted_close']), textcoords="offset points", xytext=(0,10), ha='center', color='orange', rotation=45)
+            elif row['adjusted_close'] <= stop_loss_one_percent and row['adjusted_close'] >= stop_loss_level:
+                plt.annotate('Stop Loss Watch', (row['date'], row['adjusted_close']), textcoords="offset points", xytext=(0,10), ha='center', color='blue', rotation=45)
+
+        # add in bbands
+        adj_close = symbol_data['adjusted_close']
+        bb_upper = symbol_data['bbands_upper_20']
+        bb_lower = symbol_data['bbands_lower_20']
+        
+        first_bullish = True
+        first_bearish = True
+        # Plot adjusted close with different colors depending on its position relative to Bollinger Bands
+        for i in range(len(symbol_data) - 1):
+            if adj_close.iloc[i] > bb_upper.iloc[i]:
+                plt.plot([symbol_data['date'].iloc[i], symbol_data['date'].iloc[i + 1]], [adj_close.iloc[i], adj_close.iloc[i + 1]], color='red', linestyle='dotted')
+                if first_bearish:
+                    plt.annotate('Bearish Breakout', (symbol_data['date'].iloc[i], adj_close.iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='red', rotation=90)
+                    first_bearish = False
+            elif adj_close.iloc[i] < bb_lower.iloc[i]:
+                plt.plot([symbol_data['date'].iloc[i], symbol_data['date'].iloc[i + 1]], [adj_close.iloc[i], adj_close.iloc[i + 1]], color='green', linestyle='dotted')
+                if first_bullish:
+                    plt.annotate('Bullish Breakout', (symbol_data['date'].iloc[i], adj_close.iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='green', rotation=90)
+                    first_bullish = False
+            else:
+                plt.plot([symbol_data['date'].iloc[i], symbol_data['date'].iloc[i + 1]], [adj_close.iloc[i], adj_close.iloc[i + 1]], color='black')
+        
+        # Add annotations for 'Buy Watch' and 'Sell Watch'
+        for i, row in symbol_data.iterrows():
+            if abs(row['adjusted_close'] - row['bbands_upper_20']) / row['bbands_upper_20'] <= 0.01:
+                plt.annotate('Sell Watch', (row['date'], row['adjusted_close']), textcoords="offset points", xytext=(0,10), ha='center', color='orange', rotation=45)
+            elif abs(row['adjusted_close'] - row['bbands_lower_20']) / row['bbands_lower_20'] <= 0.01:
+                plt.annotate('Buy Watch', (row['date'], row['adjusted_close']), textcoords="offset points", xytext=(0,10), ha='center', color='blue', rotation=45)
+        
+        plt.plot(symbol_data['date'], bb_upper, linestyle='--', label='Bollinger Band Upper', color='red')
+        plt.plot(symbol_data['date'], bb_lower, linestyle='--', label='Bollinger Band Lower', color='green')
+
+
+        # add in fibonacci levels
+        # Calculate Fibonacci levels
+        max_price = symbol_data['adjusted_close'].max()
+        min_price = symbol_data['adjusted_close'].min()
+        diff = max_price - min_price
+        level_23 = max_price - (diff * 0.236)
+        level_38 = max_price - (diff * 0.382)
+        level_50 = max_price - (diff * 0.5)
+        level_61 = max_price - (diff * 0.618)
+        plt.axhline(level_23, color='purple', linestyle='--', label='Fibonacci Levels')
+        plt.axhline(level_38, color='purple', linestyle='--')
+        plt.axhline(level_50, color='purple', linestyle='--')
+        plt.axhline(level_61, color='purple', linestyle='--')
+        # Add annotations for Fibonacci levels
+        f23_6 = False
+        f38_2 = False
+        f50 = False
+        f61_8 = False
+        for i, row in symbol_data.iterrows():
+            if abs(row['adjusted_close'] - level_23) / level_23 <= 0.0001 and not f23_6:
+                plt.annotate('Fibo 23.6%', (row['date'], row['adjusted_close']), textcoords="offset points", xytext=(0,10), ha='center', color='purple', rotation=90)
+                f23_6 = True
+            elif abs(row['adjusted_close'] - level_38) / level_38 <= 0.0001 and not f38_2:
+                plt.annotate('Fibo 38.2%', (row['date'], row['adjusted_close']), textcoords="offset points", xytext=(0,10), ha='center', color='purple', rotation=90)
+                f38_2 = True
+            elif abs(row['adjusted_close'] - level_50) / level_50 <= 0.0001 and not f50:
+                plt.annotate('Fibo 50%', (row['date'], row['adjusted_close']), textcoords="offset points", xytext=(0,10), ha='center', color='purple', rotation=90)
+                f50 = True
+            elif abs(row['adjusted_close'] - level_61) / level_61 <= 0.0001 and not f61_8:
+                plt.annotate('Fibo 61.8%', (row['date'], row['adjusted_close']), textcoords="offset points", xytext=(0,10), ha='center', color='purple', rotation=90)
+                f61_8 = True
+            # if adjusted close moves above any of these levels, reset variables to false
+            if row['adjusted_close'] > level_23:
+                f23_6 = False
+            if row['adjusted_close'] > level_38:
+                f38_2 = False
+            if row['adjusted_close'] > level_50:
+                f50 = False
+            if row['adjusted_close'] > level_61:
+                f61_8 = False
+
+        
+        # ensure the y axis contains the entire range of prices, smas
+        # find min and max of any data used in the plot
+        #min_val = min(symbol_data['adjusted_close'].min(), symbol_data['sma_20'].min(), symbol_data['sma_50'].min(), symbol_data['sma_200'].min())
+        #max_val = max(symbol_data['adjusted_close'].max(), symbol_data['sma_20'].max(), symbol_data['sma_50'].max(), symbol_data['sma_200'].max())
+        #plt.ylim(min_val * 1.0, max_val * 1.0)  # Adjust y-limits for better visibility
+        plt.xlabel('Date')
+        plt.xticks(rotation=90)
+        plt.ylabel('Price')
+        plt.title(f'{title} - Master Technicals vs Adjusted Close')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+
+        
+
     def _plot_volume(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_daily_volume.jpg')
         #plt.figure()
@@ -661,8 +824,8 @@ class StockScreener:
         if len(bullish) > 0 or len(bearish) > 0:
         #if abs(len(bullish) - len(bearish)) > 2:
             logging.info(f'Visualizing data for symbol {symbol}')
-            if 'bollinger_band' in self.indicators or self.indicators == 'all':
-                self._plot_bollinger_band(symbol, symbol_data)
+            #if 'bollinger_band' in self.indicators or self.indicators == 'all':
+                #self._plot_bollinger_band(symbol, symbol_data)
             if 'rsi' in self.indicators or self.indicators == 'all':
                 self._plot_rsi(symbol, symbol_data)
             if 'macd' in self.indicators or self.indicators == 'all':
@@ -671,12 +834,13 @@ class StockScreener:
                 self._plot_adx(symbol, symbol_data)
             if 'cci' in self.indicators or self.indicators == 'all':
                 self._plot_cci(symbol, symbol_data)
-            if 'atr' in self.indicators or self.indicators == 'all':
-                self._plot_atr(symbol, symbol_data)
+            #if 'atr' in self.indicators or self.indicators == 'all':
+                #self._plot_atr(symbol, symbol_data)
             if 'pe_ratio' in self.indicators or self.indicators == 'all':
                 if symbol not in sectors:
                     self._plot_pe_ratio(symbol, symbol_data)
-            self._plot_price_sma(symbol, symbol_data)
+            #self._plot_price_sma(symbol, symbol_data)
+            self._plot_master_adjusted_close(symbol, symbol_data)
             self._plot_volume(symbol, symbol_data)
             self._plot_symbol_sharpe_ratio(symbol, symbol_data)
             if symbol not in sectors:
@@ -747,7 +911,9 @@ class StockScreener:
         # for each sector etf we need to manually calculate sma_20, sma_50, sma_200, bbands_upper_20, bbands_lower_20
         for industry, sector in zip(industries, sectors):
 
-            output_path = os.path.join(self.output_dir, f'{sector}_sector_analysis.jpg')
+            output_path = os.path.join(self.output_dir, f'{sector}_sector_{industry}_analysis.jpg')
+            # call plot_master_adjusted_close with the sector data
+            ##############
 
             sector_data = self.data[self.data['symbol'] == sector]
             sector_data.loc[:, 'date'] = pd.to_datetime(sector_data['date'], format='%Y-%m-%d')
@@ -756,58 +922,61 @@ class StockScreener:
 
             # only get the last n_days
             sector_data = sector_data[-self.n_days:]
+            # make sure there is data in there
+            assert len(sector_data) > 0, f'No data for {sector}'
+            self._plot_master_adjusted_close(sector, sector_data, title=f'{sector} {industry}', output_path=output_path)
             # plot a chart with adjusted_close, sma_20, sma_50, sma_200, bbands_upper_20, bbands_lower_20
             # add text annotation when there are bullish or bearish signals
-            plt.figure(figsize=(14, 10))
-            plt.plot(sector_data['date'], sector_data['adjusted_close'], label='Adjusted Close', color='black', linewidth=2)
-            plt.plot(sector_data['date'], sector_data['sma_20'], label='SMA 20', color='orange')
-            plt.plot(sector_data['date'], sector_data['sma_50'], label='SMA 50', color='green')
-            plt.plot(sector_data['date'], sector_data['sma_200'], label='SMA 200', color='red')
-            plt.plot(sector_data['date'], sector_data['bbands_upper_20'], linestyle='--', label='Bollinger Band Upper', color='blue')
-            plt.plot(sector_data['date'], sector_data['bbands_lower_20'], linestyle='--', label='Bollinger Band Lower', color='blue')
+            #plt.figure(figsize=(14, 10))
+            #plt.plot(sector_data['date'], sector_data['adjusted_close'], label='Adjusted Close', color='black', linewidth=2)
+            #plt.plot(sector_data['date'], sector_data['sma_20'], label='SMA 20', color='orange')
+            #plt.plot(sector_data['date'], sector_data['sma_50'], label='SMA 50', color='green')
+            #plt.plot(sector_data['date'], sector_data['sma_200'], label='SMA 200', color='red')
+            #plt.plot(sector_data['date'], sector_data['bbands_upper_20'], linestyle='--', label='Bollinger Band Upper', color='blue')
+            #plt.plot(sector_data['date'], sector_data['bbands_lower_20'], linestyle='--', label='Bollinger Band Lower', color='blue')
 
             # Add annotations for SMA crossovers and bollinger band breakouts
-            for i in range(1, len(sector_data)):
-                if sector_data['sma_20'].iloc[i] > sector_data['sma_50'].iloc[i] and sector_data['sma_20'].iloc[i - 1] <= sector_data['sma_50'].iloc[i - 1]:
-                    plt.annotate('Bullish Cross 20/50', (sector_data['date'].iloc[i-1], sector_data['sma_20'].iloc[i-1]),
-                                 textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='green', arrowprops=dict(arrowstyle='->', color='green'))
-                elif sector_data['sma_20'].iloc[i] < sector_data['sma_50'].iloc[i] and sector_data['sma_20'].iloc[i - 1] >= sector_data['sma_50'].iloc[i - 1]:
-                    plt.annotate('Bearish Cross 20/50', (sector_data['date'].iloc[i], sector_data['sma_20'].iloc[i]),
-                                 textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='red', arrowprops=dict(arrowstyle='->', color='red'))
-                if sector_data['sma_20'].iloc[i] > sector_data['sma_200'].iloc[i] and sector_data['sma_20'].iloc[i - 1] <= sector_data['sma_200'].iloc[i - 1]:
-                    plt.annotate('Bullish Cross 20/200', (sector_data['date'].iloc[i-1], sector_data['sma_200'].iloc[i-1]),
-                                 textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='green', arrowprops=dict(arrowstyle='->', color='green'))
-                elif sector_data['sma_20'].iloc[i] < sector_data['sma_200'].iloc[i] and sector_data['sma_20'].iloc[i - 1] >= sector_data['sma_200'].iloc[i - 1]:
-                    plt.annotate('Bearish Cross 20/200', (sector_data['date'].iloc[i-1], sector_data['sma_200'].iloc[i-1]),
-                                 textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='red', arrowprops=dict(arrowstyle='->', color='red'))
-                if sector_data['adjusted_close'].iloc[i] > sector_data['bbands_upper_20'].iloc[i]:
-                    plt.annotate('Bearish Breakout', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='red')
-                elif sector_data['adjusted_close'].iloc[i] < sector_data['bbands_lower_20'].iloc[i]:
-                    plt.annotate('Bullish Breakout', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='green')
-                # add Buy Watch and Sell Watch annotations for bolinger bands
-                if abs(sector_data['adjusted_close'].iloc[i] - sector_data['bbands_upper_20'].iloc[i]) / sector_data['bbands_upper_20'].iloc[i] <= 0.01:
-                    # ensure this is from below not above
-                    if sector_data['adjusted_close'].iloc[i-1] < sector_data['bbands_upper_20'].iloc[i-1]:
-                        plt.annotate('Sell Watch', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='orange')
-                elif abs(sector_data['adjusted_close'].iloc[i] - sector_data['bbands_lower_20'].iloc[i]) / sector_data['bbands_lower_20'].iloc[i] <= 0.01:
-                    # ensure this is from above not below
-                    if sector_data['adjusted_close'].iloc[i-1] > sector_data['bbands_lower_20'].iloc[i-1]:
-                        plt.annotate('Buy Watch', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='blue')
-
-
-            # find min and max of any data used in the plot for y axis
-            min_val = min(sector_data['adjusted_close'].min(), sector_data['sma_20'].min(), sector_data['sma_50'].min(), sector_data['sma_200'].min(), sector_data['bbands_upper_20'].min(), sector_data['bbands_lower_20'].min())
-            max_val = max(sector_data['adjusted_close'].max(), sector_data['sma_20'].max(), sector_data['sma_50'].max(), sector_data['sma_200'].max(), sector_data['bbands_upper_20'].max(), sector_data['bbands_lower_20'].max())
-            plt.ylim(min_val * 0.95, max_val * 1.05)  # Adjust y-limits for better visibility
-            plt.xlabel('Date')
-            plt.xticks(rotation=45)
-            plt.ylabel('Price')
-            plt.title(f'{sector} {industry}- Price and SMAs')
-            plt.legend()
-            plt.tight_layout()
-            plt.ylim(min(sector_data['adjusted_close']) * 0.95, max(sector_data['adjusted_close']) * 1.05)  # Adjust y-limits for better visibility
-            plt.savefig(output_path)
-            plt.close()
+            #for i in range(1, len(sector_data)):
+                #if sector_data['sma_20'].iloc[i] > sector_data['sma_50'].iloc[i] and sector_data['sma_20'].iloc[i - 1] <= sector_data['sma_50'].iloc[i - 1]:
+                    #plt.annotate('Bullish Cross 20/50', (sector_data['date'].iloc[i-1], sector_data['sma_20'].iloc[i-1]),
+                                 #textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='green', arrowprops=dict(arrowstyle='->', color='green'))
+                #elif sector_data['sma_20'].iloc[i] < sector_data['sma_50'].iloc[i] and sector_data['sma_20'].iloc[i - 1] >= sector_data['sma_50'].iloc[i - 1]:
+                    #plt.annotate('Bearish Cross 20/50', (sector_data['date'].iloc[i], sector_data['sma_20'].iloc[i]),
+                                 #textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='red', arrowprops=dict(arrowstyle='->', color='red'))
+                #if sector_data['sma_20'].iloc[i] > sector_data['sma_200'].iloc[i] and sector_data['sma_20'].iloc[i - 1] <= sector_data['sma_200'].iloc[i - 1]:
+                    #plt.annotate('Bullish Cross 20/200', (sector_data['date'].iloc[i-1], sector_data['sma_200'].iloc[i-1]),
+                                 #textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='green', arrowprops=dict(arrowstyle='->', color='green'))
+                #elif sector_data['sma_20'].iloc[i] < sector_data['sma_200'].iloc[i] and sector_data['sma_20'].iloc[i - 1] >= sector_data['sma_200'].iloc[i - 1]:
+                    #plt.annotate('Bearish Cross 20/200', (sector_data['date'].iloc[i-1], sector_data['sma_200'].iloc[i-1]),
+                                 #textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='red', arrowprops=dict(arrowstyle='->', color='red'))
+                #if sector_data['adjusted_close'].iloc[i] > sector_data['bbands_upper_20'].iloc[i]:
+                    #plt.annotate('Bearish Breakout', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='red')
+                #elif sector_data['adjusted_close'].iloc[i] < sector_data['bbands_lower_20'].iloc[i]:
+                    #plt.annotate('Bullish Breakout', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='green')
+                ## add Buy Watch and Sell Watch annotations for bolinger bands
+                #if abs(sector_data['adjusted_close'].iloc[i] - sector_data['bbands_upper_20'].iloc[i]) / sector_data['bbands_upper_20'].iloc[i] <= 0.01:
+                    ## ensure this is from below not above
+                    #if sector_data['adjusted_close'].iloc[i-1] < sector_data['bbands_upper_20'].iloc[i-1]:
+                        #plt.annotate('Sell Watch', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='orange')
+                #elif abs(sector_data['adjusted_close'].iloc[i] - sector_data['bbands_lower_20'].iloc[i]) / sector_data['bbands_lower_20'].iloc[i] <= 0.01:
+                    ## ensure this is from above not below
+                    #if sector_data['adjusted_close'].iloc[i-1] > sector_data['bbands_lower_20'].iloc[i-1]:
+                        #plt.annotate('Buy Watch', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='blue')
+#
+#
+            ## find min and max of any data used in the plot for y axis
+            #min_val = min(sector_data['adjusted_close'].min(), sector_data['sma_20'].min(), sector_data['sma_50'].min(), sector_data['sma_200'].min(), sector_data['bbands_upper_20'].min(), sector_data['bbands_lower_20'].min())
+            #max_val = max(sector_data['adjusted_close'].max(), sector_data['sma_20'].max(), sector_data['sma_50'].max(), sector_data['sma_200'].max(), sector_data['bbands_upper_20'].max(), sector_data['bbands_lower_20'].max())
+            #plt.ylim(min_val * 0.95, max_val * 1.05)  # Adjust y-limits for better visibility
+            #plt.xlabel('Date')
+            #plt.xticks(rotation=45)
+            #plt.ylabel('Price')
+            #plt.title(f'{sector} {industry}- Price and SMAs')
+            #plt.legend()
+            #plt.tight_layout()
+            #plt.ylim(min(sector_data['adjusted_close']) * 0.95, max(sector_data['adjusted_close']) * 1.05)  # Adjust y-limits for better visibility
+            #plt.savefig(output_path)
+            #plt.close()
         # for all sectors and SPY, QQQ, plot the n_day rolling % change
         # plot the daily % change for all sectors and SPY, QQQ on one chart -> use dotted lines for sectors, bold lines for SPY/QQQ
         output_path = os.path.join(self.output_dir, 'market_returns.jpg')
@@ -868,7 +1037,7 @@ class StockScreener:
             return
 
         # Use a fixed number of columns since the indicators are known
-        columns = ['symbol', 'num_bullish', 'num_bearish', 'sma_cross', 'bollinger_band', 'rsi', 'macd', 'adx', 'cci', 'atr', 'pe_ratio']
+        columns = ['symbol', 'num_bullish', 'num_bearish', 'sma_cross', 'bollinger_band', 'rsi', 'macd', 'macd_zero', 'adx', 'cci', 'atr', 'pe_ratio']
         results_df = pd.DataFrame(rows_to_write, columns=columns)
         results_df.to_csv('screener_results_{}.csv'.format(self.latest_date), index=False)
 
