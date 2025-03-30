@@ -293,10 +293,12 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
     df['surprise'] = df.groupby('symbol')['surprise'].ffill()
     df['surprise_percentage'] = df.groupby('symbol')['surprise_percentage'].ffill()
     df['ttm_eps'] = df.groupby('symbol')['ttm_eps'].ffill()
+    df['book_value'] = df.groupby('symbol')['book_value'].ffill()
     # calculate the 9 day exponential moving average of the macd for each symbol
     df["macd_9_ema"] = df.groupby("symbol")["macd"].transform(lambda x: x.ewm(span=9, adjust=False).mean())
 
     df['pe_ratio'] = df['adjusted_close'] / df['ttm_eps']
+    df['price_to_book_ratio'] = df['adjusted_close'] / df['book_value']
 
     # economic_indicators filldown
     df['treasury_yield_2year'] = df['treasury_yield_2year'].ffill()

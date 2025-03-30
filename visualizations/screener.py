@@ -226,6 +226,18 @@ class StockScreener:
         else:
             signals.append(0)
 
+    def _check_price_to_book(self, selected_date_data, bullish_signals, bearish_signals, signals):
+        price_to_book = selected_date_data['price_to_book_ratio'].values[0]
+        price_to_book = selected_date_data['adjusted_close'].values[0] / price_to_book
+        if price_to_book < .99:
+            bullish_signals.append('bullish_price_to_book')
+            signals.append(1)
+        elif price_to_book > 1.25:
+            bearish_signals.append('bearish_price_to_book')
+            signals.append(-1)
+        else:
+            signals.append(0)
+
     def _check_bollinger_band(self, selected_date_data, bullish_signals, bearish_signals, signals):
         adj_close = selected_date_data['adjusted_close'].values[0]
         bb_upper = selected_date_data['bbands_upper_20'].values[0]
@@ -267,6 +279,34 @@ class StockScreener:
             #print('bear signals', signals)
         else:
             signals.append(0)
+    
+    def _plot_price_to_book(self, symbol, symbol_data):
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_price_to_book.jpg')
+        #plt.figure()
+        plt.figure(figsize=(14, 10))
+        price_to_book = symbol_data['book_value']
+        adjusted_close = symbol_data['adjusted_close']
+        # plot adjusted close over the n_day period
+        plt.plot(symbol_data['date'], adjusted_close, label='Adjusted Close', color='black')
+        # plot price to book ratio
+        plt.plot(symbol_data['date'], price_to_book, label='Price to Book Ratio', color='blue')
+        # add horizontal lines for 1 and 3
+        plt.axhline(1, color='green', linestyle='--', label='Price to Book Ratio (1)')
+        plt.axhline(3, color='red', linestyle='--', label='Price to Book Ratio (3)')
+        # Add annotations for 'Buy Watch' and 'Sell Watch'
+        for i, row in symbol_data.iterrows():
+            if row['book_value'] <= 1:
+                plt.annotate('Buy Watch', (row['date'], row['book_value']), textcoords="offset points", xytext=(0,10), ha='center', color='green')
+            elif row['book_value'] >= 3:
+                plt.annotate('Sell Watch', (row['date'], row['book_value']), textcoords="offset points", xytext=(0,10), ha='center', color='red')
+        plt.xlabel('Date')
+        plt.xticks(rotation=45)
+        plt.ylabel('Price to Book Ratio')
+        plt.title(f'{symbol} - Price to Book Ratio')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
 
     def _plot_pe_ratio(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_ttm_pe_ratio.jpg')
