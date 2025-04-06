@@ -180,7 +180,7 @@ class StockScreener:
     def _check_cci(self, selected_date_data, bullish_signals, bearish_signals, signals):
         cci = selected_date_data['cci_14'].values[0]
         if cci >= 100:
-            bearish_signals.append('bearing_cci')
+            bearish_signals.append('bearish_cci')
             signals.append(-1)
         elif cci <= -100:
             bullish_signals.append('bullish_cci')
