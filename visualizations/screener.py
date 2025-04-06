@@ -965,58 +965,6 @@ class StockScreener:
             # make sure there is data in there
             assert len(sector_data) > 0, f'No data for {sector}'
             self._plot_master_adjusted_close(sector, sector_data, title=f'{sector} {industry}', output_path=output_path)
-            # plot a chart with adjusted_close, sma_20, sma_50, sma_200, bbands_upper_20, bbands_lower_20
-            # add text annotation when there are bullish or bearish signals
-            #plt.figure(figsize=(14, 10))
-            #plt.plot(sector_data['date'], sector_data['adjusted_close'], label='Adjusted Close', color='black', linewidth=2)
-            #plt.plot(sector_data['date'], sector_data['sma_20'], label='SMA 20', color='orange')
-            #plt.plot(sector_data['date'], sector_data['sma_50'], label='SMA 50', color='green')
-            #plt.plot(sector_data['date'], sector_data['sma_200'], label='SMA 200', color='red')
-            #plt.plot(sector_data['date'], sector_data['bbands_upper_20'], linestyle='--', label='Bollinger Band Upper', color='blue')
-            #plt.plot(sector_data['date'], sector_data['bbands_lower_20'], linestyle='--', label='Bollinger Band Lower', color='blue')
-
-            # Add annotations for SMA crossovers and bollinger band breakouts
-            #for i in range(1, len(sector_data)):
-                #if sector_data['sma_20'].iloc[i] > sector_data['sma_50'].iloc[i] and sector_data['sma_20'].iloc[i - 1] <= sector_data['sma_50'].iloc[i - 1]:
-                    #plt.annotate('Bullish Cross 20/50', (sector_data['date'].iloc[i-1], sector_data['sma_20'].iloc[i-1]),
-                                 #textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='green', arrowprops=dict(arrowstyle='->', color='green'))
-                #elif sector_data['sma_20'].iloc[i] < sector_data['sma_50'].iloc[i] and sector_data['sma_20'].iloc[i - 1] >= sector_data['sma_50'].iloc[i - 1]:
-                    #plt.annotate('Bearish Cross 20/50', (sector_data['date'].iloc[i], sector_data['sma_20'].iloc[i]),
-                                 #textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='red', arrowprops=dict(arrowstyle='->', color='red'))
-                #if sector_data['sma_20'].iloc[i] > sector_data['sma_200'].iloc[i] and sector_data['sma_20'].iloc[i - 1] <= sector_data['sma_200'].iloc[i - 1]:
-                    #plt.annotate('Bullish Cross 20/200', (sector_data['date'].iloc[i-1], sector_data['sma_200'].iloc[i-1]),
-                                 #textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='green', arrowprops=dict(arrowstyle='->', color='green'))
-                #elif sector_data['sma_20'].iloc[i] < sector_data['sma_200'].iloc[i] and sector_data['sma_20'].iloc[i - 1] >= sector_data['sma_200'].iloc[i - 1]:
-                    #plt.annotate('Bearish Cross 20/200', (sector_data['date'].iloc[i-1], sector_data['sma_200'].iloc[i-1]),
-                                 #textcoords="offset points", xytext=(0,10), ha='center', fontsize=8, color='red', arrowprops=dict(arrowstyle='->', color='red'))
-                #if sector_data['adjusted_close'].iloc[i] > sector_data['bbands_upper_20'].iloc[i]:
-                    #plt.annotate('Bearish Breakout', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='red')
-                #elif sector_data['adjusted_close'].iloc[i] < sector_data['bbands_lower_20'].iloc[i]:
-                    #plt.annotate('Bullish Breakout', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='green')
-                ## add Buy Watch and Sell Watch annotations for bolinger bands
-                #if abs(sector_data['adjusted_close'].iloc[i] - sector_data['bbands_upper_20'].iloc[i]) / sector_data['bbands_upper_20'].iloc[i] <= 0.01:
-                    ## ensure this is from below not above
-                    #if sector_data['adjusted_close'].iloc[i-1] < sector_data['bbands_upper_20'].iloc[i-1]:
-                        #plt.annotate('Sell Watch', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='orange')
-                #elif abs(sector_data['adjusted_close'].iloc[i] - sector_data['bbands_lower_20'].iloc[i]) / sector_data['bbands_lower_20'].iloc[i] <= 0.01:
-                    ## ensure this is from above not below
-                    #if sector_data['adjusted_close'].iloc[i-1] > sector_data['bbands_lower_20'].iloc[i-1]:
-                        #plt.annotate('Buy Watch', (sector_data['date'].iloc[i], sector_data['adjusted_close'].iloc[i]), textcoords="offset points", xytext=(0,10), ha='center', color='blue')
-#
-#
-            ## find min and max of any data used in the plot for y axis
-            #min_val = min(sector_data['adjusted_close'].min(), sector_data['sma_20'].min(), sector_data['sma_50'].min(), sector_data['sma_200'].min(), sector_data['bbands_upper_20'].min(), sector_data['bbands_lower_20'].min())
-            #max_val = max(sector_data['adjusted_close'].max(), sector_data['sma_20'].max(), sector_data['sma_50'].max(), sector_data['sma_200'].max(), sector_data['bbands_upper_20'].max(), sector_data['bbands_lower_20'].max())
-            #plt.ylim(min_val * 0.95, max_val * 1.05)  # Adjust y-limits for better visibility
-            #plt.xlabel('Date')
-            #plt.xticks(rotation=45)
-            #plt.ylabel('Price')
-            #plt.title(f'{sector} {industry}- Price and SMAs')
-            #plt.legend()
-            #plt.tight_layout()
-            #plt.ylim(min(sector_data['adjusted_close']) * 0.95, max(sector_data['adjusted_close']) * 1.05)  # Adjust y-limits for better visibility
-            #plt.savefig(output_path)
-            #plt.close()
         # for all sectors and SPY, QQQ, plot the n_day rolling % change
         # plot the daily % change for all sectors and SPY, QQQ on one chart -> use dotted lines for sectors, bold lines for SPY/QQQ
         output_path = os.path.join(self.output_dir, 'market_returns.jpg')
