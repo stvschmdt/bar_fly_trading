@@ -32,8 +32,9 @@ class SectionedJPGtoPDFConverter:
         # Get a list of all JPG files in the directory
         jpg_files = [f for f in os.listdir(self.directory) if f.endswith('.jpg')]
 
-        # Sort the files to maintain order
-        jpg_files.sort()
+        # files start with the symbol, so sort by symbol then by created time
+        jpg_files.sort(key=lambda x: (x.split('_')[0], os.path.getctime(os.path.join(self.directory, x))))
+
 
         # Categorize images into sections
         for file in jpg_files:
