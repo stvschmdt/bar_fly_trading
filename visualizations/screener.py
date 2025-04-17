@@ -357,15 +357,21 @@ class StockScreener:
         #plt.figure()
         plt.figure(figsize=(14, 10))
         # plot each of the columns with the same y axis, add labels
-        plt.plot(symbol_data['date'], symbol_data['sma_20_pct'], label='SMA 20 %', color='orange', linestyle='--')
-        plt.plot(symbol_data['date'], symbol_data['sma_50_pct'], label='SMA 50 %', color='green', linestyle='--')
-        plt.plot(symbol_data['date'], symbol_data['sma_200_pct'], label='SMA 200 %', color='blue', linestyle='--')
+        plt.plot(symbol_data['date'], symbol_data['sma_20_pct'], label='SMA 20 %', color='yellow', linestyle='--')
+        plt.plot(symbol_data['date'], symbol_data['sma_50_pct'], label='SMA 50 %', color='orange', linestyle='--')
+        plt.plot(symbol_data['date'], symbol_data['sma_200_pct'], label='SMA 200 %', color='pink', linestyle='--')
         plt.plot(symbol_data['date'], symbol_data['52_week_high_pct'], label='52 Week High %', color='red', linestyle='solid')
         plt.plot(symbol_data['date'], symbol_data['52_week_low_pct'], label='52 Week Low %', color='green', linestyle='solid')
         # add horizontal lines for 0 
         plt.axhline(0, color='black', linestyle='--', label='0%')
         # y limit of -100 and max of the max of the data in those columns
         plt.ylim(-100, max(symbol_data['sma_20_pct'].max(), symbol_data['sma_50_pct'].max(), symbol_data['sma_200_pct'].max(), symbol_data['52_week_high_pct'].max(), symbol_data['52_week_low_pct'].max()) * 1.05)
+        # make sure there is a y tick mark at least every 5% only on mod 5 y ticks
+        plt.yticks(np.arange(-100, max(symbol_data['sma_20_pct'].max(), symbol_data['sma_50_pct'].max(), symbol_data['sma_200_pct'].max(), symbol_data['52_week_high_pct'].max(), symbol_data['52_week_low_pct'].max()) * 1.05, 5))
+        # annotate the most recent day (-1) with the values of 52_week_high_pct and 52_week_low_pct
+        # text should be rotated 45 and read X% off 52_week_high and X% off 52_week_low
+        plt.annotate(f'{symbol_data["52_week_high_pct"].iloc[-1]:.2f}% off 52 Week High', (symbol_data['date'].iloc[-1], symbol_data['52_week_high_pct'].iloc[-1]), textcoords="offset points", xytext=(0,10), ha='center', color='red')
+        plt.annotate(f'{symbol_data["52_week_low_pct"].iloc[-1]:.2f}% off 52 Week Low', (symbol_data['date'].iloc[-1], symbol_data['52_week_low_pct'].iloc[-1]), textcoords="offset points", xytext=(0,10), ha='center', color='green')
         plt.xlabel('Date')
         plt.xticks(rotation=45)
         plt.ylabel('Percentage Off from Highs')
