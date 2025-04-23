@@ -104,7 +104,7 @@ class StockScreener:
             # check elements in latest_signals and previous_signals that are different, add latest_signals to change_signals if so, else 0
             change_signals = [latest_signals[i] if latest_signals[i] != previous_signals[i] else 0 for i in range(len(latest_signals))]
             # if the number of non-zero elements in change_signals is greater than 0, add the symbol, number of bullish signals, number of bearish signals, and the signals to self.results
-            if len([signal for signal in change_signals if signal != 0]) > 0 or symbol in self.whitelist:
+            if len([signal for signal in change_signals if signal != 0]) > 1 or symbol in self.whitelist:
                 # check of sum of the difference between the number of bullish and bearish signals is greater than 1 or more than 2 things changes
                 if abs(len(latest_bullish) - len(latest_bearish)) > 1 or len([signal for signal in change_signals if signal != 0]) > 1:
                     print(f'Latest bullish signals: {latest_bullish}')
@@ -350,6 +350,39 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    def _plot_off_from_highs(self, symbol, symbol_data):
+        # create plot with the 52 week high and 52 week low as 0 and -100 respectively
+        # sma_20_pct  sma_50_pct  sma_200_pct  52_week_high_pct  52_week_low_pct
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_off_from_highs.jpg')
+        #plt.figure()
+        plt.figure(figsize=(14, 10))
+        # plot each of the columns with the same y axis, add labels
+        plt.plot(symbol_data['date'], symbol_data['sma_20_pct'], label='SMA 20 %', color='yellow', linestyle='--')
+        plt.plot(symbol_data['date'], symbol_data['sma_50_pct'], label='SMA 50 %', color='orange', linestyle='--')
+        plt.plot(symbol_data['date'], symbol_data['sma_200_pct'], label='SMA 200 %', color='pink', linestyle='--')
+        plt.plot(symbol_data['date'], symbol_data['52_week_high_pct'], label='52 Week High %', color='red', linestyle='solid')
+        plt.plot(symbol_data['date'], symbol_data['52_week_low_pct'], label='52 Week Low %', color='green', linestyle='solid')
+        # add horizontal lines for 0 
+        plt.axhline(0, color='black', linestyle='--', label='0%')
+        # y limit of -100 and max of the max of the data in those columns
+        plt.ylim(-100, max(symbol_data['sma_20_pct'].max(), symbol_data['sma_50_pct'].max(), symbol_data['sma_200_pct'].max(), symbol_data['52_week_high_pct'].max(), symbol_data['52_week_low_pct'].max()) * 1.05)
+        # make sure there is a y tick mark at least every 5% only on mod 5 y ticks
+        plt.yticks(np.arange(-100, max(symbol_data['sma_20_pct'].max(), symbol_data['sma_50_pct'].max(), symbol_data['sma_200_pct'].max(), symbol_data['52_week_high_pct'].max(), symbol_data['52_week_low_pct'].max()) * 1.05, 5))
+        # annotate the most recent day (-1) with the values of 52_week_high_pct and 52_week_low_pct
+        # text should be rotated 45 and read X% off 52_week_high and X% off 52_week_low
+        plt.annotate(f'{symbol_data["52_week_high_pct"].iloc[-1]:.2f}% off 52 Week High', (symbol_data['date'].iloc[-1], symbol_data['52_week_high_pct'].iloc[-1]), textcoords="offset points", xytext=(0,10), ha='center', color='red')
+        plt.annotate(f'{symbol_data["52_week_low_pct"].iloc[-1]:.2f}% off 52 Week Low', (symbol_data['date'].iloc[-1], symbol_data['52_week_low_pct'].iloc[-1]), textcoords="offset points", xytext=(0,10), ha='center', color='green')
+        plt.xlabel('Date')
+        plt.xticks(rotation=45)
+        plt.ylabel('Percentage Off from Highs')
+        plt.title(f'{symbol} - Percentage Off from Highs (52-Low)')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+
+
+
     def _plot_cci(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_cci.jpg')
         #plt.figure()
@@ -579,9 +612,9 @@ class StockScreener:
         # this includes sma, atr, bbands, fibonacci levels (23, 38, 50, 61)
         # any bullish/buy signals will be green, any bearish/sell signals will be red
         if title is None:
-            title = 'daily_price'
+            title = symbol
         if output_path is None:
-            output_path = os.path.join(self.output_dir, f'{symbol}_{title}.jpg')
+            output_path = os.path.join(self.output_dir, f'{symbol}_daily_price.jpg')
         #plt.figure()
         plt.figure(figsize=(14, 10))
         plt.plot(symbol_data['date'], symbol_data['adjusted_close'], label='Adjusted Close', color='black')
@@ -861,11 +894,14 @@ class StockScreener:
         sectors = ['XLB', 'XLF', 'XLI', 'XLK', 'XLP', 'XLRE', 'XLU', 'XLV', 'XLY', 'XLE', 'XRT', 'SPY', 'QQQ']
 
         # Plot individual indicators if there are bullish or bearish signals
-        if len(bullish) > 0 or len(bearish) > 0:
-        #if abs(len(bullish) - len(bearish)) > 2:
+        #if len(bullish) > 0 or len(bearish) > 0:
+        if abs(len(bullish) - len(bearish)) > 1:
             logging.info(f'Visualizing data for symbol {symbol}')
             #if 'bollinger_band' in self.indicators or self.indicators == 'all':
                 #self._plot_bollinger_band(symbol, symbol_data)
+            self._plot_master_adjusted_close(symbol, symbol_data)
+            self._plot_off_from_highs(symbol, symbol_data)
+            self._plot_volume(symbol, symbol_data)
             if 'rsi' in self.indicators or self.indicators == 'all':
                 self._plot_rsi(symbol, symbol_data)
             if 'macd' in self.indicators or self.indicators == 'all':
@@ -880,8 +916,6 @@ class StockScreener:
                 if symbol not in sectors:
                     self._plot_pe_ratio(symbol, symbol_data)
             #self._plot_price_sma(symbol, symbol_data)
-            self._plot_master_adjusted_close(symbol, symbol_data)
-            self._plot_volume(symbol, symbol_data)
             self._plot_symbol_sharpe_ratio(symbol, symbol_data)
             if symbol not in sectors:
                 self._plot_analyst_ratings(symbol, symbol_data)
@@ -1017,7 +1051,7 @@ class StockScreener:
             print('Symbol:', symbol, 'Bullish:', num_bullish, 'Bearish:', num_bearish, 'Signals:', signals)
             # if any(signals):  # Only write rows where there is at least one signal (1 or -1)
             # only write rows where the absolute difference between bullish and bearish signals is greater than 2
-            if abs(num_bullish - num_bearish) > 0:
+            if abs(num_bullish - num_bearish) > 1:
                 rows_to_write.append([symbol, num_bullish, num_bearish, *signals])
 
         if not rows_to_write:
