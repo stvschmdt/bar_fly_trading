@@ -14,12 +14,21 @@ from visualizations.screener import StockScreener
 setup_logging()
 logger = logging.getLogger(__name__)
 
-username = 'root'
-password = os.getenv('MYSQL_PASSWORD', None)
-host = '127.0.0.1'
-port = 3306
-dbname = 'bar_fly_trading'
+DB_CREDENTIALS = {
+    'local': {
+        'username': 'root',
+        'password': os.getenv('MYSQL_PASSWORD', None),
+        'port': 3306
+    },
+    'remote': {
+        'username': 'readonly_user',
+        'password': os.getenv('MYSQL_READONLY_PASSWORD', None),
+        'port': 3307
+    }
+}
 
+HOST = '127.0.0.1'
+DB_NAME = 'bar_fly_trading'
 
 TABLE_CREATES = {
     'core_stock': 'CREATE TABLE core_stock(date DATETIME, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjusted_close DOUBLE, volume BIGINT, symbol VARCHAR(5), PRIMARY KEY (date, symbol));',
@@ -35,6 +44,8 @@ TABLE_COLS = {
     'historical_options': {'contract_id': str, 'date': str, 'symbol': str, 'type': str, 'expiration': str, 'strike': float, 'last': float, 'mark': float, 'bid': float, 'ask': float, 'volume': int, 'implied_volatility': float, 'delta': float, 'gamma': float, 'theta': float, 'vega': float, 'rho': float},
 }
 
+engine = None
+
 
 # Methods for writing to a table. These methods apply at a table level, not a row level.
 # i.e. APPEND will add new rows to the table, REPLACE will replace the entire table with the new data.
@@ -43,12 +54,26 @@ class TableWriteOption(Enum):
     REPLACE = 'replace'
 
 
-if not password:
-    raise Exception('Must set MYSQL_PASSWORD environment variable')
+def connect_database(db_location: str = 'local'):
+    global engine
+    if engine:
+        return
+
+    username = DB_CREDENTIALS[db_location]['username']
+    password = DB_CREDENTIALS[db_location]['password']
+    port = DB_CREDENTIALS[db_location]['port']
+    if not password:
+        raise Exception('Must set MYSQL_PASSWORD environment variable for local connection or MYSQL_READONLY_PASSWORD for remote.')
+
+    connection_string = f'mysql+pymysql://{username}:{password}@{HOST}:{port}/{DB_NAME}'
+    engine = create_engine(connection_string)
 
 
-def create_database():
-    return create_engine(connection_string)
+def get_engine():
+    global engine
+    if not engine:
+        raise Exception('Database connection not yet established. Call connect_database() first.')
+    return engine
 
 
 def store_data(df, table_name, write_option: TableWriteOption, include_index=True):
@@ -63,7 +88,7 @@ def store_data(df, table_name, write_option: TableWriteOption, include_index=Tru
 
     # If we wanted to REPLACE, we've already dropped and recreated the table. That means we can always do our write as
     # an APPEND. This ensures our tables keep their exact types (e.g. VARCHAR vs. text) and primary keys.
-    df.to_sql(table_name, engine, if_exists=TableWriteOption.APPEND.value, index=include_index)
+    df.to_sql(table_name, get_engine(), if_exists=TableWriteOption.APPEND.value, index=include_index)
 
 
 def insert_ignore_data(df, table_name):
@@ -81,7 +106,7 @@ def insert_ignore_data(df, table_name):
         cols = ', '.join([f"'{row[col]}'" if col_type not in {int, float} else str(row[col]) for col, col_type in columns.items()])
         rows.append(f'({cols})')
     rows = ', '.join(rows)
-    with engine.connect() as connection:
+    with get_engine().connect() as connection:
         query = text(f'INSERT IGNORE INTO {table_name} VALUES {rows};')
         connection.execute(query)
         connection.commit()
@@ -106,13 +131,13 @@ def select_all_by_symbol(table_name: str, symbols: set[str], order_by: str = Non
 
     query += ";"
 
-    return pd.read_sql_query(query, engine)
+    return pd.read_sql_query(query, get_engine())
 
 
 def get_last_updated_date(table_name: str, date_col: str, symbol: str):
     # Get the most recent date in the table with an optional symbol filter (not all tables have symbols)
     query = text(f"SELECT MAX({date_col}) FROM {table_name}{' WHERE symbol = :symbol' if symbol else ''};")
-    with engine.connect() as connection:
+    with get_engine().connect() as connection:
         result = connection.execute(query, {"symbol": symbol})
         last_updated_date = pd.to_datetime(result.fetchone()[0])
     return last_updated_date
@@ -127,7 +152,7 @@ def get_dates_for_symbol(table_name: str, symbol: str, date_col: str, start_date
         and_clause += f" AND {date_col} <= '{end_date}'"
     query = text(f"SELECT DISTINCT({date_col}) FROM {table_name} WHERE symbol = '{symbol}'{and_clause} ORDER BY {date_col} ASC;")
 
-    with engine.connect() as connection:
+    with get_engine().connect() as connection:
         result = connection.execute(query)
         dates = [row[0].strftime('%Y-%m-%d') for row in result.fetchall()]
     return dates
@@ -135,7 +160,7 @@ def get_dates_for_symbol(table_name: str, symbol: str, date_col: str, start_date
 
 def drop_table(table_name: str):
     query = text(f'DROP TABLE IF EXISTS {table_name};')
-    with engine.connect() as connection:
+    with get_engine().connect() as connection:
         connection.execute(query)
 
 
@@ -144,13 +169,13 @@ def create_table(table_name: str):
         raise ValueError(f'No CREATE TABLE statement found for table: {table_name}')
 
     query = text(TABLE_CREATES[table_name])
-    with engine.connect() as connection:
+    with get_engine().connect() as connection:
         connection.execute(query)
 
 
 def delete_company_overview_row(symbol: str):
     query = text("DELETE FROM company_overview WHERE symbol = :symbol;")
-    with engine.connect() as connection:
+    with get_engine().connect() as connection:
         # For some reason, deleting rows seems to require a transaction
         with connection.begin() as transaction:
             connection.execute(query, {'symbol': symbol})
@@ -159,7 +184,7 @@ def delete_company_overview_row(symbol: str):
 
 def get_stock_splits():
     query = "SELECT symbol, effective_date, split_factor FROM stock_splits;"
-    df = pd.read_sql_query(query, engine)
+    df = pd.read_sql_query(query, get_engine())
 
     # Sort splits by effective_date
     df = df.sort_values(by=['symbol', 'effective_date'])
@@ -273,7 +298,7 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
         AND core.symbol in ({', '.join([f"'{symbol}'" for symbol in symbols])})
         LIMIT {limit};
     """
-    df = pd.read_sql_query(query, engine)
+    df = pd.read_sql_query(query, get_engine())
 
     # Derive adjusted_close_pct from adjusted_close in core_stock
     df['adjusted_close_pct'] = df.groupby('symbol')['adjusted_close'].pct_change(1)
@@ -387,9 +412,4 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
     # create a new column for the sum of all the signals
     df["bull_bear_delta"] = df["macd_signal"] + df["adx_signal"] + df["atr_signal"] + df["pe_ratio_signal"] + df["bollinger_bands_signal"] + df["rsi_signal"] + df["sma_cross_signal"] + df["cci_signal"]
 
-
     df.to_csv(f'all_data_{batch_num}.csv')
-
-
-connection_string = f'mysql+pymysql://{username}:{password}@{host}:{port}/{dbname}'
-engine = create_database()

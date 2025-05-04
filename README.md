@@ -1,7 +1,7 @@
 # bar_fly_trading
 Research &amp; Development on Finance Projects
 
-## setup
+## Local Setup
 Python:
 - Install Python & pip
 - We don't have a requirements.txt yet, so if you get a `ModuleNotFoundError` while running, you may need to install the module with `pip install <module>`
@@ -24,8 +24,24 @@ mysql -h 127.0.0.1 -P 3306 -u root -p
 ```
 - Set your MySQL password in `MYSQL_PASSWORD` environment variable so the script can access it.
 ```
-export MYSQL_ROOT_PASSWORD=my-secret-pw
 export MYSQL_PASSWORD=my-secret-pw
+```
+
+## Connect to Remote DB
+- You can open a read-only connection to the remote DB running on our EC2 instance using the `readonly_user`.
+- Set your MySQL password in `MYSQL_READONLY_PASSWORD` environment variable so the script can access it. The password currently has an exclamation point in it, which must be escaped.
+```
+export MYSQL_READONLY_PASSWORD="my-secret-\!pw"
+```
+- Open an SSH tunnel, exposing the EC2's MySQL port `3306` to port `3307` on your local machine. Your local MySQL DB is using port `3306`, so we use `3307` to avoid conflicts.
+```
+ssh -L 3307:localhost:3306 username@54.90.246.184 -N -i <path_to_private_key>
+```
+- If running `pull_api_data.py` or `backtest.py`, set the `--db` flag to `remote`.
+- If you just want to query the remote DB from a MySQL shell:
+```
+mysql -h 127.0.0.1 -P 3307 -u readonly_user -p
+```
 ```
 
 Alphavantage:
