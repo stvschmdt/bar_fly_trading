@@ -318,10 +318,15 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
     df['surprise'] = df.groupby('symbol')['surprise'].ffill()
     df['surprise_percentage'] = df.groupby('symbol')['surprise_percentage'].ffill()
     df['ttm_eps'] = df.groupby('symbol')['ttm_eps'].ffill()
+    df['book_value'] = df.groupby('symbol')['book_value'].ffill()
     # calculate the 9 day exponential moving average of the macd for each symbol
     df["macd_9_ema"] = df.groupby("symbol")["macd"].transform(lambda x: x.ewm(span=9, adjust=False).mean())
+    # 52 week high and low filldown
+    df['52_week_high'] = df.groupby('symbol')['52_week_high'].ffill()
+    df['52_week_low'] = df.groupby('symbol')['52_week_low'].ffill()
 
     df['pe_ratio'] = df['adjusted_close'] / df['ttm_eps']
+    df['price_to_book_ratio'] = df['adjusted_close'] / df['book_value']
 
     # economic_indicators filldown
     df['treasury_yield_2year'] = df['treasury_yield_2year'].ffill()
@@ -359,6 +364,13 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
         .apply(lambda x: (x.shift(-30) - x) / x * 100)
         .reset_index(level=0, drop=True)
     )
+
+    # add columns for percent above or below sma_20, sma_50, sma_200, 52_week_high, 52_week_low rounded to 2 decimal places
+    df["sma_20_pct"] = ((df["adjusted_close"] - df["sma_20"]) / df["sma_20"] * 100).round(2)
+    df["sma_50_pct"] = ((df["adjusted_close"] - df["sma_50"]) / df["sma_50"] * 100).round(2)
+    df["sma_200_pct"] = ((df["adjusted_close"] - df["sma_200"]) / df["sma_200"] * 100).round(2)
+    df["52_week_high_pct"] = ((df["adjusted_close"] - df["52_week_high"]) / df["52_week_high"] * 100).round(2)
+    df["52_week_low_pct"] = ((df["adjusted_close"] - df["52_week_low"]) / df["52_week_low"] * 100).round(2)
 
     # Adjust open, high, low for stock splits
     df = adjust_for_stock_splits(df)

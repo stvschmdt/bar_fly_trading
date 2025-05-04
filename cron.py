@@ -4,6 +4,7 @@ import shutil
 import signal
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from google.oauth2 import service_account
@@ -48,10 +49,11 @@ def upload_to_drive(file_path, file_name):
     service = build('drive', 'v3', credentials=creds)
 
     file_metadata = {'name': file_name, 'parents': [DRIVE_FOLDER_ID]}
-    media = MediaFileUpload(file_path, mimetype='application/pdf')
+    media = MediaFileUpload(file_path, mimetype='application/pdf', chunksize=20*1024*1024, resumable=True)
+    print(f"Starting upload to drive at {str(datetime.now())}")
     file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
 
-    print(f"Uploaded File ID: {file.get('id')}")
+    print(f"Uploaded File ID: {file.get('id')} at {str(datetime.now())}")
 
 
 def main():
