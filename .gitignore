@@ -1,4 +1,6 @@
 .idea/*
+.vscode/*
+.DS_Store
 *all_data*
 */logs/*
 *.ipynb
@@ -6,4 +8,5 @@
 *.swp*
 *.png
 *.jpg
-credentials.json
+*credentials.json
+*.log

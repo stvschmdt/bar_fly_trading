@@ -7,7 +7,7 @@ from strategy.base_strategy import BaseStrategy
 
 
 class TestStrategy(BaseStrategy):
-    def evaluate(self, date: datetime.date, current_prices: pd.DataFrame) -> list[Order]:
+    def evaluate(self, date: datetime.date, current_prices: pd.DataFrame, options_data: pd.DataFrame) -> list[Order]:
         # Buy 1 share of each stock in self.symbols
         orders = []
         for symbol in self.symbols:

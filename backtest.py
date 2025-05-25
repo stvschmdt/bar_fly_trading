@@ -13,41 +13,51 @@ from account.backtest_account import BacktestAccount
 from api_data.core_stock import CORE_STOCK_TABLE_NAME
 from api_data.historical_options import HISTORICAL_OPTIONS_TABLE_NAME
 from api_data.storage import select_all_by_symbol, connect_database
+from order import OptionOrder, OrderOperation
 from strategy.base_strategy import BaseStrategy
 from strategy.bollinger_bands_strategy import BollingerBandsStrategy
 from strategy.buy_hold_strategy import BuyHoldStrategy
 from strategy.technical_heuristics_strategy import TechnicalHeuristicsStrategy
 from strategy.technical_strategy import TechnicalStrategy
 from strategy.test_strategy import TestStrategy
+from strategy.weekly_call_strategy import WeeklyCallStrategy
 
 
 def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_date: str) -> AccountValues:
     # Iterate through every day between start_date and end_date, and call the strategy's evaluate method
     # on each day. The strategy will return positions traded on that day.
     core_stock_df = select_all_by_symbol(CORE_STOCK_TABLE_NAME, symbols, start_date=start_date, end_date=end_date)
-    # TODO: Pass options data to update_account_values below
     historical_options_df = select_all_by_symbol(HISTORICAL_OPTIONS_TABLE_NAME, symbols, start_date=start_date, end_date=end_date)
 
-    daily_account_values = []
     daily_positions = []  # List of tuples (date, position)
     for date in pd.date_range(start_date, end_date):
         # Get the 'symbol' and 'open' columns for every row where the 'date' column matches the current date
         current_prices = core_stock_df.loc[core_stock_df['date'] == date, ['symbol', 'open', 'adjusted_close', 'high', 'low']]
+        current_options = historical_options_df[historical_options_df['date'] == date]
 
         # Skip weekends/holidays
         if current_prices.shape[0] == 0:
+            continue
+        # We don't have options data on some holidays where there is core_stock data, so skip those days
+        if current_options.shape[0] == 0:
             continue
 
         # Convert current_prices df to dict
         symbol_price_map = current_prices.set_index('symbol').to_dict()['open']
 
-        orders = strategy.evaluate(date, current_prices)
+        orders = strategy.evaluate(date, current_prices, current_options)
         new_account_values = None
         for order in orders:
-            current_price = float(current_prices.loc[current_prices['symbol'] == order.symbol, 'open'].iloc[0])
+            if isinstance(order, OptionOrder):
+                # Get today's option data for this contract
+                option_row = current_options[current_options['contract_id'] == order.contract_id]
+                bid_ask = 'ask' if order.order_operation == OrderOperation.BUY else 'bid'
+                current_price = float(option_row[bid_ask].iloc[0])
+            else:
+                current_price = float(current_prices.loc[current_prices['symbol'] == order.symbol, 'open'].iloc[0])
+            
             strategy.account.execute_order(order, current_price)
-            # TODO: Replace none with historical options data
-            new_account_values = strategy.account.update_account_values(pd.to_datetime(date), symbol_price_map, None)
+            new_account_values = strategy.account.update_account_values(pd.to_datetime(date), symbol_price_map, historical_options_df)
             daily_positions.append((date, order))
             print(f"{date}: {order}")
             print(f"New account values: {new_account_values}")
@@ -55,7 +65,7 @@ def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_dat
         # If there were orders, we will have already updated the account values.
         # If not, make sure we update them to account for any price changes of held positions.
         if not new_account_values:
-            new_account_values = strategy.account.update_account_values(pd.to_datetime(date), symbol_price_map, None)
+            new_account_values = strategy.account.update_account_values(pd.to_datetime(date), symbol_price_map, historical_options_df)
         print(f"{date} Account values: {new_account_values}")
 
     # TODO: write account details to some file, then plot the daily account values and daily positions
@@ -81,6 +91,8 @@ def get_strategy(strategy_name: str, account: Account, symbols: set[str]) -> Bas
         return BuyHoldStrategy(account, symbols)
     elif strategy_name == "TechnicalHeuristicsStrategy":
         return TechnicalHeuristicsStrategy(account, symbols)
+    elif strategy_name == "WeeklyCallStrategy":
+        return WeeklyCallStrategy(account, symbols)
 
     raise ValueError(f"Unknown strategy_name: {strategy_name}")
 

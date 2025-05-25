@@ -5,8 +5,11 @@ import pandas as pd
 
 from account.account import Account, PositionType
 from account.account_values import AccountValues
+from api_data.collector import alpha_client
+from api_data.historical_options import fetch_historical_options, parse_historical_options
 from order import Order, OrderOperation, MultiLegOrder, StockOrder, OptionOrder
 from order_history import OrderHistory
+from util import extract_symbol_from_contract_id
 
 
 class BacktestAccount(Account):
@@ -26,9 +29,9 @@ class BacktestAccount(Account):
         # TODO: Implement this method to read account details from a file and return a BacktestAccount
         pass
 
-    def execute_order(self, order: Order, current_stock_price: float):
+    def execute_order(self, order: Order, current_price: float):
         # TODO: Add commission to price of options orders: https://www.interactivebrokers.com/en/pricing/commissions-options.php?re=amer
-        position_value = order.calculate_current_value(current_stock_price, order.order_date)
+        position_value = order.calculate_current_value(current_price, order.order_date)
         if order.order_operation == OrderOperation.BUY:
             if self.account_values.cash_balance < position_value:
                 raise ValueError(f"Insufficient funds to buy {order.symbol}")
@@ -63,10 +66,10 @@ class BacktestAccount(Account):
             if self.stock_positions[order.symbol] == 0:
                 self.stock_positions.pop(order.symbol)
         elif isinstance(order, OptionOrder):
-            self.option_positions[order.order_id] = self.option_positions.get(order.order_id, 0) + order.quantity * multiplier
+            self.option_positions[order.contract_id] = self.option_positions.get(order.contract_id, 0) + order.quantity * multiplier
             self.account_values.option_positions += total_price * multiplier
-            if self.option_positions[order.order_id] == 0:
-                self.option_positions.pop(order.order_id)
+            if self.option_positions[order.contract_id] == 0:
+                self.option_positions.pop(order.contract_id)
 
     def get_num_shares_of_symbol(self, symbol: str):
         return self.stock_positions.get(symbol, 0)
@@ -88,14 +91,24 @@ class BacktestAccount(Account):
         if symbol in self.stock_positions:
             return
 
-        # Check if we have any open option orders with this symbol
+        # Check if any open option positions are for the given symbol. If so, we can't remove it from held_symbols yet
+        # since we still have an active position in that symbol (via options)
         for contract_id in self.option_positions.keys():
             if self.order_history.get_order(contract_id).symbol == symbol:
                 return
 
         self.held_symbols.remove(symbol)
 
-    def get_account_values(self, current_prices: dict[str, float], option_data: dict[str, pd.DataFrame]) -> AccountValues:
+    def get_account_values(self, current_prices: dict[str, float], option_data: pd.DataFrame) -> AccountValues:
+        """
+        Get account values for the current date.
+        Args:
+            current_prices: <symbol, price> mapping for all held symbols
+            option_data: df of options data for held symbols on current date.
+
+        Returns:
+            AccountValues object with cash balance, stock value, and options value
+        """
         missing_symbols = self.stock_positions.keys() - current_prices.keys()
         if missing_symbols:
             raise ValueError(f"Current prices are missing for some held stock symbols: {missing_symbols}")
@@ -105,14 +118,34 @@ class BacktestAccount(Account):
             stock_value += quantity * current_prices[symbol]
 
         options_value = 0
+        # Keep track of fetched option data to avoid duplicate API calls
+        fetched_option_data = pd.DataFrame()
+        
         for contract_id, quantity in self.option_positions.items():
-            symbol = self.order_history.get_order(contract_id).symbol
-            df = option_data[symbol]
-            options_value += float(df.loc[df['contractID'] == contract_id, 'mark'].iloc[0]) * quantity
-
+            # Try to find contract in provided option data first
+            contract_data = option_data[option_data['contract_id'] == contract_id]
+            
+            if not contract_data.empty:
+                mark = float(contract_data['mark'].iloc[0])
+            else:
+                symbol = extract_symbol_from_contract_id(contract_id)
+                date = option_data['date'].iloc[0].strftime('%Y-%m-%d')
+                
+                # Only fetch if we haven't already fetched data for this symbol/date
+                if fetched_option_data.empty or not ((fetched_option_data['symbol'] == symbol) & (fetched_option_data['date'] == date)).any():
+                    api_data = parse_historical_options(fetch_historical_options(alpha_client, symbol, date)['data'])
+                    fetched_option_data = pd.concat([fetched_option_data, api_data], ignore_index=True)
+                
+                # Find the matching contract in the historical data
+                contract_data = fetched_option_data[fetched_option_data['contract_id'] == contract_id]
+                if contract_data.empty:
+                    raise ValueError(f"Could not find historical data for contract {contract_id}")
+                mark = float(contract_data['mark'].iloc[0])
+                
+            options_value += mark * quantity * 100
         return AccountValues(round(self.account_values.cash_balance, 2), round(stock_value, 2), round(options_value, 2))
 
-    def update_account_values(self, timestamp: datetime, current_prices: dict[str, float], option_data: dict[str, pd.DataFrame]):
+    def update_account_values(self, timestamp: datetime, current_prices: dict[str, float], option_data: pd.DataFrame):
         """
         Update the account values at the given timestamp. If the timestamp is already in account_value_history, we add
         one second, so we don't overwrite it. THIS SHOULD BE CALLED AFTER EVERY EXECUTE_ORDER CALL!
@@ -124,7 +157,10 @@ class BacktestAccount(Account):
         Returns:
             Updated AccountValues object
         """
-        self.account_values = self.get_account_values(current_prices, option_data)
+        # Get a string of today's date with time 00:00:00, so we can filter the options data.
+        # If we start getting intraday options data, we'll want to match on closest time instead.
+        date_without_time = datetime(timestamp.year, timestamp.month, timestamp.day).strftime('%Y-%m-%d %H:%M:%S')
+        self.account_values = self.get_account_values(current_prices, option_data.loc[option_data['date'] == date_without_time])
         # If the timestamp is already in account_value_history, add one second, so we don't overwrite it
         if timestamp in self.account_value_history:
             timestamp += timedelta(seconds=1)
