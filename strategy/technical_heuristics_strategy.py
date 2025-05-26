@@ -35,7 +35,7 @@ class TechnicalHeuristicsStrategy(BaseStrategy):
         # Remove any rows where symbol is not in symbols
         self.historical_data = self.historical_data[self.historical_data['symbol'].isin(symbols)]
 
-    def evaluate(self, date: datetime.date, current_prices: pd.DataFrame) -> list[Order]:
+    def evaluate(self, date: datetime.date, current_prices: pd.DataFrame, options_data: pd.DataFrame) -> list[Order]:
         orders = []
         date = date.strftime('%Y-%m-%d')
 

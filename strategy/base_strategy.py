@@ -13,5 +13,5 @@ class BaseStrategy(ABC):
         self.symbols = symbols
 
     @abstractmethod
-    def evaluate(self, date: datetime.date, current_prices: pd.DataFrame) -> list[Order]:
+    def evaluate(self, date: datetime.date, current_prices: pd.DataFrame, options_data: pd.DataFrame) -> list[Order]:
         pass
