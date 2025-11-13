@@ -249,6 +249,9 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
             tech.bbands_upper_20,
             tech.bbands_middle_20,
             tech.bbands_lower_20,
+            options_agg.call_volume,
+            options_agg.put_volume,
+            options_agg.total_volume,
             econ.treasury_yield_2year,
             econ.treasury_yield_10year,
             econ.ffer,
@@ -287,6 +290,24 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
         LEFT JOIN technical_indicators as tech
         ON core.date = tech.date
         AND core.symbol = tech.symbol
+        LEFT JOIN
+        (
+        SELECT
+            date AS trade_date,
+            symbol,
+            SUM(CASE WHEN type = 'call' THEN volume ELSE 0 END) AS call_volume,
+            SUM(CASE WHEN type = 'put' THEN volume ELSE 0 END) AS put_volume,
+            SUM(volume) AS total_volume
+        FROM
+            historical_options
+        WHERE date > '{earliest_date}'
+        AND symbol in ({', '.join([f"'{symbol}'" for symbol in symbols])})
+        GROUP BY
+            trade_date,
+            symbol
+        ) AS options_agg
+        ON core.date = options_agg.trade_date
+        AND core.symbol = options_agg.symbol
         LEFT JOIN economic_indicators as econ
         ON core.date = econ.date
         LEFT JOIN quarterly_earnings as quart
@@ -310,6 +331,12 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
     df['high_pct'] = df.groupby('symbol')['high'].pct_change(1)
     # Derive low_pct from low in core_stock
     df['low_pct'] = df.groupby('symbol')['low'].pct_change(1)
+
+    # Options mean, std volume
+    df[['options_14_mean', 'options_14_std']] = df.groupby('symbol')['total_volume'].rolling(window=14, min_periods=1).agg(['mean', 'std']).reset_index(level=0, drop=True)
+    df['pcr'] = (df['put_volume'] / df['call_volume']).round(2)
+    df['pcr_14_mean'] = df.groupby('symbol')['pcr'].rolling(window=14, min_periods=1).agg(['mean']).reset_index(level=0, drop=True)
+
 
     # quarterly_earnings filldown
     df['fiscal_date_ending'] = df.groupby('symbol')['fiscal_date_ending'].ffill()
@@ -394,6 +421,7 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
         # get the df for the row symbol and date
         screen_df = df[(df.symbol == row['symbol']) & (df.date == row['date'])]
         stock_screener._check_macd(screen_df, [], [], signals)
+        stock_screener._check_macd_zero(screen_df, [], [], signals)
         stock_screener._check_adx(screen_df, [], [], signals)
         stock_screener._check_atr(screen_df, [], [], signals)
         stock_screener._check_pe_ratio(screen_df, [], [], signals)
@@ -401,15 +429,27 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
         stock_screener._check_rsi(screen_df, [], [], signals)
         stock_screener._check_sma_cross(screen_df, [], [], signals)
         stock_screener._check_cci(screen_df, [], [], signals)
+        stock_screener._check_pcr(screen_df, [], [], signals)
         # append the row of signals, to the full_cols list
         full_cols.append(signals)
 
     # create a dataframe from the full_cols list with the signals as columns
-    signals_df = pd.DataFrame(full_cols, columns=["macd_signal", "adx_signal", "atr_signal", "pe_ratio_signal", "bollinger_bands_signal", "rsi_signal", "sma_cross_signal", "cci_signal"])
+    signals_df = pd.DataFrame(full_cols, columns=["macd_signal", "macd_zero_signal","adx_signal", "atr_signal", "pe_ratio_signal", "bollinger_bands_signal", "rsi_signal", "sma_cross_signal", "cci_signal", "pcr_signal"])
     # concat the signals_df as new columns to the df
     df = pd.concat([df, signals_df], axis=1)
     
     # create a new column for the sum of all the signals
-    df["bull_bear_delta"] = df["macd_signal"] + df["adx_signal"] + df["atr_signal"] + df["pe_ratio_signal"] + df["bollinger_bands_signal"] + df["rsi_signal"] + df["sma_cross_signal"] + df["cci_signal"]
+    df["bull_bear_delta"] = df["macd_signal"] + df["macd_zero_signal"] + df["adx_signal"] + df["atr_signal"] + df["pe_ratio_signal"] + df["bollinger_bands_signal"] + df["rsi_signal"] + df["sma_cross_signal"] + df["cci_signal"] + df["pcr_signal"]
 
     df.to_csv(f'all_data_{batch_num}.csv')
+
+# for testing queries
+if __name__ == '__main__':
+    print('running main')
+    connect_database()
+    import time
+    start = time.time()
+    gold_table_processing(["TJX", "NVDA", "AMD"], batch_num=1, earliest_date='2025-08-01', limit=50000)
+    end = time.time()
+    execution_time = end-start
+    print(f"Execution time: {execution_time:.4f} seconds")
