@@ -187,6 +187,30 @@ class StockScreener:
             signals.append(1)
         else:
             signals.append(0)
+    
+    def _check_pcr(self, selected_date_data, bullish_signals, bearish_signals, signals):
+        pcr = selected_date_data['pcr'].values[0]
+        if pcr > .7:
+            bearish_signals.append('bearish_pcr')
+            signals.append(-1)
+        elif pcr <= .5:
+            bullish_signals.append('bullish_pcr')
+            signals.append(1)
+        else:
+            signals.append(0)
+
+    def _check_option_vol(self, selected_date_data, bullish_signals, bearish_signals, signals):
+        opt = selected_date_data['total_volume'].values[0]
+        opt_mu = selected_date_data['options_14_mean'].values[0]
+        opt_std = selected_date_data['options_14_std'].values[0]
+        if opt > opt_mu+opt_std:
+            bearish_signals.append('bearish_options_vol')
+            signals.append(-1)
+        elif opt <= opt_mu-opt_std:
+            bullish_signals.append('bullish_options_vol')
+            signals.append(1)
+        else:
+            signals.append(0)
 
     def _check_signals(self, symbol_data, selected_date_data):
         bullish_signals = []
@@ -211,6 +235,10 @@ class StockScreener:
             self._check_atr(selected_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'pe_ratio' in self.indicators:
             self._check_pe_ratio(selected_date_data, bullish_signals, bearish_signals, signals)
+        if self.indicators == 'all' or 'pcr' in self.indicators:
+            self._check_pcr(selected_date_data, bullish_signals, bearish_signals, signals)
+        #if self.indicators == 'all' or 'option_vol' in self.indicators:
+            #self._check_option_vol(selected_date_data, bullish_signals, bearish_signals, signals)
 
         return bullish_signals, bearish_signals, signals
 
@@ -840,6 +868,36 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    def _plot_pcr(self, symbol, symbol_data):
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_pcr.jpg')
+        #plt.figure()
+        plt.figure(figsize=(14, 10))
+        plt.plot(symbol_data['date'], symbol_data['pcr'], label='PCR')
+        plt.axhline(1.5, color='red', linestyle='--', label='Oversold Watch (1.5)')
+        plt.axhline(.2, color='green', linestyle='--', label='Overbought Level (.2)')
+        plt.plot(symbol_data['date'], symbol_data['pcr_14_mean'], label='PCR_14_Mean')
+        
+        # Add markers for PCR signals
+        first_bearish = True
+        first_bullish = True
+        for i, row in symbol_data.iterrows():
+            if row['pcr'] > .7 and first_bearish:
+                plt.annotate('Bearish Watch', (row['date'], row['pcr']), textcoords="offset points", xytext=(0,10), ha='center', color='red')
+                first_bearish = False
+            elif row['pcr'] < .5 and first_bullish:
+                plt.annotate('Bullish Watch', (row['date'], row['pcr']), textcoords="offset points", xytext=(0,10), ha='center', color='green')
+                first_bullish = False
+        
+        
+        plt.xlabel('Date')
+        plt.xticks(rotation=45)
+        plt.ylabel('PCR')
+        plt.title(f'{symbol} - Put Call Ratio')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+
     def _plot_bollinger_band(self, symbol, symbol_data):
         output_path = os.path.join(self.output_dir, f'{symbol}_technical_bband.jpg')
         #plt.figure()
@@ -910,6 +968,8 @@ class StockScreener:
                 self._plot_adx(symbol, symbol_data)
             if 'cci' in self.indicators or self.indicators == 'all':
                 self._plot_cci(symbol, symbol_data)
+            if 'pcr' in self.indicators or self.indicators == 'all':
+                self._plot_pcr(symbol, symbol_data)
             #if 'atr' in self.indicators or self.indicators == 'all':
                 #self._plot_atr(symbol, symbol_data)
             if 'pe_ratio' in self.indicators or self.indicators == 'all':
@@ -1059,7 +1119,7 @@ class StockScreener:
             return
 
         # Use a fixed number of columns since the indicators are known
-        columns = ['symbol', 'num_bullish', 'num_bearish', 'sma_cross', 'bollinger_band', 'rsi', 'macd', 'macd_zero', 'adx', 'cci', 'atr', 'pe_ratio']
+        columns = ['symbol', 'num_bullish', 'num_bearish', 'sma_cross', 'bollinger_band', 'rsi', 'macd', 'macd_zero', 'adx', 'cci', 'atr', 'pe_ratio', 'pcr']
         results_df = pd.DataFrame(rows_to_write, columns=columns)
         results_df.to_csv('screener_results_{}.csv'.format(self.latest_date), index=False)
 
@@ -1120,7 +1180,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Error: {e}")
         exit()
-
     screener = StockScreener(
         symbols=symbols,
         date=args.date,
