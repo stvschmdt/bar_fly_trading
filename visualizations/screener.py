@@ -873,8 +873,8 @@ class StockScreener:
         #plt.figure()
         plt.figure(figsize=(14, 10))
         plt.plot(symbol_data['date'], symbol_data['pcr'], label='PCR')
-        plt.axhline(1.5, color='red', linestyle='--', label='Overbought Level (1.5)')
-        plt.axhline(.2, color='green', linestyle='--', label='Oversold Level (.2)')
+        plt.axhline(1.5, color='red', linestyle='--', label='Oversold Watch (1.5)')
+        plt.axhline(.2, color='green', linestyle='--', label='Overbought Level (.2)')
         plt.plot(symbol_data['date'], symbol_data['pcr_14_mean'], label='PCR_14_Mean')
         
         # Add markers for PCR signals
