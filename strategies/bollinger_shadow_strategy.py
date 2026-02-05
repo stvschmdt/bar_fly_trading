@@ -6,9 +6,13 @@ Scans all_data files for stocks that crossed Bollinger bands on the most recent 
 - Lower band crossover → BUY signal (oversold)
 - Upper band crossover → SELL signal (overbought)
 
-This is a SHADOW strategy - it does NOT execute trades.
-It ALWAYS connects to IB Gateway to get real account data (cash, positions).
-It sends notification emails with proposed orders for review.
+This is a SHADOW strategy - it does NOT execute trades by default.
+It connects to IB Gateway for real account data (cash, positions) and
+sends notification emails with proposed orders for review.
+
+Portfolio filtering/ranking via portfolio.py is applied as a post-filter
+after signals are generated — the strategy scans all symbols, then the
+portfolio ranker narrows the output.
 
 Requirements:
     - SSH tunnel to AWS Gateway must be running
@@ -19,22 +23,23 @@ Usage:
     ssh -L 4001:127.0.0.1:4001 sschmidt@54.90.246.184 -N &
 
     # Run strategy (connects to Gateway, sends emails) - SHADOW MODE
-    python bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv
+    python strategies/bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv
 
     # Test without Gateway connection (for debugging data/signals only)
-    python bollinger_shadow_strategy.py --data-path ~/data/all_data.csv --skip-live
+    python strategies/bollinger_shadow_strategy.py --data-path ~/data/all_data.csv --skip-live
 
     # EXECUTE trades for specific symbols (must explicitly list each symbol)
-    python bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv --execute AAPL
-    python bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv --execute AAPL,MSFT
+    python strategies/bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv --execute AAPL
+    python strategies/bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv --execute AAPL,MSFT
 
-    # Use watchlist to filter/sort signals
-    python bollinger_shadow_strategy.py --data-path ~/data/all_data.csv --skip-live --no-notify \
-        --watchlist api_data/watchlist.csv --watchlist-mode filter
+    # Portfolio post-filter: price > $50, top 10 by Sharpe
+    python strategies/bollinger_shadow_strategy.py --data-path ~/data/all_data.csv --skip-live --no-notify \
+        --portfolio-data all_data_0.csv --price-above 50 --top-k-sharpe 10
 
-    # Sort signals by watchlist order (watchlist symbols first)
-    python bollinger_shadow_strategy.py --data-path ~/data/all_data.csv --skip-live --no-notify \
-        --watchlist api_data/watchlist.csv --watchlist-mode sort
+    # Watchlist filter + beta < 1.5
+    python strategies/bollinger_shadow_strategy.py --data-path ~/data/all_data.csv --skip-live --no-notify \
+        --watchlist api_data/watchlist.csv --watchlist-mode filter \
+        --portfolio-data all_data_0.csv --filter-field beta --filter-below 1.5
 """
 
 import argparse
@@ -48,60 +53,30 @@ from typing import Optional
 
 import pandas as pd
 
-# Add parent directory for imports
+# Add parent and ibkr directories for imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, current_dir)
 sys.path.insert(0, parent_dir)
+sys.path.insert(0, os.path.join(parent_dir, 'ibkr'))
 
-try:
-    from ibkr.config import IBKRConfig, TradingConfig
-    from ibkr.connection import IBKRConnection
-    from ibkr.notifier import TradeNotifier
-    from ibkr.trade_executor import TradeExecutor
-    from ibkr.models import TradeSignal, OrderAction
-except ModuleNotFoundError:
-    from config import IBKRConfig, TradingConfig
-    from connection import IBKRConnection
-    from notifier import TradeNotifier
-    from trade_executor import TradeExecutor
-    from models import TradeSignal, OrderAction
+from ibkr.config import IBKRConfig, TradingConfig
+from ibkr.connection import IBKRConnection
+from ibkr.notifier import TradeNotifier
+from ibkr.trade_executor import TradeExecutor
+from ibkr.models import TradeSignal, OrderAction
+from portfolio import (
+    load_data as portfolio_load_data,
+    load_watchlist,
+    apply_watchlist,
+    run_pipeline as portfolio_pipeline,
+)
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-
-def load_watchlist(watchlist_path: str) -> list[str]:
-    """
-    Load watchlist from CSV file and return ordered list of symbols.
-
-    Args:
-        watchlist_path: Path to CSV file with 'Symbol' column
-
-    Returns:
-        List of symbols in watchlist order
-    """
-    if not os.path.exists(watchlist_path):
-        logger.warning(f"Watchlist file not found: {watchlist_path}")
-        return []
-
-    df = pd.read_csv(watchlist_path)
-
-    # Handle different column name conventions
-    symbol_col = None
-    for col in ['Symbol', 'symbol', 'SYMBOL', 'ticker', 'Ticker', 'TICKER']:
-        if col in df.columns:
-            symbol_col = col
-            break
-
-    if symbol_col is None:
-        logger.warning(f"No symbol column found in watchlist. Expected 'Symbol' or 'ticker'")
-        return []
-
-    return df[symbol_col].tolist()
 
 
 @dataclass
@@ -407,39 +382,18 @@ class BollingerShadowStrategy:
         return self.signals
 
     def _apply_watchlist(self, signals: list[BollingerSignal]) -> list[BollingerSignal]:
-        """
-        Apply watchlist to signals list.
-
-        Args:
-            signals: List of BollingerSignal objects
-
-        Returns:
-            Filtered or sorted list of signals
-        """
+        """Apply watchlist filter/sort to signals using portfolio.apply_watchlist."""
         if not self.watchlist:
             return signals
 
-        watchlist_set = set(self.watchlist)
-        # Create order mapping: symbol -> position in watchlist
-        watchlist_order = {sym: i for i, sym in enumerate(self.watchlist)}
+        signal_symbols = [s.symbol for s in signals]
+        kept = apply_watchlist(signal_symbols, self.watchlist, self.watchlist_mode)
+        kept_set = set(kept)
+        kept_order = {sym: i for i, sym in enumerate(kept)}
 
-        if self.watchlist_mode == 'filter':
-            # Only keep signals for symbols in watchlist
-            filtered = [s for s in signals if s.symbol in watchlist_set]
-            # Sort by watchlist order
-            filtered.sort(key=lambda s: watchlist_order.get(s.symbol, len(self.watchlist)))
-            logger.info(f"Watchlist filter: {len(signals)} signals -> {len(filtered)} signals")
-            return filtered
-        else:  # sort mode
-            # Sort signals: watchlist symbols first (in order), then others alphabetically
-            def sort_key(s):
-                if s.symbol in watchlist_order:
-                    return (0, watchlist_order[s.symbol])
-                return (1, s.symbol)
-            sorted_signals = sorted(signals, key=sort_key)
-            in_watchlist = sum(1 for s in signals if s.symbol in watchlist_set)
-            logger.info(f"Watchlist sort: {in_watchlist} watchlist signals first, {len(signals) - in_watchlist} others")
-            return sorted_signals
+        filtered = [s for s in signals if s.symbol in kept_set]
+        filtered.sort(key=lambda s: kept_order.get(s.symbol, len(kept)))
+        return filtered
 
     def _validate_signal(self, signal: BollingerSignal) -> None:
         """Validate a signal against account constraints."""
@@ -947,6 +901,7 @@ def main():
         help="Explicitly specify symbols to execute trades for (e.g., --execute AAPL or --execute AAPL,MSFT). "
              "Each symbol must have a matching signal. No 'execute all' option - you must list each symbol."
     )
+    # --- Portfolio ranker args ---
     parser.add_argument(
         "--watchlist",
         type=str,
@@ -960,6 +915,34 @@ def main():
         choices=['sort', 'filter'],
         help="Watchlist mode: 'sort' (default) keeps all signals but orders by watchlist, "
              "'filter' only keeps signals for symbols in watchlist"
+    )
+    parser.add_argument(
+        "--portfolio-data", type=str, default=None,
+        help="Path to data CSV for portfolio post-filter ranking (e.g. all_data_0.csv)"
+    )
+    parser.add_argument(
+        "--price-above", type=float, default=None,
+        help="Post-filter: min stock price (inclusive)"
+    )
+    parser.add_argument(
+        "--price-below", type=float, default=None,
+        help="Post-filter: max stock price (inclusive)"
+    )
+    parser.add_argument(
+        "--filter-field", type=str, default=None,
+        help="Post-filter: column name to filter/rank on (e.g. rsi_14, beta, pe_ratio)"
+    )
+    parser.add_argument(
+        "--filter-above", type=float, default=None,
+        help="Post-filter: min value for --filter-field (inclusive)"
+    )
+    parser.add_argument(
+        "--filter-below", type=float, default=None,
+        help="Post-filter: max value for --filter-field (inclusive)"
+    )
+    parser.add_argument(
+        "--top-k-sharpe", type=int, default=None,
+        help="Post-filter: keep top K signals ranked by Sharpe ratio"
     )
 
     args = parser.parse_args()
@@ -991,7 +974,7 @@ def main():
         watchlist_mode=args.watchlist_mode
     )
 
-    # Run - always connect to Gateway unless --skip-live is set
+    # Run strategy - generates signals (watchlist applied internally)
     signals = strategy.run(
         skip_live=args.skip_live,
         host=args.host,
@@ -1000,6 +983,39 @@ def main():
         signal_filter=args.signal_type,
         summary_only=args.summary_only
     )
+
+    # --- Portfolio post-filter on signals ---
+    has_portfolio_filters = any([
+        args.price_above is not None, args.price_below is not None,
+        args.filter_field, args.top_k_sharpe is not None,
+    ])
+
+    if signals and has_portfolio_filters:
+        if not args.portfolio_data:
+            logger.warning("Portfolio filters require --portfolio-data. Skipping post-filter.")
+        else:
+            logger.info(f"Applying portfolio post-filter to {len(signals)} signals...")
+            portfolio_df = portfolio_load_data(args.portfolio_data)
+            signal_symbols = [s.symbol for s in signals]
+
+            # Run pipeline on the signal symbols (watchlist already applied above)
+            kept = portfolio_pipeline(
+                portfolio_df,
+                symbols=signal_symbols,
+                price_above=args.price_above,
+                price_below=args.price_below,
+                filter_field=args.filter_field,
+                filter_above=args.filter_above,
+                filter_below=args.filter_below,
+                top_k_sharpe=args.top_k_sharpe,
+            )
+
+            # Filter signals to only those that survived the pipeline
+            kept_set = set(kept)
+            kept_order = {sym: i for i, sym in enumerate(kept)}
+            signals = [s for s in signals if s.symbol in kept_set]
+            signals.sort(key=lambda s: kept_order.get(s.symbol, len(kept)))
+            logger.info(f"Portfolio post-filter: {len(signal_symbols)} -> {len(signals)} signals")
 
     if not signals:
         print("\nNo signals found.")
