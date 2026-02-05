@@ -1,0 +1,46 @@
+# IBKR Live Trading Module Requirements
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+pandas>=2.0.0
+numpy>=1.24.0
+
+# IBKR API
+ib_insync>=0.9.86
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Logging
+logging  # stdlib, included for completeness
+
+# ============================================
+# bar_fly_trading dependencies (shared)
+# ============================================
+
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0  # PostgreSQL adapter
+
+# API & Web
+requests>=2.28.0
+alpha_vantage>=2.3.1
+
+# Google Drive (for cron.py uploads)
+google-auth>=2.0.0
+google-api-python-client>=2.0.0
+
+# Visualization & Reporting
+matplotlib>=3.7.0
+Pillow>=9.0.0
+reportlab>=4.0.0  # PDF generation
+
+# ML/RL (if using bargyms)
+gymnasium>=0.28.0
+stable-baselines3>=2.0.0
+torch>=2.0.0
+
+# Utilities
+python-dateutil>=2.8.0
+pytz>=2023.3

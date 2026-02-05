@@ -10,3 +10,10 @@
 *.jpg
 *credentials.json
 *.log
+
+# Data files (large)
+*.csv
+
+# ML outputs (large files)
+stockformer/output/
+*.pt
