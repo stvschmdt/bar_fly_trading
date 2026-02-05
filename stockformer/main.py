@@ -23,7 +23,7 @@ import os
 import torch
 from torch.utils.data import DataLoader
 
-from .config import DEFAULT_CONFIG, get_feature_columns, get_target_column
+from .config import DEFAULT_CONFIG, BASE_FEATURE_COLUMNS, get_feature_columns, get_target_column
 from .data_utils import (
     load_panel_csvs,
     add_future_returns,
@@ -69,6 +69,14 @@ def train(cfg):
     print("TRAINING")
     print("=" * 60)
 
+    # Ensure output directories exist
+    for path_key in ["model_out", "log_path", "output_csv"]:
+        path = cfg.get(path_key)
+        if path:
+            dirname = os.path.dirname(path)
+            if dirname:
+                os.makedirs(dirname, exist_ok=True)
+
     # Start overall timer
     with Timer("Total training") as total_timer:
 
@@ -109,8 +117,21 @@ def train(cfg):
 
         print(f"Data loading time: {load_timer}")
 
-        # Get feature columns
-        feature_cols = get_feature_columns(df, cfg["mode"])
+        # Get feature columns based on model type
+        model_type = cfg.get("model_type", "encoder")
+
+        if model_type == "cross_attention":
+            # For cross-attention: stock features are base features only
+            # Market features are the embedding columns (m_* and s_*)
+            stock_feature_cols = BASE_FEATURE_COLUMNS.copy()
+            market_feature_cols = [col for col in df.columns if col.startswith("m_") or col.startswith("s_")]
+            feature_cols = stock_feature_cols
+            print(f"\nCross-attention mode: {len(stock_feature_cols)} stock features, {len(market_feature_cols)} market features")
+        else:
+            # For encoder: all features combined
+            feature_cols = get_feature_columns(df, cfg["mode"])
+            market_feature_cols = None
+
         target_col = get_target_column(cfg["horizon"])
 
         # Log data summary
@@ -128,6 +149,7 @@ def train(cfg):
             feature_cols=feature_cols,
             label_mode=cfg["label_mode"],
             bucket_edges=cfg["bucket_edges"],
+            market_feature_cols=market_feature_cols,
         )
 
         # Train/val split
@@ -159,11 +181,16 @@ def train(cfg):
             reset_gpu_memory_stats()
 
         # Create model
+        # For cross-attention, set market_feature_dim in config
+        if model_type == "cross_attention" and market_feature_cols:
+            cfg["market_feature_dim"] = len(market_feature_cols)
+
         model = create_model(
             feature_dim=len(feature_cols),
             label_mode=cfg["label_mode"],
             bucket_edges=cfg["bucket_edges"],
             cfg=cfg,
+            model_type=model_type,
         ).to(device)
 
         # Log model summary
@@ -188,6 +215,7 @@ def train(cfg):
                 num_epochs=cfg["num_epochs"],
                 model_out_path=cfg["model_out"],
                 log_path=cfg["log_path"],
+                model_type=model_type,
             )
 
     # Get GPU memory usage
@@ -420,6 +448,13 @@ def parse_args():
         default=DEFAULT_CONFIG["dropout"],
         help="Dropout probability",
     )
+    parser.add_argument(
+        "--model-type",
+        type=str,
+        default="encoder",
+        choices=["encoder", "cross_attention"],
+        help="Model architecture: encoder (bidirectional) or cross_attention (market encoder + causal stock decoder)",
+    )
 
     # System
     parser.add_argument(
@@ -537,6 +572,7 @@ def args_to_config(args):
     cfg["num_layers"] = args.num_layers
     cfg["dim_feedforward"] = args.dim_feedforward
     cfg["dropout"] = args.dropout
+    cfg["model_type"] = args.model_type
     cfg["num_workers"] = args.num_workers
     cfg["device"] = args.device
     cfg["model_out"] = args.model_out
