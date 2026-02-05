@@ -802,6 +802,25 @@ class StockScreener:
         plt.savefig(output_path)
         plt.close()
 
+    def _plot_options_volume(self, symbol, symbol_data):
+        output_path = os.path.join(self.output_dir, f'{symbol}_daily_options_volume.jpg')
+        #plt.figure()
+        plt.figure(figsize=(14, 10))
+        plt.plot(symbol_data['date'], symbol_data['total_volume'], label='Options Volume', color='k')
+        plt.plot(symbol_data['date'], symbol_data['options_14_mean'], label='Options 14 Day Mean Volume', linestyle='dotted')
+        plt.plot(symbol_data['date'], symbol_data['options_14_mean']+symbol_data['options_14_std'],  label='Options 14 Day 1STD Volume', linestyle='dotted')
+        plt.plot(symbol_data['date'], symbol_data['options_14_mean']-symbol_data['options_14_std'],  label='Options 14 Day -1STD Volume', linestyle='dotted')
+        
+        
+        plt.xlabel('Date')
+        plt.xticks(rotation=45)
+        plt.ylabel('Options Volume')
+        plt.title(f'{symbol} - Daily Options Volume (+/- 1STD From Average)')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+
     def _plot_analyst_ratings(self, symbol, symbol_data):
         # plot a stacked bar chart for analyst ratings, with the top being strong buy and the bottom being strong sell
         output_path = os.path.join(self.output_dir, f'{symbol}_daily_zanalyst_ratings.jpg')
@@ -960,6 +979,9 @@ class StockScreener:
             self._plot_master_adjusted_close(symbol, symbol_data)
             self._plot_off_from_highs(symbol, symbol_data)
             self._plot_volume(symbol, symbol_data)
+            if 'pe_ratio' in self.indicators or self.indicators == 'all':
+                if symbol not in sectors:
+                    self._plot_pe_ratio(symbol, symbol_data)
             if 'rsi' in self.indicators or self.indicators == 'all':
                 self._plot_rsi(symbol, symbol_data)
             if 'macd' in self.indicators or self.indicators == 'all':
@@ -970,11 +992,9 @@ class StockScreener:
                 self._plot_cci(symbol, symbol_data)
             if 'pcr' in self.indicators or self.indicators == 'all':
                 self._plot_pcr(symbol, symbol_data)
+            self._plot_options_volume(symbol, symbol_data)
             #if 'atr' in self.indicators or self.indicators == 'all':
                 #self._plot_atr(symbol, symbol_data)
-            if 'pe_ratio' in self.indicators or self.indicators == 'all':
-                if symbol not in sectors:
-                    self._plot_pe_ratio(symbol, symbol_data)
             #self._plot_price_sma(symbol, symbol_data)
             self._plot_symbol_sharpe_ratio(symbol, symbol_data)
             if symbol not in sectors:
