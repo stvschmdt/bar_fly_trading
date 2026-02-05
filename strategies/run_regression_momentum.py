@@ -17,6 +17,22 @@ Usage:
         --end-date 2024-12-31 \
         --start-cash 100000 \
         --use-all-symbols
+
+    # Use watchlist to filter symbols:
+    python run_regression_momentum.py \
+        --use-all-symbols \
+        --watchlist api_data/watchlist.csv \
+        --watchlist-mode filter \
+        --start-date 2024-07-01 \
+        --end-date 2024-12-31
+
+    # Use watchlist to sort output (keep all, but prioritize watchlist order):
+    python run_regression_momentum.py \
+        --use-all-symbols \
+        --watchlist api_data/watchlist.csv \
+        --watchlist-mode sort \
+        --start-date 2024-07-01 \
+        --end-date 2024-12-31
 """
 
 import argparse
@@ -40,6 +56,70 @@ from regression_momentum_strategy import RegressionMomentumStrategy
 DEFAULT_PREDICTIONS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..', 'mlr', 'stockformer', 'output', 'predictions')
 )
+
+
+def load_watchlist(watchlist_path):
+    """
+    Load watchlist from CSV file and return ordered list of symbols.
+
+    Args:
+        watchlist_path: Path to CSV file with 'Symbol' column
+
+    Returns:
+        List of symbols in watchlist order
+    """
+    if not os.path.exists(watchlist_path):
+        print(f"Warning: Watchlist file not found: {watchlist_path}")
+        return []
+
+    df = pd.read_csv(watchlist_path)
+
+    # Handle different column name conventions
+    symbol_col = None
+    for col in ['Symbol', 'symbol', 'SYMBOL', 'ticker', 'Ticker', 'TICKER']:
+        if col in df.columns:
+            symbol_col = col
+            break
+
+    if symbol_col is None:
+        print(f"Warning: No symbol column found in watchlist. Expected 'Symbol' or 'ticker'")
+        return []
+
+    return df[symbol_col].tolist()
+
+
+def apply_watchlist(symbols, watchlist, mode='sort'):
+    """
+    Apply watchlist to symbols set.
+
+    Args:
+        symbols: Set of symbols to trade
+        watchlist: Ordered list of watchlist symbols
+        mode: 'sort' or 'filter'
+            - sort: Keep all symbols, but order by watchlist (watchlist first, then others)
+            - filter: Only keep symbols that are in watchlist, ordered by watchlist
+
+    Returns:
+        Ordered list of symbols
+    """
+    if not watchlist:
+        return list(symbols)
+
+    watchlist_set = set(watchlist)
+    symbols_set = set(symbols)
+
+    if mode == 'filter':
+        # Only keep symbols in watchlist, maintain watchlist order
+        result = [s for s in watchlist if s in symbols_set]
+        print(f"Watchlist filter: {len(symbols)} symbols -> {len(result)} symbols")
+        return result
+    else:  # sort mode
+        # Watchlist symbols first (in order), then remaining symbols alphabetically
+        in_watchlist = [s for s in watchlist if s in symbols_set]
+        not_in_watchlist = sorted(symbols_set - watchlist_set)
+        result = in_watchlist + not_in_watchlist
+        print(f"Watchlist sort: {len(in_watchlist)} watchlist symbols first, {len(not_in_watchlist)} others")
+        return result
 
 
 def get_available_symbols(predictions_dir):
@@ -176,6 +256,11 @@ Examples:
                         help="Position size as fraction of portfolio (default: 0.1 = 10%%)")
     parser.add_argument("--db", type=str, default='local', choices=['local', 'remote'],
                         help="Database to use (default: local)")
+    parser.add_argument("--watchlist", type=str, default=None,
+                        help="Path to watchlist CSV file (optional)")
+    parser.add_argument("--watchlist-mode", type=str, default='sort', choices=['sort', 'filter'],
+                        help="Watchlist mode: 'sort' (default) keeps all symbols but orders by watchlist, "
+                             "'filter' only keeps symbols in watchlist")
 
     args = parser.parse_args()
 
@@ -191,6 +276,13 @@ Examples:
     else:
         print("Error: Must specify --symbols or --use-all-symbols")
         sys.exit(1)
+
+    # Apply watchlist if provided
+    if args.watchlist:
+        watchlist = load_watchlist(args.watchlist)
+        if watchlist:
+            symbols = set(apply_watchlist(symbols, watchlist, args.watchlist_mode))
+            print(f"After watchlist ({args.watchlist_mode}): {len(symbols)} symbols")
 
     # Run backtest
     run_backtest(

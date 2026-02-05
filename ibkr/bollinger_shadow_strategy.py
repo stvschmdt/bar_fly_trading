@@ -27,6 +27,14 @@ Usage:
     # EXECUTE trades for specific symbols (must explicitly list each symbol)
     python bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv --execute AAPL
     python bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv --execute AAPL,MSFT
+
+    # Use watchlist to filter/sort signals
+    python bollinger_shadow_strategy.py --data-path ~/data/all_data.csv --skip-live --no-notify \
+        --watchlist api_data/watchlist.csv --watchlist-mode filter
+
+    # Sort signals by watchlist order (watchlist symbols first)
+    python bollinger_shadow_strategy.py --data-path ~/data/all_data.csv --skip-live --no-notify \
+        --watchlist api_data/watchlist.csv --watchlist-mode sort
 """
 
 import argparse
@@ -64,6 +72,36 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def load_watchlist(watchlist_path: str) -> list[str]:
+    """
+    Load watchlist from CSV file and return ordered list of symbols.
+
+    Args:
+        watchlist_path: Path to CSV file with 'Symbol' column
+
+    Returns:
+        List of symbols in watchlist order
+    """
+    if not os.path.exists(watchlist_path):
+        logger.warning(f"Watchlist file not found: {watchlist_path}")
+        return []
+
+    df = pd.read_csv(watchlist_path)
+
+    # Handle different column name conventions
+    symbol_col = None
+    for col in ['Symbol', 'symbol', 'SYMBOL', 'ticker', 'Ticker', 'TICKER']:
+        if col in df.columns:
+            symbol_col = col
+            break
+
+    if symbol_col is None:
+        logger.warning(f"No symbol column found in watchlist. Expected 'Symbol' or 'ticker'")
+        return []
+
+    return df[symbol_col].tolist()
 
 
 @dataclass
@@ -108,7 +146,9 @@ class BollingerShadowStrategy:
         data_path: str,
         notifier: Optional[TradeNotifier] = None,
         position_size_pct: float = 0.05,
-        shares_per_trade: int = 10
+        shares_per_trade: int = 10,
+        watchlist: Optional[list[str]] = None,
+        watchlist_mode: str = 'sort'
     ):
         """
         Initialize the shadow strategy.
@@ -118,11 +158,15 @@ class BollingerShadowStrategy:
             notifier: Optional notifier for sending alerts
             position_size_pct: Percentage of cash to use per position
             shares_per_trade: Default shares per trade if not calculated
+            watchlist: Optional ordered list of symbols for filtering/sorting
+            watchlist_mode: 'sort' (default) or 'filter'
         """
         self.data_path = data_path
         self.notifier = notifier  # Can be None to disable notifications
         self.position_size_pct = position_size_pct
         self.shares_per_trade = shares_per_trade
+        self.watchlist = watchlist or []
+        self.watchlist_mode = watchlist_mode
 
         self.data: Optional[pd.DataFrame] = None
         self.signals: list[BollingerSignal] = []
@@ -355,7 +399,47 @@ class BollingerShadowStrategy:
                 self.signals.append(signal)
 
         logger.info(f"Found {len(self.signals)} signals")
+
+        # Apply watchlist filtering/sorting if configured
+        if self.watchlist:
+            self.signals = self._apply_watchlist(self.signals)
+
         return self.signals
+
+    def _apply_watchlist(self, signals: list[BollingerSignal]) -> list[BollingerSignal]:
+        """
+        Apply watchlist to signals list.
+
+        Args:
+            signals: List of BollingerSignal objects
+
+        Returns:
+            Filtered or sorted list of signals
+        """
+        if not self.watchlist:
+            return signals
+
+        watchlist_set = set(self.watchlist)
+        # Create order mapping: symbol -> position in watchlist
+        watchlist_order = {sym: i for i, sym in enumerate(self.watchlist)}
+
+        if self.watchlist_mode == 'filter':
+            # Only keep signals for symbols in watchlist
+            filtered = [s for s in signals if s.symbol in watchlist_set]
+            # Sort by watchlist order
+            filtered.sort(key=lambda s: watchlist_order.get(s.symbol, len(self.watchlist)))
+            logger.info(f"Watchlist filter: {len(signals)} signals -> {len(filtered)} signals")
+            return filtered
+        else:  # sort mode
+            # Sort signals: watchlist symbols first (in order), then others alphabetically
+            def sort_key(s):
+                if s.symbol in watchlist_order:
+                    return (0, watchlist_order[s.symbol])
+                return (1, s.symbol)
+            sorted_signals = sorted(signals, key=sort_key)
+            in_watchlist = sum(1 for s in signals if s.symbol in watchlist_set)
+            logger.info(f"Watchlist sort: {in_watchlist} watchlist signals first, {len(signals) - in_watchlist} others")
+            return sorted_signals
 
     def _validate_signal(self, signal: BollingerSignal) -> None:
         """Validate a signal against account constraints."""
@@ -863,6 +947,20 @@ def main():
         help="Explicitly specify symbols to execute trades for (e.g., --execute AAPL or --execute AAPL,MSFT). "
              "Each symbol must have a matching signal. No 'execute all' option - you must list each symbol."
     )
+    parser.add_argument(
+        "--watchlist",
+        type=str,
+        default=None,
+        help="Path to watchlist CSV file (optional). Used to filter or sort output signals."
+    )
+    parser.add_argument(
+        "--watchlist-mode",
+        type=str,
+        default='sort',
+        choices=['sort', 'filter'],
+        help="Watchlist mode: 'sort' (default) keeps all signals but orders by watchlist, "
+             "'filter' only keeps signals for symbols in watchlist"
+    )
 
     args = parser.parse_args()
 
@@ -872,6 +970,15 @@ def main():
         execute_symbols = [s.strip().upper() for s in args.execute.split(",") if s.strip()]
         logger.info(f"Will execute trades for symbols: {execute_symbols}")
 
+    # Load watchlist if provided
+    watchlist = None
+    if args.watchlist:
+        watchlist = load_watchlist(args.watchlist)
+        if watchlist:
+            logger.info(f"Loaded watchlist with {len(watchlist)} symbols")
+        else:
+            logger.warning("Watchlist is empty or could not be loaded")
+
     # Create strategy
     notifier = None if args.no_notify else TradeNotifier()
 
@@ -879,7 +986,9 @@ def main():
         data_path=args.data_path,
         notifier=notifier,
         position_size_pct=args.position_pct,
-        shares_per_trade=args.shares
+        shares_per_trade=args.shares,
+        watchlist=watchlist,
+        watchlist_mode=args.watchlist_mode
     )
 
     # Run - always connect to Gateway unless --skip-live is set
