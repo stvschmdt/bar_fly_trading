@@ -18,11 +18,15 @@ Usage:
     # Start SSH tunnel first
     ssh -L 4001:127.0.0.1:4001 sschmidt@54.90.246.184 -N &
 
-    # Run strategy (connects to Gateway, sends emails)
+    # Run strategy (connects to Gateway, sends emails) - SHADOW MODE
     python bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv
 
     # Test without Gateway connection (for debugging data/signals only)
     python bollinger_shadow_strategy.py --data-path ~/data/all_data.csv --skip-live
+
+    # EXECUTE trades for specific symbols (must explicitly list each symbol)
+    python bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv --execute AAPL
+    python bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv --execute AAPL,MSFT
 """
 
 import argparse
@@ -43,13 +47,17 @@ sys.path.insert(0, current_dir)
 sys.path.insert(0, parent_dir)
 
 try:
-    from ibkr.config import IBKRConfig
+    from ibkr.config import IBKRConfig, TradingConfig
     from ibkr.connection import IBKRConnection
     from ibkr.notifier import TradeNotifier
+    from ibkr.trade_executor import TradeExecutor
+    from ibkr.models import TradeSignal, OrderAction
 except ModuleNotFoundError:
-    from config import IBKRConfig
+    from config import IBKRConfig, TradingConfig
     from connection import IBKRConnection
     from notifier import TradeNotifier
+    from trade_executor import TradeExecutor
+    from models import TradeSignal, OrderAction
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,6 +81,13 @@ class BollingerSignal:
     reason: str = ""
     can_execute: bool = True
     block_reason: str = ""
+    # Additional context
+    bb_width_pct: float = 0.0  # Band width as % of middle
+    distance_from_band_pct: float = 0.0  # How far past the band
+    volume: float = 0.0
+    rsi: Optional[float] = None
+    prev_close: float = 0.0
+    bull_bear_delta: Optional[float] = None  # Bull/bear sentiment indicator
 
 
 class BollingerShadowStrategy:
@@ -105,7 +120,7 @@ class BollingerShadowStrategy:
             shares_per_trade: Default shares per trade if not calculated
         """
         self.data_path = data_path
-        self.notifier = notifier or TradeNotifier()
+        self.notifier = notifier  # Can be None to disable notifications
         self.position_size_pct = position_size_pct
         self.shares_per_trade = shares_per_trade
 
@@ -213,7 +228,9 @@ class BollingerShadowStrategy:
         Find Bollinger band crossover signals on recent data.
 
         Args:
-            lookback_days: How many days back to check (default: 2 for today/yesterday)
+            lookback_days: Number of trading days to look back (default: 2)
+                          Uses actual trading days (rows), not calendar days,
+                          so weekends/holidays are handled automatically.
 
         Returns:
             List of BollingerSignal objects
@@ -226,9 +243,8 @@ class BollingerShadowStrategy:
 
         # Get the most recent date in data
         max_date = self.data['date'].max()
-        cutoff_date = max_date - timedelta(days=lookback_days)
 
-        logger.info(f"Scanning for signals from {cutoff_date.date()} to {max_date.date()}")
+        logger.info(f"Scanning for signals on most recent {lookback_days} trading day(s) ending {max_date.date()}")
 
         # Get unique symbols
         symbols = self.data['symbol'].unique()
@@ -241,11 +257,19 @@ class BollingerShadowStrategy:
             if len(symbol_data) < 2:
                 continue
 
-            latest = symbol_data.iloc[-1]
-            prev = symbol_data.iloc[-2]
+            # Use trading days (rows) not calendar days - handles weekends/holidays
+            # Get the last N trading days for this symbol
+            recent_data = symbol_data.tail(lookback_days + 1)  # +1 to have prev day for comparison
 
-            # Skip if not recent enough
-            if latest['date'] < cutoff_date:
+            if len(recent_data) < 2:
+                continue
+
+            latest = recent_data.iloc[-1]
+            prev = recent_data.iloc[-2]
+
+            # Skip if this symbol's latest date is not the overall max date
+            # (symbol may have stopped trading)
+            if latest['date'] != max_date:
                 continue
 
             close = latest['adjusted_close']
@@ -261,11 +285,29 @@ class BollingerShadowStrategy:
             if pd.isna(bb_lower) or pd.isna(bb_upper):
                 continue
 
+            # Get additional context data
+            volume = latest.get('volume', 0)
+            rsi = latest.get('rsi_14', None)
+            if pd.isna(rsi):
+                rsi = None
+
+            bull_bear_delta = latest.get('bull_bear_delta', None)
+            if pd.isna(bull_bear_delta):
+                bull_bear_delta = None
+
+            # Calculate band width as % of middle
+            bb_width_pct = ((bb_upper - bb_lower) / bb_middle * 100) if bb_middle > 0 else 0
+
             signal = None
 
             # Check for LOWER band crossover (BUY signal)
-            # Price crossed below lower band
+            # Price crossed below lower band AND RSI <= 40 (not overbought)
             if close <= bb_lower and prev_close > prev_bb_lower:
+                # RSI filter: for BUY, RSI should not be > 40
+                if rsi is not None and rsi > 40:
+                    continue  # Skip - RSI too high for a buy signal
+
+                distance_pct = ((bb_lower - close) / close * 100) if close > 0 else 0
                 signal = BollingerSignal(
                     symbol=symbol,
                     signal_type="BUY",
@@ -274,12 +316,23 @@ class BollingerShadowStrategy:
                     bb_upper=bb_upper,
                     bb_middle=bb_middle,
                     signal_date=str(latest['date'].date()),
-                    reason=f"Price ({close:.2f}) crossed below lower BB ({bb_lower:.2f})"
+                    reason=f"Price crossed below lower BB (RSI: {rsi:.1f})" if rsi else "Price crossed below lower BB",
+                    bb_width_pct=bb_width_pct,
+                    distance_from_band_pct=distance_pct,
+                    volume=volume,
+                    rsi=rsi,
+                    prev_close=prev_close,
+                    bull_bear_delta=bull_bear_delta
                 )
 
             # Check for UPPER band crossover (SELL signal)
-            # Price crossed above upper band
+            # Price crossed above upper band AND RSI >= 60 (not oversold)
             elif close >= bb_upper and prev_close < prev_bb_upper:
+                # RSI filter: for SELL, RSI should not be < 60
+                if rsi is not None and rsi < 60:
+                    continue  # Skip - RSI too low for a sell signal
+
+                distance_pct = ((close - bb_upper) / close * 100) if close > 0 else 0
                 signal = BollingerSignal(
                     symbol=symbol,
                     signal_type="SELL",
@@ -288,7 +341,13 @@ class BollingerShadowStrategy:
                     bb_upper=bb_upper,
                     bb_middle=bb_middle,
                     signal_date=str(latest['date'].date()),
-                    reason=f"Price ({close:.2f}) crossed above upper BB ({bb_upper:.2f})"
+                    reason=f"Price crossed above upper BB (RSI: {rsi:.1f})" if rsi else "Price crossed above upper BB",
+                    bb_width_pct=bb_width_pct,
+                    distance_from_band_pct=distance_pct,
+                    volume=volume,
+                    rsi=rsi,
+                    prev_close=prev_close,
+                    bull_bear_delta=bull_bear_delta
                 )
 
             if signal:
@@ -337,13 +396,42 @@ class BollingerShadowStrategy:
                     signal.estimated_cost = signal.shares_proposed * signal.close_price
                     signal.block_reason = "No live account data - cannot verify position"
 
+    def send_summary_notification(self) -> bool:
+        """
+        Send a single summary email with all signals in table format.
+
+        Returns:
+            True if sent successfully
+        """
+        if not self.notifier:
+            logger.debug("Notifications disabled")
+            return False
+
+        if not self.signals:
+            logger.info("No signals to notify")
+            return False
+
+        summary = self.generate_summary()
+        subject = f"[SHADOW] Bollinger Signals Summary - {len(self.signals)} signal(s) ({datetime.now().strftime('%Y-%m-%d')})"
+
+        if self.notifier._send_email(subject, summary):
+            logger.info(f"Summary notification sent with {len(self.signals)} signal(s)")
+            return True
+        else:
+            logger.warning("Failed to send summary notification")
+            return False
+
     def send_notifications(self) -> int:
         """
-        Send notification emails for all signals.
+        Send individual notification emails for each signal.
 
         Returns:
             Number of notifications sent
         """
+        if not self.notifier:
+            logger.debug("Notifications disabled")
+            return 0
+
         if not self.signals:
             logger.info("No signals to notify")
             return 0
@@ -351,32 +439,59 @@ class BollingerShadowStrategy:
         sent = 0
 
         for signal in self.signals:
-            subject = f"[SHADOW] {signal.signal_type} Signal: {signal.symbol}"
+            subject = f"[SHADOW] {signal.signal_type} Signal: {signal.symbol} ({signal.signal_date})"
+
+            # Price change from previous day
+            price_change = signal.close_price - signal.prev_close
+            price_change_pct = (price_change / signal.prev_close * 100) if signal.prev_close > 0 else 0
 
             body_lines = [
-                "=" * 50,
+                "=" * 55,
                 "BOLLINGER BAND SHADOW SIGNAL",
-                "=" * 50,
+                "=" * 55,
                 "",
                 f"Signal Type:     {signal.signal_type}",
                 f"Symbol:          {signal.symbol}",
                 f"Signal Date:     {signal.signal_date}",
-                f"Close Price:     ${signal.close_price:.2f}",
+                f"Generated:       {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                 "",
-                "Bollinger Bands (20-day):",
+                "-" * 55,
+                "PRICE DATA:",
+                "-" * 55,
+                f"  Close Price:   ${signal.close_price:.2f}",
+                f"  Prev Close:    ${signal.prev_close:.2f}",
+                f"  Day Change:    ${price_change:+.2f} ({price_change_pct:+.2f}%)",
+                f"  Volume:        {signal.volume:,.0f}",
+            ]
+
+            if signal.rsi is not None:
+                rsi_status = "OVERSOLD" if signal.rsi < 30 else "OVERBOUGHT" if signal.rsi > 70 else "NEUTRAL"
+                body_lines.append(f"  RSI (14):      {signal.rsi:.1f} ({rsi_status})")
+
+            if signal.bull_bear_delta is not None:
+                bbd_status = "BULLISH" if signal.bull_bear_delta > 0 else "BEARISH" if signal.bull_bear_delta < 0 else "NEUTRAL"
+                body_lines.append(f"  Bull/Bear:     {int(signal.bull_bear_delta):+d} ({bbd_status})")
+
+            body_lines.extend([
+                "",
+                "-" * 55,
+                "BOLLINGER BANDS (20-day):",
+                "-" * 55,
                 f"  Upper:         ${signal.bb_upper:.2f}",
                 f"  Middle:        ${signal.bb_middle:.2f}",
                 f"  Lower:         ${signal.bb_lower:.2f}",
+                f"  Band Width:    {signal.bb_width_pct:.1f}%",
+                f"  Distance:      {signal.distance_from_band_pct:.2f}% past band",
                 "",
-                f"Reason:          {signal.reason}",
+                f"Trigger:         {signal.reason}",
                 "",
-                "-" * 50,
+                "-" * 55,
                 "PROPOSED ORDER:",
-                "-" * 50,
+                "-" * 55,
                 f"  Action:        {signal.signal_type} {signal.shares_proposed} shares",
                 f"  Est. Value:    ${signal.estimated_cost:,.2f}",
                 f"  Can Execute:   {'YES' if signal.can_execute else 'NO'}",
-            ]
+            ])
 
             if signal.block_reason:
                 body_lines.append(f"  Note:          {signal.block_reason}")
@@ -384,9 +499,9 @@ class BollingerShadowStrategy:
             if self.cash_balance is not None:
                 body_lines.extend([
                     "",
-                    "-" * 50,
+                    "-" * 55,
                     "ACCOUNT STATUS:",
-                    "-" * 50,
+                    "-" * 55,
                     f"  Account:       {self.account_id}",
                     f"  Cash Balance:  ${self.cash_balance:,.2f}",
                     f"  Positions:     {len(self.portfolio)} stocks",
@@ -397,9 +512,10 @@ class BollingerShadowStrategy:
 
             body_lines.extend([
                 "",
-                "=" * 50,
+                "=" * 55,
                 "THIS IS A SHADOW SIGNAL - NO TRADE EXECUTED",
-                "=" * 50,
+                "To execute: --execute " + signal.symbol,
+                "=" * 55,
             ])
 
             body = "\n".join(body_lines)
@@ -418,11 +534,19 @@ class BollingerShadowStrategy:
         if not self.signals:
             return "No Bollinger band crossover signals found."
 
+        # Get data date range
+        data_dates = ""
+        if self.data is not None:
+            min_date = self.data['date'].min()
+            max_date = self.data['date'].max()
+            data_dates = f"Data Range: {min_date.date()} to {max_date.date()}"
+
         lines = [
-            "=" * 60,
+            "=" * 85,
             "BOLLINGER BAND SHADOW STRATEGY SUMMARY",
-            "=" * 60,
-            f"Scan Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "=" * 85,
+            f"Scan Time:     {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"{data_dates}",
             f"Total Signals: {len(self.signals)}",
             "",
         ]
@@ -430,35 +554,163 @@ class BollingerShadowStrategy:
         buy_signals = [s for s in self.signals if s.signal_type == "BUY"]
         sell_signals = [s for s in self.signals if s.signal_type == "SELL"]
 
-        lines.append(f"BUY Signals: {len(buy_signals)}")
-        for s in buy_signals:
-            status = "OK" if s.can_execute else "BLOCKED"
-            lines.append(f"  {s.symbol}: ${s.close_price:.2f} (BB lower: ${s.bb_lower:.2f}) [{status}]")
+        lines.append(f"BUY Signals ({len(buy_signals)}):")
+        lines.append("-" * 85)
+        if buy_signals:
+            lines.append(f"{'Symbol':<8} {'Date':<12} {'Close':>10} {'BB Lower':>10} {'Dist%':>7} {'RSI':>6} {'BullBear':>8} {'Status':<10}")
+            lines.append("-" * 85)
+            for s in buy_signals:
+                status = "OK" if s.can_execute else "BLOCKED"
+                rsi_str = f"{s.rsi:.1f}" if s.rsi is not None else "N/A"
+                bbd_str = f"{int(s.bull_bear_delta):+d}" if s.bull_bear_delta is not None else "N/A"
+                lines.append(f"{s.symbol:<8} {s.signal_date:<12} ${s.close_price:>8.2f} ${s.bb_lower:>8.2f} {s.distance_from_band_pct:>6.2f}% {rsi_str:>6} {bbd_str:>8} {status:<10}")
+        else:
+            lines.append("  (none)")
 
         lines.append("")
-        lines.append(f"SELL Signals: {len(sell_signals)}")
-        for s in sell_signals:
-            status = "OK" if s.can_execute else "BLOCKED"
-            lines.append(f"  {s.symbol}: ${s.close_price:.2f} (BB upper: ${s.bb_upper:.2f}) [{status}]")
+        lines.append(f"SELL Signals ({len(sell_signals)}):")
+        lines.append("-" * 85)
+        if sell_signals:
+            lines.append(f"{'Symbol':<8} {'Date':<12} {'Close':>10} {'BB Upper':>10} {'Dist%':>7} {'RSI':>6} {'BullBear':>8} {'Status':<10}")
+            lines.append("-" * 85)
+            for s in sell_signals:
+                status = "OK" if s.can_execute else "BLOCKED"
+                rsi_str = f"{s.rsi:.1f}" if s.rsi is not None else "N/A"
+                bbd_str = f"{int(s.bull_bear_delta):+d}" if s.bull_bear_delta is not None else "N/A"
+                lines.append(f"{s.symbol:<8} {s.signal_date:<12} ${s.close_price:>8.2f} ${s.bb_upper:>8.2f} {s.distance_from_band_pct:>6.2f}% {rsi_str:>6} {bbd_str:>8} {status:<10}")
+        else:
+            lines.append("  (none)")
 
         if self.cash_balance is not None:
             lines.extend([
                 "",
-                "-" * 60,
+                "-" * 85,
                 "ACCOUNT INFO:",
-                f"  Cash: ${self.cash_balance:,.2f}",
-                f"  Positions: {len(self.portfolio)}",
+                f"  Account:   {self.account_id}",
+                f"  Cash:      ${self.cash_balance:,.2f}",
+                f"  Positions: {len(self.portfolio)} stocks",
             ])
 
-        lines.append("=" * 60)
+        lines.append("=" * 85)
 
         return "\n".join(lines)
+
+    def execute_trades(
+        self,
+        symbols_to_execute: list[str],
+        host: str = "127.0.0.1",
+        port: int = 4001
+    ) -> dict:
+        """
+        Execute trades for specified symbols that have matching signals.
+
+        Args:
+            symbols_to_execute: List of symbols to execute (must have matching signals)
+            host: Gateway host
+            port: Gateway port
+
+        Returns:
+            Dict with execution results
+        """
+        results = {
+            "executed": [],
+            "skipped": [],
+            "failed": []
+        }
+
+        # Find signals for the requested symbols
+        signals_to_execute = [
+            s for s in self.signals
+            if s.symbol.upper() in [sym.upper() for sym in symbols_to_execute]
+        ]
+
+        if not signals_to_execute:
+            logger.warning(f"No matching signals found for symbols: {symbols_to_execute}")
+            results["skipped"] = symbols_to_execute
+            return results
+
+        # Warn about symbols requested but not having signals
+        requested_upper = {sym.upper() for sym in symbols_to_execute}
+        signal_symbols = {s.symbol.upper() for s in signals_to_execute}
+        no_signal = requested_upper - signal_symbols
+        if no_signal:
+            logger.warning(f"No signals found for: {no_signal}")
+            results["skipped"].extend(list(no_signal))
+
+        # Check which signals can be executed
+        executable_signals = [s for s in signals_to_execute if s.can_execute]
+        blocked_signals = [s for s in signals_to_execute if not s.can_execute]
+
+        for s in blocked_signals:
+            logger.warning(f"Cannot execute {s.symbol}: {s.block_reason}")
+            results["skipped"].append({"symbol": s.symbol, "reason": s.block_reason})
+
+        if not executable_signals:
+            logger.warning("No executable signals found")
+            return results
+
+        # Initialize trade executor
+        logger.info(f"Executing {len(executable_signals)} trade(s)...")
+
+        ibkr_config = IBKRConfig.remote_gateway(host=host, port=port, client_id=100)
+        trading_config = TradingConfig(
+            max_position_pct=self.position_size_pct,
+            use_market_orders=True  # Use market orders for simplicity
+        )
+
+        try:
+            with TradeExecutor(ibkr_config, trading_config, enable_notifications=True) as executor:
+                for signal in executable_signals:
+                    logger.info(f"Executing: {signal.signal_type} {signal.shares_proposed} {signal.symbol}")
+
+                    try:
+                        if signal.signal_type == "BUY":
+                            result = executor.execute_buy(
+                                symbol=signal.symbol,
+                                shares=signal.shares_proposed,
+                                reason=f"Bollinger band crossover: {signal.reason}"
+                            )
+                        else:  # SELL
+                            result = executor.execute_sell(
+                                symbol=signal.symbol,
+                                shares=signal.shares_proposed,
+                                reason=f"Bollinger band crossover: {signal.reason}"
+                            )
+
+                        if result.success:
+                            logger.info(f"SUCCESS: {signal.symbol} - filled {result.order.filled_shares} shares")
+                            results["executed"].append({
+                                "symbol": signal.symbol,
+                                "action": signal.signal_type,
+                                "shares": result.order.filled_shares,
+                                "price": result.order.avg_fill_price
+                            })
+                        else:
+                            logger.error(f"FAILED: {signal.symbol} - {result.error_message}")
+                            results["failed"].append({
+                                "symbol": signal.symbol,
+                                "error": result.error_message
+                            })
+
+                    except Exception as e:
+                        logger.error(f"Exception executing {signal.symbol}: {e}")
+                        results["failed"].append({"symbol": signal.symbol, "error": str(e)})
+
+        except Exception as e:
+            logger.error(f"Failed to initialize trade executor: {e}")
+            for signal in executable_signals:
+                results["failed"].append({"symbol": signal.symbol, "error": str(e)})
+
+        return results
 
     def run(
         self,
         skip_live: bool = False,
         host: str = "127.0.0.1",
-        port: int = 4001
+        port: int = 4001,
+        execute_symbols: Optional[list[str]] = None,
+        signal_filter: str = "all",
+        summary_only: bool = False
     ) -> list[BollingerSignal]:
         """
         Run the full shadow strategy.
@@ -467,6 +719,9 @@ class BollingerShadowStrategy:
             skip_live: If True, skip connecting to Gateway (for testing)
             host: Gateway host (default: localhost via SSH tunnel)
             port: Gateway port (default: 4001 for live)
+            execute_symbols: List of symbols to actually execute trades for (optional)
+            signal_filter: Filter signals - "all", "buy", or "sell"
+            summary_only: If True, send one summary email instead of individual emails
 
         Returns:
             List of signals found
@@ -489,13 +744,51 @@ class BollingerShadowStrategy:
         # Find signals
         signals = self.find_signals()
 
+        # Apply signal type filter
+        if signal_filter == "buy":
+            self.signals = [s for s in self.signals if s.signal_type == "BUY"]
+            signals = self.signals
+            logger.info(f"Filtered to BUY signals only: {len(signals)} signal(s)")
+        elif signal_filter == "sell":
+            self.signals = [s for s in self.signals if s.signal_type == "SELL"]
+            signals = self.signals
+            logger.info(f"Filtered to SELL signals only: {len(signals)} signal(s)")
+
         # Print summary
         print(self.generate_summary())
 
         # Send notifications
         if signals:
-            sent = self.send_notifications()
-            logger.info(f"Sent {sent} notification(s)")
+            if summary_only:
+                self.send_summary_notification()
+            else:
+                sent = self.send_notifications()
+                logger.info(f"Sent {sent} notification(s)")
+
+        # Execute trades if symbols specified
+        if execute_symbols and signals:
+            print("\n" + "=" * 60)
+            print("EXECUTING TRADES FOR SPECIFIED SYMBOLS")
+            print("=" * 60)
+
+            execution_results = self.execute_trades(execute_symbols, host=host, port=port)
+
+            # Print execution summary
+            print(f"\nExecution Results:")
+            print(f"  Executed: {len(execution_results['executed'])}")
+            for ex in execution_results['executed']:
+                print(f"    {ex['action']} {ex['shares']} {ex['symbol']} @ ${ex['price']:.2f}")
+
+            print(f"  Skipped: {len(execution_results['skipped'])}")
+            for sk in execution_results['skipped']:
+                if isinstance(sk, dict):
+                    print(f"    {sk['symbol']}: {sk['reason']}")
+                else:
+                    print(f"    {sk}: No matching signal")
+
+            print(f"  Failed: {len(execution_results['failed'])}")
+            for fl in execution_results['failed']:
+                print(f"    {fl['symbol']}: {fl['error']}")
 
         return signals
 
@@ -547,12 +840,37 @@ def main():
         help="Days to look back for signals (default: 2)"
     )
     parser.add_argument(
+        "--signal-type",
+        type=str,
+        choices=["all", "buy", "sell"],
+        default="all",
+        help="Filter signals: 'buy' only, 'sell' only, or 'all' (default: all)"
+    )
+    parser.add_argument(
         "--no-notify",
         action="store_true",
         help="Skip sending notifications"
     )
+    parser.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="Send one summary email with table instead of individual signal emails"
+    )
+    parser.add_argument(
+        "--execute",
+        type=str,
+        default=None,
+        help="Explicitly specify symbols to execute trades for (e.g., --execute AAPL or --execute AAPL,MSFT). "
+             "Each symbol must have a matching signal. No 'execute all' option - you must list each symbol."
+    )
 
     args = parser.parse_args()
+
+    # Parse execute symbols
+    execute_symbols = None
+    if args.execute:
+        execute_symbols = [s.strip().upper() for s in args.execute.split(",") if s.strip()]
+        logger.info(f"Will execute trades for symbols: {execute_symbols}")
 
     # Create strategy
     notifier = None if args.no_notify else TradeNotifier()
@@ -565,7 +883,14 @@ def main():
     )
 
     # Run - always connect to Gateway unless --skip-live is set
-    signals = strategy.run(skip_live=args.skip_live, host=args.host, port=args.port)
+    signals = strategy.run(
+        skip_live=args.skip_live,
+        host=args.host,
+        port=args.port,
+        execute_symbols=execute_symbols,
+        signal_filter=args.signal_type,
+        summary_only=args.summary_only
+    )
 
     if not signals:
         print("\nNo signals found.")
