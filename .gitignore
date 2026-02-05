@@ -10,3 +10,16 @@
 *.jpg
 *credentials.json
 *.log
+
+# Data files (large)
+*.csv
+
+# ML outputs (large files)
+stockformer/output/
+*.pt
+
+# Training configs (generated)
+training_log_reg_*_config.json
+
+# Scripts (local)
+scripts/
