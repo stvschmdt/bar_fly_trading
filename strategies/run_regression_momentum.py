@@ -3,6 +3,8 @@
 Runner script for Regression Momentum Strategy backtest.
 
 Uses the bar_fly_trading backtest framework with stockformer predictions.
+Portfolio filtering/ranking via portfolio.py is applied before the backtest
+to narrow the symbol universe.
 
 Usage:
     python run_regression_momentum.py \
@@ -13,24 +15,24 @@ Usage:
 
     # Or use all symbols from predictions:
     python run_regression_momentum.py \
-        --start-date 2024-07-01 \
-        --end-date 2024-12-31 \
-        --start-cash 100000 \
-        --use-all-symbols
-
-    # Use watchlist to filter symbols:
-    python run_regression_momentum.py \
         --use-all-symbols \
-        --watchlist api_data/watchlist.csv \
-        --watchlist-mode filter \
         --start-date 2024-07-01 \
         --end-date 2024-12-31
 
-    # Use watchlist to sort output (keep all, but prioritize watchlist order):
+    # Portfolio filtering: price band + top 15 by Sharpe
     python run_regression_momentum.py \
         --use-all-symbols \
-        --watchlist api_data/watchlist.csv \
-        --watchlist-mode sort \
+        --portfolio-data all_data_0.csv \
+        --price-above 25 --top-k-sharpe 15 \
+        --start-date 2024-07-01 \
+        --end-date 2024-12-31
+
+    # Watchlist filter + field filter (beta < 1.5)
+    python run_regression_momentum.py \
+        --use-all-symbols \
+        --portfolio-data all_data_0.csv \
+        --watchlist api_data/watchlist.csv --watchlist-mode filter \
+        --filter-field beta --filter-below 1.5 \
         --start-date 2024-07-01 \
         --end-date 2024-12-31
 """
@@ -48,6 +50,12 @@ from account.account_values import AccountValues
 from account.backtest_account import BacktestAccount
 from api_data.storage import connect_database
 from backtest import backtest
+from portfolio import (
+    load_data as portfolio_load_data,
+    load_watchlist,
+    apply_watchlist,
+    run_pipeline as portfolio_pipeline,
+)
 
 from regression_momentum_strategy import RegressionMomentumStrategy
 
@@ -56,70 +64,6 @@ from regression_momentum_strategy import RegressionMomentumStrategy
 DEFAULT_PREDICTIONS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..', 'mlr', 'stockformer', 'output', 'predictions')
 )
-
-
-def load_watchlist(watchlist_path):
-    """
-    Load watchlist from CSV file and return ordered list of symbols.
-
-    Args:
-        watchlist_path: Path to CSV file with 'Symbol' column
-
-    Returns:
-        List of symbols in watchlist order
-    """
-    if not os.path.exists(watchlist_path):
-        print(f"Warning: Watchlist file not found: {watchlist_path}")
-        return []
-
-    df = pd.read_csv(watchlist_path)
-
-    # Handle different column name conventions
-    symbol_col = None
-    for col in ['Symbol', 'symbol', 'SYMBOL', 'ticker', 'Ticker', 'TICKER']:
-        if col in df.columns:
-            symbol_col = col
-            break
-
-    if symbol_col is None:
-        print(f"Warning: No symbol column found in watchlist. Expected 'Symbol' or 'ticker'")
-        return []
-
-    return df[symbol_col].tolist()
-
-
-def apply_watchlist(symbols, watchlist, mode='sort'):
-    """
-    Apply watchlist to symbols set.
-
-    Args:
-        symbols: Set of symbols to trade
-        watchlist: Ordered list of watchlist symbols
-        mode: 'sort' or 'filter'
-            - sort: Keep all symbols, but order by watchlist (watchlist first, then others)
-            - filter: Only keep symbols that are in watchlist, ordered by watchlist
-
-    Returns:
-        Ordered list of symbols
-    """
-    if not watchlist:
-        return list(symbols)
-
-    watchlist_set = set(watchlist)
-    symbols_set = set(symbols)
-
-    if mode == 'filter':
-        # Only keep symbols in watchlist, maintain watchlist order
-        result = [s for s in watchlist if s in symbols_set]
-        print(f"Watchlist filter: {len(symbols)} symbols -> {len(result)} symbols")
-        return result
-    else:  # sort mode
-        # Watchlist symbols first (in order), then remaining symbols alphabetically
-        in_watchlist = [s for s in watchlist if s in symbols_set]
-        not_in_watchlist = sorted(symbols_set - watchlist_set)
-        result = in_watchlist + not_in_watchlist
-        print(f"Watchlist sort: {len(in_watchlist)} watchlist symbols first, {len(not_in_watchlist)} others")
-        return result
 
 
 def get_available_symbols(predictions_dir):
@@ -237,9 +181,19 @@ Examples:
 
   # Backtest all available symbols
   python run_regression_momentum.py --use-all-symbols --start-date 2024-07-01 --end-date 2024-12-31
+
+  # Portfolio filter: price > $25, top 15 by Sharpe
+  python run_regression_momentum.py --use-all-symbols --portfolio-data all_data_0.csv \\
+      --price-above 25 --top-k-sharpe 15 --start-date 2024-07-01 --end-date 2024-12-31
+
+  # Watchlist + field filter (beta < 1.5)
+  python run_regression_momentum.py --use-all-symbols --portfolio-data all_data_0.csv \\
+      --watchlist api_data/watchlist.csv --watchlist-mode filter \\
+      --filter-field beta --filter-below 1.5 --start-date 2024-07-01 --end-date 2024-12-31
         """
     )
 
+    # --- Backtest args ---
     parser.add_argument("--symbols", type=str, nargs="+",
                         help="Symbols to trade (e.g., AAPL GOOGL MSFT)")
     parser.add_argument("--use-all-symbols", action="store_true",
@@ -256,11 +210,27 @@ Examples:
                         help="Position size as fraction of portfolio (default: 0.1 = 10%%)")
     parser.add_argument("--db", type=str, default='local', choices=['local', 'remote'],
                         help="Database to use (default: local)")
+
+    # --- Portfolio ranker args ---
+    parser.add_argument("--portfolio-data", type=str, default=None,
+                        help="Path to data CSV for portfolio ranking (e.g. all_data_0.csv)")
     parser.add_argument("--watchlist", type=str, default=None,
-                        help="Path to watchlist CSV file (optional)")
-    parser.add_argument("--watchlist-mode", type=str, default='sort', choices=['sort', 'filter'],
-                        help="Watchlist mode: 'sort' (default) keeps all symbols but orders by watchlist, "
-                             "'filter' only keeps symbols in watchlist")
+                        help="Path to watchlist CSV file")
+    parser.add_argument("--watchlist-mode", type=str, default='sort',
+                        choices=['sort', 'filter'],
+                        help="'sort' = watchlist first, 'filter' = watchlist only (default: sort)")
+    parser.add_argument("--price-above", type=float, default=None,
+                        help="Min stock price filter (inclusive)")
+    parser.add_argument("--price-below", type=float, default=None,
+                        help="Max stock price filter (inclusive)")
+    parser.add_argument("--filter-field", type=str, default=None,
+                        help="Column name to filter/rank on (e.g. rsi_14, beta, pe_ratio)")
+    parser.add_argument("--filter-above", type=float, default=None,
+                        help="Min value for --filter-field (inclusive)")
+    parser.add_argument("--filter-below", type=float, default=None,
+                        help="Max value for --filter-field (inclusive)")
+    parser.add_argument("--top-k-sharpe", type=int, default=None,
+                        help="Keep top K symbols ranked by Sharpe ratio")
 
     args = parser.parse_args()
 
@@ -277,11 +247,39 @@ Examples:
         print("Error: Must specify --symbols or --use-all-symbols")
         sys.exit(1)
 
-    # Apply watchlist if provided
-    if args.watchlist:
-        watchlist = load_watchlist(args.watchlist)
-        if watchlist:
-            symbols = set(apply_watchlist(symbols, watchlist, args.watchlist_mode))
+    # --- Portfolio ranking pipeline ---
+    has_portfolio_filters = any([
+        args.watchlist, args.price_above is not None, args.price_below is not None,
+        args.filter_field, args.top_k_sharpe is not None,
+    ])
+
+    if has_portfolio_filters:
+        # Load portfolio data (required for price/field/sharpe filters)
+        portfolio_df = None
+        if args.portfolio_data:
+            print(f"Loading portfolio data: {args.portfolio_data}")
+            portfolio_df = portfolio_load_data(args.portfolio_data)
+
+        wl = load_watchlist(args.watchlist) if args.watchlist else None
+
+        if portfolio_df is not None:
+            # Full pipeline: watchlist + price + field + sharpe
+            symbols_list = portfolio_pipeline(
+                portfolio_df,
+                symbols=list(symbols),
+                watchlist=wl,
+                watchlist_mode=args.watchlist_mode,
+                price_above=args.price_above,
+                price_below=args.price_below,
+                filter_field=args.filter_field,
+                filter_above=args.filter_above,
+                filter_below=args.filter_below,
+                top_k_sharpe=args.top_k_sharpe,
+            )
+            symbols = set(symbols_list)
+        elif wl:
+            # Watchlist-only (no data CSV needed)
+            symbols = set(apply_watchlist(list(symbols), wl, args.watchlist_mode))
             print(f"After watchlist ({args.watchlist_mode}): {len(symbols)} symbols")
 
     # Run backtest

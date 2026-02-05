@@ -164,41 +164,94 @@ python -m stockformer.merge_predictions --input-dir stockformer/output --output 
 ```
 # Merge all 9 prediction CSVs into a single file with all prediction columns
 
-## Backtesting
+## Portfolio Filtering & Ranking
 
 24.
+```bash
+python portfolio.py --data all_data_0.csv --top-k-sharpe 20 --summary
+```
+# Rank all symbols by Sharpe ratio, keep top 20, print summary table
+
+25.
+```bash
+python portfolio.py --data all_data_0.csv --price-above 50 --price-below 500 --summary
+```
+# Filter to stocks priced $50-$500, print summary
+
+26.
+```bash
+python portfolio.py --data all_data_0.csv --filter-field beta --filter-below 1.5 --top-k-sharpe 15 --summary
+```
+# Filter to beta < 1.5, then rank by Sharpe, keep top 15
+
+27.
+```bash
+python portfolio.py --data all_data_0.csv --filter-field rsi_14 --filter-above 30 --filter-below 70 --summary
+```
+# Filter to RSI between 30-70 (neutral zone), print summary
+
+28.
+```bash
+python portfolio.py --data all_data_0.csv --watchlist api_data/watchlist.csv --watchlist-mode filter --top-k-sharpe 10 --summary
+```
+# Filter to watchlist symbols only, rank by Sharpe, keep top 10
+
+29.
+```bash
+python portfolio.py --data all_data_0.csv --price-above 25 --filter-field beta --filter-below 1.5 --top-k-sharpe 15 --output portfolio_picks.txt
+```
+# Full pipeline: price > $25, beta < 1.5, top 15 Sharpe, save symbol list to file
+
+## Backtesting
+
+30.
 ```bash
 python backtest.py --strategy_name BollingerBandsStrategy --start_date 2024-01-01 --end_date 2024-12-31 --symbols AAPL NVDA
 ```
 # Backtest the Bollinger Bands strategy on historical data from the DB
 
-25.
+31.
 ```bash
 python strategies/run_regression_momentum.py --use-all-symbols --start-date 2024-07-01 --end-date 2024-12-31
 ```
 # Backtest the regression momentum strategy using stockformer predictions across all symbols
 
-26.
+32.
 ```bash
 python strategies/run_regression_momentum.py --symbols AAPL GOOGL MSFT --start-date 2024-07-01 --end-date 2024-12-31 --start-cash 100000
 ```
 # Backtest regression momentum for specific symbols with $100k starting cash
 
+33.
+```bash
+python strategies/run_regression_momentum.py --use-all-symbols --portfolio-data all_data_0.csv \
+    --price-above 25 --top-k-sharpe 15 --start-date 2024-07-01 --end-date 2024-12-31
+```
+# Backtest with portfolio filtering: price > $25, top 15 by Sharpe, then run strategy on those symbols
+
+34.
+```bash
+python strategies/run_regression_momentum.py --use-all-symbols --portfolio-data all_data_0.csv \
+    --watchlist api_data/watchlist.csv --watchlist-mode filter \
+    --filter-field beta --filter-below 1.5 --start-date 2024-07-01 --end-date 2024-12-31
+```
+# Backtest with watchlist filter + beta < 1.5 universe
+
 ## Live Trading (IBKR)
 
-27.
+35.
 ```bash
 python ibkr/test_gateway.py --balance --portfolio
 ```
 # Test IBKR Gateway connectivity and view account balance and positions
 
-28.
+36.
 ```bash
 python ibkr/run_live_strategy.py --symbols AAPL NVDA MSFT
 ```
 # Start paper trading the regression momentum strategy with IBKR (evaluates every 5 min)
 
-29.
+37.
 ```bash
 python ibkr/run_live_strategy.py --symbols AAPL NVDA MSFT --live --once
 ```
@@ -206,7 +259,7 @@ python ibkr/run_live_strategy.py --symbols AAPL NVDA MSFT --live --once
 
 ## Reinforcement Learning (Experimental)
 
-30.
+38.
 ```bash
 python bargyms/train.py
 ```
@@ -214,13 +267,13 @@ python bargyms/train.py
 
 ## Data Validation
 
-31.
+39.
 ```bash
 python api_data/validate_db.py
 ```
 # Validate data integrity in the MySQL database (check for duplicates, missing values)
 
-32.
+40.
 ```bash
 python api_data/validate.py -c all_data.csv
 ```
@@ -228,7 +281,7 @@ python api_data/validate.py -c all_data.csv
 
 ## Email Notifications
 
-33.
+41.
 ```bash
 export IBKR_SMTP_SERVER=smtp.gmail.com
 export IBKR_SMTP_USER=you@gmail.com
@@ -239,19 +292,19 @@ export IBKR_NOTIFY_EMAIL=recipient1@gmail.com,recipient2@gmail.com
 
 ## Typical Daily Workflow
 
-34.
+42.
 ```bash
 python cron.py
 ```
 # Morning: run nightly pipeline to refresh data and generate overnight PDF
 
-35.
+43.
 ```bash
 python -m api_data.rt_utils AAPL --news --summary --email
 ```
 # During market hours: check real-time quote, news sentiment, and LLM analysis, send to email
 
-36.
+44.
 ```bash
 python ibkr/run_live_strategy.py --symbols AAPL NVDA MSFT --once
 ```
