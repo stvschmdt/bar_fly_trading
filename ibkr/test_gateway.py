@@ -142,7 +142,7 @@ def test_portfolio(connection: IBKRConnection) -> bool:
     return True
 
 
-def test_buy(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool = False) -> bool:
+def test_buy(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool = False, notifier: TradeNotifier = None) -> bool:
     """Test buying shares."""
     from ib_insync import Stock, MarketOrder
 
@@ -154,22 +154,20 @@ def test_buy(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool
     contract = Stock(symbol, "SMART", "USD")
     connection.ib.qualifyContracts(contract)
 
-    # Get current price
-    ticker = connection.ib.reqMktData(contract, snapshot=True)
-    connection.ib.sleep(2)
-    price = ticker.marketPrice() or ticker.last
-    connection.ib.cancelMktData(contract)
-
-    if price:
-        print(f"Current Price: ${price:.2f}")
-        print(f"Estimated Cost: ${price * shares:.2f}")
+    # Find the first 'U' account (individual account)
+    all_accounts = connection.ib.managedAccounts()
+    first_u_account = next((acc for acc in all_accounts if acc.startswith('U')), None)
+    if not first_u_account:
+        print(f"ERROR: No 'U' account found in {all_accounts}")
+        return False
+    print(f"Using Account: {first_u_account}")
 
     if dry_run:
         print("\nDRY RUN: Order not submitted")
         return True
 
     # Place order
-    order = MarketOrder("BUY", shares)
+    order = MarketOrder("BUY", shares, account=first_u_account)
     trade = connection.ib.placeOrder(contract, order)
 
     print(f"\nOrder submitted (ID: {trade.order.orderId})")
@@ -188,6 +186,16 @@ def test_buy(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool
 
     if trade.orderStatus.status == "Filled":
         print(f"\nSUCCESS: Bought {trade.orderStatus.filled} share(s) of {symbol}")
+        # Send trade notification
+        if notifier:
+            notifier.notify_trade(
+                action="BUY",
+                symbol=symbol,
+                shares=trade.orderStatus.filled,
+                price=trade.orderStatus.avgFillPrice,
+                status="FILLED",
+                order_id=trade.order.orderId
+            )
         return True
     else:
         # Cancel unfilled order
@@ -199,7 +207,7 @@ def test_buy(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool
         return False
 
 
-def test_sell(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool = False) -> bool:
+def test_sell(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool = False, notifier: TradeNotifier = None) -> bool:
     """Test selling shares."""
     from ib_insync import Stock, MarketOrder
 
@@ -223,6 +231,14 @@ def test_sell(connection: IBKRConnection, symbol: str, shares: int, dry_run: boo
     print(f"Current Position: {position.position} shares")
     print(f"Position P&L: ${position.unrealizedPNL:.2f}")
 
+    # Find the first 'U' account (individual account)
+    all_accounts = connection.ib.managedAccounts()
+    first_u_account = next((acc for acc in all_accounts if acc.startswith('U')), None)
+    if not first_u_account:
+        print(f"ERROR: No 'U' account found in {all_accounts}")
+        return False
+    print(f"Using Account: {first_u_account}")
+
     if dry_run:
         print("\nDRY RUN: Order not submitted")
         return True
@@ -232,7 +248,7 @@ def test_sell(connection: IBKRConnection, symbol: str, shares: int, dry_run: boo
     connection.ib.qualifyContracts(contract)
 
     # Place order
-    order = MarketOrder("SELL", shares)
+    order = MarketOrder("SELL", shares, account=first_u_account)
     trade = connection.ib.placeOrder(contract, order)
 
     print(f"\nOrder submitted (ID: {trade.order.orderId})")
@@ -251,6 +267,16 @@ def test_sell(connection: IBKRConnection, symbol: str, shares: int, dry_run: boo
 
     if trade.orderStatus.status == "Filled":
         print(f"\nSUCCESS: Sold {trade.orderStatus.filled} share(s) of {symbol}")
+        # Send trade notification
+        if notifier:
+            notifier.notify_trade(
+                action="SELL",
+                symbol=symbol,
+                shares=trade.orderStatus.filled,
+                price=trade.orderStatus.avgFillPrice,
+                status="FILLED",
+                order_id=trade.order.orderId
+            )
         return True
     else:
         # Cancel unfilled order
@@ -370,6 +396,9 @@ def main():
 
     print("SUCCESS: Connected to IB Gateway")
 
+    # Create notifier for trade notifications (always enabled for live trades)
+    notifier = TradeNotifier()
+
     # Track results
     results = {}
 
@@ -382,10 +411,10 @@ def main():
             results["portfolio"] = test_portfolio(connection)
 
         if args.buy:
-            results["buy"] = test_buy(connection, args.symbol, args.shares, args.dry_run)
+            results["buy"] = test_buy(connection, args.symbol, args.shares, args.dry_run, notifier)
 
         if args.sell:
-            results["sell"] = test_sell(connection, args.symbol, args.shares, args.dry_run)
+            results["sell"] = test_sell(connection, args.symbol, args.shares, args.dry_run, notifier)
 
     finally:
         # Always disconnect
