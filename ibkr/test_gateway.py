@@ -42,9 +42,11 @@ sys.path.insert(0, parent_dir)
 try:
     from ibkr.config import IBKRConfig
     from ibkr.connection import IBKRConnection
+    from ibkr.notifier import TradeNotifier
 except ModuleNotFoundError:
     from config import IBKRConfig
     from connection import IBKRConnection
+    from notifier import TradeNotifier
 
 
 def is_market_hours() -> bool:
@@ -260,6 +262,42 @@ def test_sell(connection: IBKRConnection, symbol: str, shares: int, dry_run: boo
         return False
 
 
+def test_notify() -> bool:
+    """Test notification system (email and SMS)."""
+    print_header("NOTIFICATION TEST")
+
+    notifier = TradeNotifier()
+
+    print("Checking notification configuration...")
+    print(f"  Email configured: {notifier.config.email_enabled}")
+    print(f"  SMS configured:   {notifier.config.sms_enabled}")
+    print()
+
+    if not notifier.config.email_enabled and not notifier.config.sms_enabled:
+        print("ERROR: No notifications configured!")
+        print()
+        print("Set these environment variables:")
+        print("  Email: IBKR_SMTP_SERVER, IBKR_SMTP_USER, IBKR_SMTP_PASSWORD, IBKR_NOTIFY_EMAIL")
+        print("  SMS:   IBKR_TWILIO_SID, IBKR_TWILIO_TOKEN, IBKR_TWILIO_FROM, IBKR_NOTIFY_PHONE")
+        return False
+
+    print("Sending test notifications...")
+    results = notifier.test_notifications()
+
+    print()
+    if results.get("email_sent"):
+        print("SUCCESS: Email sent")
+    elif results.get("email_configured"):
+        print("FAILED: Email configured but send failed")
+
+    if results.get("sms_sent"):
+        print("SUCCESS: SMS sent")
+    elif results.get("sms_configured"):
+        print("FAILED: SMS configured but send failed")
+
+    return results.get("email_sent", False) or results.get("sms_sent", False)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Test IB Gateway connectivity and trading operations",
@@ -296,14 +334,21 @@ def main():
                         help="Don't actually execute trades, just simulate")
     parser.add_argument("--account", default=None,
                         help="Specific account ID (default: show all accounts)")
+    parser.add_argument("--test-notify", action="store_true",
+                        help="Test email/SMS notifications (requires env vars)")
 
     args = parser.parse_args()
 
     # If no test specified, show help
-    if not any([args.all, args.balance, args.portfolio, args.buy, args.sell]):
+    if not any([args.all, args.balance, args.portfolio, args.buy, args.sell, args.test_notify]):
         parser.print_help()
         print("\nExample: python test_gateway.py --balance --portfolio")
         sys.exit(1)
+
+    # Handle notification test (doesn't need Gateway connection)
+    if args.test_notify:
+        success = test_notify()
+        sys.exit(0 if success else 1)
 
     # Create configuration
     config = IBKRConfig.remote_gateway(

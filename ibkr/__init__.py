@@ -12,6 +12,7 @@ from .risk_manager import RiskManager
 from .order_manager import OrderManager
 from .position_manager import PositionManager
 from .trade_executor import TradeExecutor
+from .notifier import TradeNotifier, NotificationConfig
 
 __all__ = [
     "TradeSignal",
@@ -26,4 +27,6 @@ __all__ = [
     "OrderManager",
     "PositionManager",
     "TradeExecutor",
+    "TradeNotifier",
+    "NotificationConfig",
 ]

@@ -13,11 +13,13 @@ from .connection import IBKRConnection
 from .config import IBKRConfig, TradingConfig
 from .models import (
     TradeSignal, TradeResult, ValidationResult, OrderResult,
-    OrderAction, OrderType, Position, AccountSummary
+    OrderAction, OrderType, Position, AccountSummary,
+    ValidationStatus, OrderStatus
 )
 from .risk_manager import RiskManager
 from .order_manager import OrderManager
 from .position_manager import PositionManager
+from .notifier import TradeNotifier, NotificationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,9 @@ class TradeExecutor:
     def __init__(
         self,
         ibkr_config: IBKRConfig,
-        trading_config: TradingConfig
+        trading_config: TradingConfig,
+        notification_config: Optional[NotificationConfig] = None,
+        enable_notifications: bool = True
     ):
         """
         Initialize trade executor.
@@ -46,6 +50,8 @@ class TradeExecutor:
         Args:
             ibkr_config: IBKR connection configuration
             trading_config: Trading parameters and limits
+            notification_config: Notification settings (loads from env if None)
+            enable_notifications: Whether to send trade notifications
         """
         self.ibkr_config = ibkr_config
         self.trading_config = trading_config
@@ -55,6 +61,10 @@ class TradeExecutor:
         self.risk_manager = RiskManager(trading_config)
         self.order_manager: Optional[OrderManager] = None
         self.position_manager: Optional[PositionManager] = None
+
+        # Initialize notifier
+        self.enable_notifications = enable_notifications
+        self.notifier = TradeNotifier(notification_config) if enable_notifications else None
 
         # Track execution
         self._trade_history: list[TradeResult] = []
@@ -141,7 +151,7 @@ class TradeExecutor:
             return TradeResult(
                 signal=signal,
                 validation=ValidationResult(
-                    status=ValidationResult.REJECTED,
+                    status=ValidationStatus.REJECTED,
                     signal=signal,
                     messages=["Not connected to IBKR"]
                 ),
@@ -175,7 +185,7 @@ class TradeExecutor:
             order_type=OrderType.MARKET if self.trading_config.use_market_orders else OrderType.LIMIT
         )
 
-        if order_result is None or order_result.status == OrderResult.ERROR:
+        if order_result is None or order_result.status == OrderStatus.ERROR:
             return TradeResult(
                 signal=signal,
                 validation=validation,
@@ -232,6 +242,18 @@ class TradeExecutor:
             f"(slippage: ${slippage:.3f}, time: {execution_time_ms}ms)"
         )
 
+        # Send trade notification
+        if self.notifier:
+            self.notifier.notify_trade(
+                action=signal.action.value,
+                symbol=signal.symbol,
+                shares=order_result.filled_shares or shares_to_trade,
+                price=order_result.avg_fill_price or signal.signal_price,
+                status="FILLED" if result.success else order_result.status.value,
+                order_id=order_result.order_id,
+                error=result.error_message
+            )
+
         return result
 
     def execute_buy(
@@ -265,7 +287,7 @@ class TradeExecutor:
             return TradeResult(
                 signal=signal,
                 validation=ValidationResult(
-                    status=ValidationResult.REJECTED,
+                    status=ValidationStatus.REJECTED,
                     signal=signal,
                     messages=[f"Could not get price for {symbol}"]
                 ),
@@ -293,7 +315,7 @@ class TradeExecutor:
             return TradeResult(
                 signal=signal,
                 validation=ValidationResult(
-                    status=ValidationResult.REJECTED,
+                    status=ValidationStatus.REJECTED,
                     signal=signal,
                     messages=["Insufficient funds for purchase"]
                 ),
@@ -343,7 +365,7 @@ class TradeExecutor:
             return TradeResult(
                 signal=signal,
                 validation=ValidationResult(
-                    status=ValidationResult.REJECTED,
+                    status=ValidationStatus.REJECTED,
                     signal=signal,
                     messages=[f"No position to sell for {symbol}"]
                 ),
