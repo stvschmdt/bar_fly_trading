@@ -21,6 +21,22 @@ mysql -u root -e "CREATE DATABASE bar_fly_trading; ALTER USER 'root'@'localhost'
 ```
 # Option B: Install MySQL natively without Docker
 
+1c.
+```bash
+# On the source server, dump the existing database
+mysqldump -u root -p bar_fly_trading > bar_fly_trading_dump.sql
+
+# Copy the dump file to your local machine
+scp user@source-server:bar_fly_trading_dump.sql .
+
+# Import into Docker MySQL
+docker exec -i mysql mysql -u root -pmy-secret-pw bar_fly_trading < bar_fly_trading_dump.sql
+
+# Or import into native MySQL
+mysql -u root -pmy-secret-pw bar_fly_trading < bar_fly_trading_dump.sql
+```
+# Option C: Copy an existing populated database from another server (one-time migration)
+
 2.
 ```bash
 export MYSQL_PASSWORD=my-secret-pw

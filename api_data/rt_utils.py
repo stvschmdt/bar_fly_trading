@@ -433,7 +433,7 @@ NEWS ARTICLES (weighted sentiment score: {weighted_avg:.3f}):
 {news_ctx}
 
 Provide:
-1. A concise summary paragraph (under 1000 characters) covering the company's current financial position and market sentiment.
+1. A concise summary paragraph (under 3000 characters) covering the company's current financial position and market sentiment.
 2. Exactly 5 bullet points highlighting the most important figures, numbers, or facts.
 
 Format your response as:
@@ -471,7 +471,7 @@ BULLETS:
     else:
         summary = content.strip()
 
-    return {'summary': summary[:1000], 'bullets': bullets[:5]}
+    return {'summary': summary[:3000], 'bullets': bullets[:5]}
 
 
 def _build_earnings_context(symbol: str, earnings_data: dict) -> str:
@@ -525,7 +525,7 @@ EARNINGS & FUNDAMENTALS:
 {earnings_ctx}
 
 Provide:
-1. A concise summary paragraph (under 1000 characters) covering the company's financial position, valuation, earnings trajectory, and analyst consensus.
+1. A concise summary paragraph (under 3000 characters) covering the company's financial position, valuation, earnings trajectory, and analyst consensus.
 2. Exactly 5 bullet points highlighting the most important figures, numbers, or facts from the data above.
 
 Format your response as:
@@ -563,7 +563,7 @@ BULLETS:
     else:
         summary = content.strip()
 
-    return {'summary': summary[:1000], 'bullets': bullets[:5]}
+    return {'summary': summary[:3000], 'bullets': bullets[:5]}
 
 
 def print_earnings_summary(symbol: str, earnings_data: dict = None):
@@ -571,10 +571,8 @@ def print_earnings_summary(symbol: str, earnings_data: dict = None):
     if earnings_data is None:
         earnings_data = get_earnings_overview(symbol)
 
-    print_earnings_overview(symbol, earnings_data)
-
     print(f"\n{'=' * 70}")
-    print(f"  EARNINGS SUMMARY: {symbol}  (local LLM)")
+    print(f"  BFT AI EARNINGS REPORT SUMMARY: {symbol}")
     print(f"{'=' * 70}")
     print("  Generating earnings summary...")
 
@@ -605,11 +603,14 @@ def print_news_sentiment(symbol: str):
     print(f"  Articles analyzed: {len(articles)}")
     print(f"{'=' * 70}")
 
-    for i, a in enumerate(articles, 1):
+    display_limit = min(10, len(articles))
+    for i, a in enumerate(articles[:10], 1):
         sentiment_label = 'Bullish' if a['sentiment_score'] > 0.15 else ('Bearish' if a['sentiment_score'] < -0.15 else 'Neutral')
         print(f"\n  {i}. {a['title'][:80]}")
         print(f"     Source: {a['source']}  |  {a['time_published'][:8] if a['time_published'] else ''}")
         print(f"     Sentiment: {a['sentiment_score']:+.3f} ({sentiment_label})  |  Relevance: {a['relevance_score']:.3f}")
+    if len(articles) > 10:
+        print(f"\n  ... {len(articles) - 10} more articles used for LLM analysis")
 
     print(f"\n{'=' * 70}\n")
     return weighted_avg, articles
@@ -658,10 +659,11 @@ def print_earnings_overview(symbol: str, earnings_data: dict):
     print(f"{'=' * 70}\n")
 
 
-def print_summary(symbol: str, news_data: list[dict], earnings_data: dict):
+def print_summary(symbol: str, news_data: list[dict], earnings_data: dict, title: str = None):
     """Print LLM-generated summary."""
+    label = title or "BFT AI SUMMARY"
     print(f"\n{'=' * 70}")
-    print(f"  LLM SUMMARY: {symbol}  (local LLM)")
+    print(f"  {label}: {symbol}")
     print(f"{'=' * 70}")
     print("  Generating summary...")
 
@@ -739,7 +741,7 @@ def _print_snapshot_from_data(quote: dict, options: pd.DataFrame, months_out: in
 def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
                      news_data: list[dict] = None, weighted_avg: float = None,
                      earnings_data: dict = None, llm_result: dict = None,
-                     earnings_summary: dict = None) -> str:
+                     earnings_summary: dict = None, llm_title: str = None) -> str:
     """
     Build an HTML email body with quote, options, news, earnings, and LLM summary sections.
 
@@ -899,10 +901,11 @@ def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
             </tr>"""
         html += "</table>"
 
-    # LLM Summary
+    # BFT AI Summary (combined news + earnings LLM)
     if llm_result and llm_result.get('summary'):
+        summary_heading = llm_title or "BFT AI Summary"
         html += f"""
-        <h3 style="border-bottom: 1px solid #ccc; padding-bottom: 4px;">LLM Summary (local)</h3>
+        <h3 style="border-bottom: 1px solid #ccc; padding-bottom: 4px;">{summary_heading}</h3>
         <p style="line-height: 1.5;">{llm_result['summary']}</p>
         """
         if llm_result.get('bullets'):
@@ -911,10 +914,10 @@ def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
                 html += f"<li>{b}</li>"
             html += "</ul>"
 
-    # Earnings-only LLM Summary
+    # Earnings Report Summary (earnings-only LLM)
     if earnings_summary and earnings_summary.get('summary'):
         html += f"""
-        <h3 style="border-bottom: 1px solid #ccc; padding-bottom: 4px;">Earnings Summary (local)</h3>
+        <h3 style="border-bottom: 1px solid #ccc; padding-bottom: 4px;">BFT AI Earnings Report Summary</h3>
         <p style="line-height: 1.5;">{earnings_summary['summary']}</p>
         """
         if earnings_summary.get('bullets'):
@@ -1023,26 +1026,40 @@ if __name__ == '__main__':
     llm_result = None
     earnings_summary_result = None
 
-    # Earnings-only summary (no news needed)
-    if args.earnings_summary and not args.summary:
+    # 2) Earnings & Overview (raw data, before news)
+    needs_earnings = (args.summary and not args.no_earnings) or args.earnings_summary
+    if needs_earnings:
         earnings_data = get_earnings_overview(args.symbol)
-        earnings_summary_result = print_earnings_summary(args.symbol, earnings_data)
+        print_earnings_overview(args.symbol, earnings_data)
+    elif args.summary and args.no_earnings:
+        earnings_data = {'symbol': args.symbol}
 
+    # 3) News Sentiment
     if args.news:
         weighted_avg, news_data = print_news_sentiment(args.symbol)
 
-        if args.summary:
-            if args.no_earnings:
-                earnings_data = {'symbol': args.symbol}
-            else:
-                earnings_data = get_earnings_overview(args.symbol)
-                print_earnings_overview(args.symbol, earnings_data)
-            llm_result = print_summary(args.symbol, news_data, earnings_data)
+    # 4) BFT AI Summary (combined news + earnings LLM)
+    if args.summary:
+        if args.summary and args.earnings_summary:
+            title = "BFT AI SUMMARY AND EARNINGS REPORT"
+        else:
+            title = "BFT AI SUMMARY"
+        llm_result = print_summary(args.symbol, news_data, earnings_data, title=title)
+
+    # 5) BFT AI Earnings Report Summary (earnings-only LLM)
+    if args.earnings_summary and not args.summary:
+        earnings_summary_result = print_earnings_summary(args.symbol, earnings_data)
 
     # Send email if requested
     if args.email:
         change_sign = '+' if quote['change'] >= 0 else ''
         subject = f"{args.symbol} ${quote['price']:.2f} {change_sign}{quote['change']:.2f} ({change_sign}{quote['change_pct']}%) - RT Report"
+        if args.summary and args.earnings_summary:
+            email_llm_title = "BFT AI Summary and Earnings Report"
+        elif args.summary:
+            email_llm_title = "BFT AI Summary"
+        else:
+            email_llm_title = None
         html = build_email_html(
             symbol=args.symbol,
             quote=quote,
@@ -1052,5 +1069,6 @@ if __name__ == '__main__':
             earnings_data=earnings_data,
             llm_result=llm_result,
             earnings_summary=earnings_summary_result,
+            llm_title=email_llm_title,
         )
         send_email_report(subject, html)
