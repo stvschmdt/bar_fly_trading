@@ -197,6 +197,7 @@ class BollingerBacktestStrategy(BaseStrategy):
         orders = []
         date_str = date.strftime('%Y-%m-%d') if hasattr(date, 'strftime') else str(date)[:10]
         current_date = pd.to_datetime(date)
+        cash_committed = 0.0  # Track cash allocated to orders this day
 
         for symbol in self.symbols:
             # Get current price from backtest engine
@@ -242,11 +243,13 @@ class BollingerBacktestStrategy(BaseStrategy):
             else:
                 # Check entry conditions (buy crossover)
                 if self._check_buy_crossover(symbol, indicators):
-                    shares = self.account.get_max_buyable_shares(
-                        current_price, self.position_size)
-                    if shares > 0:
+                    available_cash = self.account.account_values.cash_balance - cash_committed
+                    shares = int(available_cash * self.position_size // current_price)
+                    order_cost = shares * current_price
+                    if shares > 0 and order_cost <= available_cash:
                         orders.append(StockOrder(symbol, OrderOperation.BUY, shares,
                                                 current_price, date_str))
+                        cash_committed += order_cost
 
                         self.positions[symbol] = {
                             'shares': shares,
