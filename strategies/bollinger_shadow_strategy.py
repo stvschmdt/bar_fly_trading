@@ -151,6 +151,10 @@ class BollingerShadowStrategy:
         self.portfolio: dict[str, int] = {}  # symbol -> shares
         self.account_id: Optional[str] = None
 
+        # Filter/rank metadata for summary display
+        self.filters_applied: list[str] = []
+        self.ranks_applied: list[str] = []
+
     def load_data(self) -> bool:
         """Load data from CSV file(s)."""
         try:
@@ -586,8 +590,14 @@ class BollingerShadowStrategy:
             f"Scan Time:     {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             f"{data_dates}",
             f"Total Signals: {len(self.signals)}",
-            "",
         ]
+
+        if self.filters_applied:
+            lines.append(f"Filters:       {', '.join(self.filters_applied)}")
+        if self.ranks_applied:
+            lines.append(f"Rank:          {', '.join(self.ranks_applied)}")
+
+        lines.append("")
 
         buy_signals = [s for s in self.signals if s.signal_type == "BUY"]
         sell_signals = [s for s in self.signals if s.signal_type == "SELL"]
@@ -973,6 +983,26 @@ def main():
         watchlist=watchlist,
         watchlist_mode=args.watchlist_mode
     )
+
+    # Build filter/rank metadata for summary display
+    if watchlist:
+        mode_label = "filter" if args.watchlist_mode == "filter" else "sort"
+        strategy.filters_applied.append(f"watchlist ({len(watchlist)} symbols, {mode_label})")
+    if args.signal_type and args.signal_type != "all":
+        strategy.filters_applied.append(f"{args.signal_type} signals only")
+    if args.price_above is not None or args.price_below is not None:
+        parts = []
+        if args.price_above is not None:
+            parts.append(f">= ${args.price_above:.0f}")
+        if args.price_below is not None:
+            parts.append(f"<= ${args.price_below:.0f}")
+        strategy.filters_applied.append(f"price {', '.join(parts)}")
+    if args.filter_field:
+        strategy.filters_applied.append(f"{args.filter_field} range")
+    if args.top_k_sharpe is not None:
+        strategy.ranks_applied.append(f"sharpe ratio (top {args.top_k_sharpe})")
+    if not strategy.ranks_applied:
+        strategy.ranks_applied.append("symbol order")
 
     # Run strategy - generates signals (watchlist applied internally)
     signals = strategy.run(

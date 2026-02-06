@@ -88,7 +88,7 @@ def get_available_symbols(predictions_path):
 
 def run_backtest(symbols, start_date, end_date, start_cash, predictions_path,
                  db='local', position_size=0.1, output_trades=None, output_symbols=None,
-                 output_signals=None):
+                 output_signals=None, filters_applied=None, ranks_applied=None):
     """
     Run the Regression Momentum backtest.
 
@@ -112,7 +112,7 @@ def run_backtest(symbols, start_date, end_date, start_cash, predictions_path,
     # Create account
     account = BacktestAccount(
         account_id="regression_momentum_backtest",
-        account_name="Regression Momentum Backtest",
+        owner_name="Regression Momentum Backtest",
         account_values=AccountValues(start_cash, 0, 0),
         start_date=pd.to_datetime(start_date)
     )
@@ -140,8 +140,13 @@ Backtest Setup:
   Symbols: {len(symbols)} stocks
   Date Range: {start_date} to {end_date}
   Starting Cash: ${start_cash:,.2f}
-  Predictions: {predictions_path}
-""")
+  Predictions: {predictions_path}""")
+
+    if filters_applied:
+        print(f"  Filters:       {', '.join(filters_applied)}")
+    if ranks_applied:
+        print(f"  Rank:          {', '.join(ranks_applied)}")
+    print()
     print("=" * 70 + "\n")
 
     # Run backtest
@@ -305,6 +310,27 @@ Examples:
             symbols = set(apply_watchlist(list(symbols), wl, args.watchlist_mode))
             print(f"After watchlist ({args.watchlist_mode}): {len(symbols)} symbols")
 
+    # Build filter/rank metadata for summary display
+    filters_applied = []
+    ranks_applied = []
+    if args.watchlist:
+        wl_count = len(load_watchlist(args.watchlist)) if args.watchlist else 0
+        mode_label = "filter" if args.watchlist_mode == "filter" else "sort"
+        filters_applied.append(f"watchlist ({wl_count} symbols, {mode_label})")
+    if args.price_above is not None or args.price_below is not None:
+        parts = []
+        if args.price_above is not None:
+            parts.append(f">= ${args.price_above:.0f}")
+        if args.price_below is not None:
+            parts.append(f"<= ${args.price_below:.0f}")
+        filters_applied.append(f"price {', '.join(parts)}")
+    if args.filter_field:
+        filters_applied.append(f"{args.filter_field} range")
+    if args.top_k_sharpe is not None:
+        ranks_applied.append(f"sharpe ratio (top {args.top_k_sharpe})")
+    if not ranks_applied:
+        ranks_applied.append("symbol order")
+
     # Write symbol list before backtest (portfolio-filtered set)
     if args.output_symbols:
         write_symbols(symbols, args.output_symbols)
@@ -320,4 +346,6 @@ Examples:
         position_size=args.position_size,
         output_trades=args.output_trades,
         output_signals=args.output_signals,
+        filters_applied=filters_applied,
+        ranks_applied=ranks_applied,
     )
