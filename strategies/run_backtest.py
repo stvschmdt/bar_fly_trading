@@ -230,6 +230,8 @@ Examples:
                        help="Max value for --filter-field (inclusive)")
     parser.add_argument("--top-k-sharpe", type=int, default=None,
                        help="Keep top K symbols ranked by Sharpe ratio")
+    parser.add_argument("--sort-sharpe", action="store_true",
+                       help="Sort symbols by Sharpe ratio (no cutoff, ordering only)")
 
     # --- Output files ---
     parser.add_argument("--output-trades", type=str, default=None,
@@ -264,7 +266,7 @@ Examples:
     # --- Portfolio ranking pipeline ---
     has_portfolio_filters = any([
         args.watchlist, args.price_above is not None, args.price_below is not None,
-        args.filter_field, args.top_k_sharpe is not None,
+        args.filter_field, args.top_k_sharpe is not None, args.sort_sharpe,
     ])
 
     if has_portfolio_filters:
@@ -287,6 +289,7 @@ Examples:
                 filter_above=args.filter_above,
                 filter_below=args.filter_below,
                 top_k_sharpe=args.top_k_sharpe,
+                sort_sharpe=args.sort_sharpe,
             )
             symbols = set(symbols_list)
         elif wl:
@@ -311,6 +314,8 @@ Examples:
         filters_applied.append(f"{args.filter_field} range")
     if args.top_k_sharpe is not None:
         ranks_applied.append(f"sharpe ratio (top {args.top_k_sharpe})")
+    elif args.sort_sharpe:
+        ranks_applied.append("sharpe ratio (sorted)")
     if not ranks_applied:
         ranks_applied.append("symbol order")
 

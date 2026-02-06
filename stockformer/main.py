@@ -737,6 +737,34 @@ if __name__ == "__main__":
     # Single config: train + infer
     elif args.horizon is not None and args.label_mode is not None:
         print(f"Running single config: horizon={args.horizon}, label_mode={args.label_mode}")
+
+        # Auto-suffix output paths so parallel single-config runs don't collide
+        label_tags = {m: t for m, t in ALL_LABEL_MODES}
+        horizon_tags = {h: t for h, t in HORIZONS}
+        ltag = label_tags.get(args.label_mode, args.label_mode[:3])
+        htag = horizon_tags.get(args.horizon, f"{args.horizon}d")
+        suffix = f"{ltag}_{htag}"
+
+        paths = _build_suffixed_paths(cfg)
+        model_base, model_ext = paths["model"]
+        log_base, log_ext = paths["log"]
+        pred_base, pred_ext = paths["pred"]
+
+        cfg["model_out"] = (
+            f"{model_base}_{suffix}{model_ext}"
+            if model_base is not None else f"model_{suffix}.pt"
+        )
+        cfg["log_path"] = (
+            f"{log_base}_{suffix}{log_ext}" if log_base is not None else None
+        )
+        cfg["output_csv"] = (
+            f"{pred_base}_{suffix}{pred_ext}"
+            if pred_base is not None else f"predictions_{suffix}.csv"
+        )
+
+        print(f"  Model: {cfg['model_out']}")
+        print(f"  Output: {cfg['output_csv']}")
+
         train(cfg)
         infer(cfg)
 

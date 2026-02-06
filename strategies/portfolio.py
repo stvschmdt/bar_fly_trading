@@ -294,32 +294,40 @@ def compute_sharpe(df: pd.DataFrame, symbols: list[str] = None,
 
 
 def rank_by_sharpe(df: pd.DataFrame, symbols: list[str] = None,
-                   top_k: int = 20, risk_free_rate: float = 0.0) -> list[str]:
+                   top_k: int = None, risk_free_rate: float = 0.0) -> list[str]:
     """
-    Rank symbols by Sharpe ratio, return top_k.
+    Rank symbols by Sharpe ratio.
 
     Args:
         df: DataFrame with price/return data
         symbols: List of symbols to consider (None = all in df)
-        top_k: Number of top symbols to keep (default 20)
+        top_k: Number of top symbols to keep (None = keep all, sorted)
         risk_free_rate: Annualised risk-free rate
 
     Returns:
-        List of top_k symbols ranked by Sharpe ratio (highest first)
+        List of symbols ranked by Sharpe ratio (highest first)
     """
     if symbols is None:
         symbols = df['symbol'].unique().tolist()
 
     sharpe_df = compute_sharpe(df, symbols, risk_free_rate)
-    result = sharpe_df.head(top_k)['symbol'].tolist()
 
-    print(f"\nTop {top_k} by Sharpe ratio:")
+    if top_k is not None:
+        display_df = sharpe_df.head(top_k)
+        label = f"Top {top_k}"
+    else:
+        display_df = sharpe_df
+        label = "All (sorted)"
+
+    result = display_df['symbol'].tolist()
+
+    print(f"\n{label} by Sharpe ratio:")
     print(f"  {'Symbol':<8} {'Sharpe':>8} {'Ann Ret':>10} {'Ann Vol':>10} {'Days':>6}")
     print(f"  {'-'*8} {'-'*8} {'-'*10} {'-'*10} {'-'*6}")
-    for _, row in sharpe_df.head(top_k).iterrows():
+    for _, row in display_df.iterrows():
         print(f"  {row['symbol']:<8} {row['sharpe']:>8.4f} {row['mean_return']:>9.4f} {row['std_return']:>10.4f} {row['n_days']:>6}")
 
-    print(f"\nSharpe rank: {len(symbols)} -> {len(result)} symbols (top {top_k})")
+    print(f"\nSharpe rank: {len(symbols)} -> {len(result)} symbols ({label.lower()})")
     return result
 
 
@@ -340,6 +348,7 @@ def run_pipeline(df: pd.DataFrame,
                  filter_ascending: bool = False,
                  filter_top_k: int = None,
                  top_k_sharpe: int = None,
+                 sort_sharpe: bool = False,
                  risk_free_rate: float = 0.0) -> list[str]:
     """
     Run the full filter/rank pipeline. Order:
@@ -386,6 +395,8 @@ def run_pipeline(df: pd.DataFrame,
     # 4. Sharpe rank
     if top_k_sharpe is not None:
         symbols = rank_by_sharpe(df, symbols, top_k=top_k_sharpe, risk_free_rate=risk_free_rate)
+    elif sort_sharpe:
+        symbols = rank_by_sharpe(df, symbols, top_k=None, risk_free_rate=risk_free_rate)
 
     print("=" * 60)
     print(f"Final universe: {len(symbols)} symbols\n")

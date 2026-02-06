@@ -954,6 +954,10 @@ def main():
         "--top-k-sharpe", type=int, default=None,
         help="Post-filter: keep top K signals ranked by Sharpe ratio"
     )
+    parser.add_argument(
+        "--sort-sharpe", action="store_true",
+        help="Sort signals by Sharpe ratio (no cutoff, ordering only)"
+    )
 
     args = parser.parse_args()
 
@@ -1001,6 +1005,8 @@ def main():
         strategy.filters_applied.append(f"{args.filter_field} range")
     if args.top_k_sharpe is not None:
         strategy.ranks_applied.append(f"sharpe ratio (top {args.top_k_sharpe})")
+    elif args.sort_sharpe:
+        strategy.ranks_applied.append("sharpe ratio (sorted)")
     if not strategy.ranks_applied:
         strategy.ranks_applied.append("symbol order")
 
@@ -1021,7 +1027,7 @@ def main():
 
     has_portfolio_filters = any([
         args.price_above is not None, args.price_below is not None,
-        args.filter_field, args.top_k_sharpe is not None,
+        args.filter_field, args.top_k_sharpe is not None, args.sort_sharpe,
     ])
 
     if signals and has_portfolio_filters:
@@ -1042,6 +1048,7 @@ def main():
                 filter_above=args.filter_above,
                 filter_below=args.filter_below,
                 top_k_sharpe=args.top_k_sharpe,
+                sort_sharpe=args.sort_sharpe,
             )
 
             # Filter signals to only those that survived the pipeline
