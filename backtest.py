@@ -15,30 +15,45 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'str
 from account.account import Account
 from account.account_values import AccountValues
 from account.backtest_account import BacktestAccount
-from api_data.core_stock import CORE_STOCK_TABLE_NAME
-from api_data.historical_options import HISTORICAL_OPTIONS_TABLE_NAME
-from api_data.storage import select_all_by_symbol, connect_database
 from order import OptionOrder, OrderOperation
 from base_strategy import BaseStrategy
 
 
-def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_date: str) -> AccountValues:
+def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_date: str,
+             data: pd.DataFrame = None) -> AccountValues:
     # Iterate through every day between start_date and end_date, and call the strategy's evaluate method
     # on each day. The strategy will return positions traded on that day.
-    core_stock_df = select_all_by_symbol(CORE_STOCK_TABLE_NAME, symbols, start_date=start_date, end_date=end_date)
-    historical_options_df = select_all_by_symbol(HISTORICAL_OPTIONS_TABLE_NAME, symbols, start_date=start_date, end_date=end_date)
+    if data is not None:
+        # CSV-based: use provided DataFrame instead of database
+        core_stock_df = data[data['symbol'].isin(symbols)].copy()
+        core_stock_df['date'] = pd.to_datetime(core_stock_df['date'])
+        core_stock_df = core_stock_df[
+            (core_stock_df['date'] >= pd.to_datetime(start_date)) &
+            (core_stock_df['date'] <= pd.to_datetime(end_date))
+        ]
+        # Ensure 'open' column exists (some CSVs only have adjusted_close)
+        if 'open' not in core_stock_df.columns and 'adjusted_close' in core_stock_df.columns:
+            core_stock_df['open'] = core_stock_df['adjusted_close']
+        historical_options_df = pd.DataFrame()
+    else:
+        # Legacy SQL path — only import DB modules when actually needed
+        from api_data.core_stock import CORE_STOCK_TABLE_NAME
+        from api_data.historical_options import HISTORICAL_OPTIONS_TABLE_NAME
+        from api_data.storage import select_all_by_symbol
+        core_stock_df = select_all_by_symbol(CORE_STOCK_TABLE_NAME, symbols, start_date=start_date, end_date=end_date)
+        historical_options_df = select_all_by_symbol(HISTORICAL_OPTIONS_TABLE_NAME, symbols, start_date=start_date, end_date=end_date)
 
     daily_positions = []  # List of tuples (date, position)
     for date in pd.date_range(start_date, end_date):
         # Get the 'symbol' and 'open' columns for every row where the 'date' column matches the current date
         current_prices = core_stock_df.loc[core_stock_df['date'] == date, ['symbol', 'open', 'adjusted_close', 'high', 'low']]
-        current_options = historical_options_df[historical_options_df['date'] == date]
+        current_options = historical_options_df[historical_options_df['date'] == date] if not historical_options_df.empty else pd.DataFrame()
 
         # Skip weekends/holidays
         if current_prices.shape[0] == 0:
             continue
-        # We don't have options data on some holidays where there is core_stock data, so skip those days
-        if current_options.shape[0] == 0:
+        # Skip days with no options data (only when options data is available)
+        if not historical_options_df.empty and current_options.shape[0] == 0:
             continue
 
         # Convert current_prices df to dict
@@ -110,6 +125,8 @@ if __name__ == "__main__":
 
     account = get_account(args.account_id, args.start_cash_balance, args.start_date)
     strategy = get_strategy(args.strategy_name, account, set(args.symbols))
+    # Legacy direct-run CLI uses SQL — all strategy runners use CSV via data= param instead
+    from api_data.storage import connect_database
     connect_database(args.db)
 
     account_values = backtest(strategy, set(args.symbols), args.start_date, args.end_date)

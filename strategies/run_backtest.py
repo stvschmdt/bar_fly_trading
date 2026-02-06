@@ -7,6 +7,7 @@ Usage:
     python run_backtest.py \
         --predictions ../mlr/stockformer/output/predictions/pred_bin_3d.csv \
         --symbols AAPL GOOGL MSFT \
+        --data-path 'all_data_*.csv' \
         --start-date 2024-07-01 \
         --end-date 2024-12-31 \
         --start-cash 100000
@@ -15,6 +16,7 @@ Usage:
     python run_backtest.py \
         --predictions merged_predictions.csv \
         --use-all-symbols \
+        --data-path 'all_data_*.csv' \
         --start-date 2024-07-01 \
         --end-date 2024-12-31
 
@@ -22,7 +24,7 @@ Usage:
     python run_backtest.py \
         --predictions merged_predictions.csv \
         --use-all-symbols \
-        --portfolio-data all_data_0.csv \
+        --data-path 'all_data_*.csv' \
         --price-above 25 --top-k-sharpe 15 \
         --start-date 2024-07-01 \
         --end-date 2024-12-31
@@ -42,7 +44,6 @@ sys.path.insert(0, parent_dir)
 
 from account.account_values import AccountValues
 from account.backtest_account import BacktestAccount
-from api_data.storage import connect_database
 from backtest import backtest
 from backtest_stats import compute_stats, print_stats, write_trade_log, write_symbols, read_symbols
 from signal_writer import SignalWriter
@@ -65,7 +66,8 @@ def get_available_symbols(predictions_path):
 
 
 def run_ml_backtest(predictions_path, symbols, start_date, end_date, start_cash,
-                    db='local', position_size=0.1, output_trades=None, output_signals=None):
+                    data_path=None, position_size=0.1, output_trades=None,
+                    output_signals=None, filters_applied=None, ranks_applied=None):
     """
     Run backtest using ML predictions.
 
@@ -75,20 +77,26 @@ def run_ml_backtest(predictions_path, symbols, start_date, end_date, start_cash,
         start_date: Start date (YYYY-MM-DD)
         end_date: End date (YYYY-MM-DD)
         start_cash: Initial cash balance
-        db: Database to use ('local' or 'remote')
+        data_path: Path to price data CSV(s) (supports globs)
         position_size: Fraction of portfolio per position
         output_trades: Path to write trade log CSV (optional)
+        output_signals: Path to write signal CSV (optional)
+        filters_applied: List of filter descriptions for display
+        ranks_applied: List of rank descriptions for display
 
     Returns:
         Final AccountValues
     """
-    # Connect to database
-    connect_database(db)
+    # Load price data from CSV (no database needed)
+    data = None
+    if data_path:
+        data = portfolio_load_data(data_path)
+        print(f"  Loaded {len(data):,} rows from {data_path}")
 
     # Create account
     account = BacktestAccount(
         account_id="ml_backtest",
-        account_name="ML Prediction Backtest",
+        owner_name="ML Prediction Backtest",
         account_values=AccountValues(start_cash, 0, 0),
         start_date=pd.to_datetime(start_date)
     )
@@ -115,14 +123,19 @@ Backtest Setup:
   Symbols: {len(symbols)} stocks
   Date Range: {start_date} to {end_date}
   Starting Cash: ${start_cash:,.2f}
-  Predictions: {predictions_path}
-""")
+  Predictions: {predictions_path}""")
+
+    if filters_applied:
+        print(f"  Filters:       {', '.join(filters_applied)}")
+    if ranks_applied:
+        print(f"  Rank:          {', '.join(ranks_applied)}")
+    print()
     print(f"{'='*70}\n")
 
-    account_values = backtest(strategy, symbols, start_date, end_date)
+    account_values = backtest(strategy, symbols, start_date, end_date, data=data)
 
     # Compute and print stats
-    final_value = account_values.cash + account_values.stock_value + account_values.options_value
+    final_value = account_values.get_total_value()
     stats = compute_stats(strategy.trade_log, start_cash)
     print_stats(stats, start_cash, final_value)
 
@@ -163,14 +176,16 @@ if __name__ == "__main__":
         epilog="""
 Examples:
   # Backtest specific symbols
-  python run_backtest.py --predictions pred_bin_3d.csv --symbols AAPL NVDA --start-date 2024-07-01 --end-date 2024-12-31
+  python run_backtest.py --predictions pred_bin_3d.csv --symbols AAPL NVDA \\
+      --data-path 'all_data_*.csv' --start-date 2024-07-01 --end-date 2024-12-31
 
   # Backtest all symbols from predictions
-  python run_backtest.py --predictions merged_predictions.csv --use-all-symbols --start-date 2024-07-01 --end-date 2024-12-31
+  python run_backtest.py --predictions merged_predictions.csv --use-all-symbols \\
+      --data-path 'all_data_*.csv' --start-date 2024-07-01 --end-date 2024-12-31
 
   # Portfolio filter: price > $25, top 15 by Sharpe
   python run_backtest.py --predictions merged_predictions.csv --use-all-symbols \\
-      --portfolio-data all_data_0.csv --price-above 25 --top-k-sharpe 15 \\
+      --data-path 'all_data_*.csv' --price-above 25 --top-k-sharpe 15 \\
       --start-date 2024-07-01 --end-date 2024-12-31
         """
     )
@@ -192,13 +207,12 @@ Examples:
                        help="Initial cash balance (default: 100000)")
     parser.add_argument("--position-size", type=float, default=0.1,
                        help="Position size as fraction of portfolio (default: 0.1 = 10%%)")
-    parser.add_argument("--db", type=str, default='local',
-                       choices=['local', 'remote'],
-                       help="Database to use (default: local)")
+    parser.add_argument("--data-path", type=str, default=None,
+                       help="Path to price data CSV(s) for backtest (supports globs, e.g. 'all_data_*.csv')")
 
     # --- Portfolio ranker args ---
     parser.add_argument("--portfolio-data", type=str, default=None,
-                       help="Path to data CSV for portfolio ranking (e.g. all_data_0.csv)")
+                       help="Path to data CSV for portfolio ranking (default: same as --data-path)")
     parser.add_argument("--watchlist", type=str, default=None,
                        help="Path to watchlist CSV file")
     parser.add_argument("--watchlist-mode", type=str, default='sort',
@@ -243,6 +257,10 @@ Examples:
         print("Error: Must specify --symbols, --symbols-file, or --use-all-symbols")
         sys.exit(1)
 
+    # Default portfolio-data to data-path
+    if not args.portfolio_data and args.data_path:
+        args.portfolio_data = args.data_path
+
     # --- Portfolio ranking pipeline ---
     has_portfolio_filters = any([
         args.watchlist, args.price_above is not None, args.price_below is not None,
@@ -275,6 +293,27 @@ Examples:
             symbols = set(apply_watchlist(list(symbols), wl, args.watchlist_mode))
             print(f"After watchlist ({args.watchlist_mode}): {len(symbols)} symbols")
 
+    # Build filter/rank metadata for summary display
+    filters_applied = []
+    ranks_applied = []
+    if args.watchlist:
+        wl_count = len(load_watchlist(args.watchlist)) if args.watchlist else 0
+        mode_label = "filter" if args.watchlist_mode == "filter" else "sort"
+        filters_applied.append(f"watchlist ({wl_count} symbols, {mode_label})")
+    if args.price_above is not None or args.price_below is not None:
+        parts = []
+        if args.price_above is not None:
+            parts.append(f">= ${args.price_above:.0f}")
+        if args.price_below is not None:
+            parts.append(f"<= ${args.price_below:.0f}")
+        filters_applied.append(f"price {', '.join(parts)}")
+    if args.filter_field:
+        filters_applied.append(f"{args.filter_field} range")
+    if args.top_k_sharpe is not None:
+        ranks_applied.append(f"sharpe ratio (top {args.top_k_sharpe})")
+    if not ranks_applied:
+        ranks_applied.append("symbol order")
+
     # Write symbol list before backtest (portfolio-filtered set)
     if args.output_symbols:
         write_symbols(symbols, args.output_symbols)
@@ -286,8 +325,10 @@ Examples:
         start_date=args.start_date,
         end_date=args.end_date,
         start_cash=args.start_cash,
-        db=args.db,
+        data_path=args.data_path,
         position_size=args.position_size,
         output_trades=args.output_trades,
         output_signals=args.output_signals,
+        filters_applied=filters_applied,
+        ranks_applied=ranks_applied,
     )
