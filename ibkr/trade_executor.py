@@ -260,7 +260,8 @@ class TradeExecutor:
         self,
         symbol: str,
         shares: Optional[int] = None,
-        reason: str = ""
+        reason: str = "",
+        fallback_price: float = 0.0
     ) -> TradeResult:
         """
         Execute a buy order.
@@ -269,12 +270,16 @@ class TradeExecutor:
             symbol: Stock ticker
             shares: Number of shares (auto-sized if None)
             reason: Reason for trade
+            fallback_price: Price to use if IBKR market data unavailable (e.g. from AV quote)
 
         Returns:
             TradeResult
         """
-        # Get current price
+        # Get current price (fall back to signal price if IBKR data unavailable)
         price = self.connection.get_current_price(symbol)
+        if price is None and fallback_price > 0:
+            logger.info(f"Using fallback price for {symbol}: ${fallback_price:.2f}")
+            price = fallback_price
         if price is None:
             signal = TradeSignal(
                 symbol=symbol,
@@ -338,7 +343,8 @@ class TradeExecutor:
         self,
         symbol: str,
         shares: Optional[int] = None,
-        reason: str = ""
+        reason: str = "",
+        fallback_price: float = 0.0
     ) -> TradeResult:
         """
         Execute a sell order.
@@ -347,6 +353,7 @@ class TradeExecutor:
             symbol: Stock ticker
             shares: Number of shares (sells all if None)
             reason: Reason for trade
+            fallback_price: Price to use if IBKR market data unavailable (e.g. from AV quote)
 
         Returns:
             TradeResult
@@ -358,7 +365,7 @@ class TradeExecutor:
                 symbol=symbol,
                 action=OrderAction.SELL,
                 shares=1,
-                signal_price=0.0,
+                signal_price=max(fallback_price, 0.01),
                 signal_time=datetime.now(),
                 reason=reason
             )
@@ -373,8 +380,11 @@ class TradeExecutor:
                 error_message=f"No position to sell for {symbol}"
             )
 
-        # Get current price
+        # Get current price (fall back to signal price if IBKR data unavailable)
         price = self.connection.get_current_price(symbol)
+        if price is None and fallback_price > 0:
+            logger.info(f"Using fallback price for {symbol}: ${fallback_price:.2f}")
+            price = fallback_price
         if price is None:
             price = position.market_value / position.shares if position.shares else 0
 

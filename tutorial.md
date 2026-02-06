@@ -529,7 +529,43 @@ python strategies/run_regression_momentum.py \
     --start-date 2024-07-01 --end-date 2024-12-31
 ```
 
-#### 9.4 Template Strategy (Build Your Own)
+#### 9.4 Bollinger Band Strategy
+
+```bash
+python strategies/run_bollinger.py \
+    --data-path 'all_data_*.csv' \
+    --start-date 2024-01-01 --end-date 2024-06-30 \
+    --watchlist api_data/watchlist.csv --watchlist-mode filter
+```
+- Entry: Price crosses below lower BB AND RSI <= 40
+- Exit: Price reaches middle BB OR RSI > 70 OR hold >= 20 days
+- Open positions are force-closed at backtest end
+
+Key arguments:
+- `--data-path` — path to price/indicator CSV(s) (supports globs)
+- `--watchlist` — watchlist CSV for symbol filtering
+- `--watchlist-mode filter` — only trade watchlist symbols (or `sort` for ordering)
+- `--start-cash 100000` — initial cash (default: 100000)
+- `--position-size 0.05` — fraction per position (default: 0.05 = 5%)
+- `--max-hold-days 20` — max days to hold (default: 20)
+- `--no-notify` — skip email notification
+
+Daily watch mode (scan for crossovers, no backtest):
+```bash
+python strategies/run_bollinger.py \
+    --data-path 'all_data_*.csv' \
+    --mode daily --lookback-days 2 \
+    --watchlist api_data/watchlist.csv --watchlist-mode filter
+```
+- Lists which symbols crossed their bands in the last N trading days
+- No account, no position tracking — just a scan and email report
+- Email subject: `Bollinger Band (Daily Watch) | ...`
+
+Email subjects by mode:
+- Backtest: `Bollinger Band (Backtest) | 91 trades, 44.0% win rate, Sharpe -0.12`
+- Daily: `Bollinger Band (Daily Watch) | 3 signal(s): 2 BUY, 1 SELL`
+
+#### 9.6 Template Strategy (Build Your Own)
 
 Copy `template_strategy.py` and fill in your entry/exit logic:
 ```bash
@@ -557,7 +593,7 @@ Built-in guardrails (class constants to tune):
 | `MAX_POSITIONS` | 10 | Max concurrent open positions |
 | `MAX_ENTRIES_PER_DAY` | 5 | Max new entries per evaluation |
 
-#### 9.5 Backtest Output
+#### 9.7 Backtest Output
 
 Every backtest runner prints:
 - Per-symbol P&L breakdown (sorted by total P&L)
@@ -605,14 +641,30 @@ python strategies/run_template.py \
 
 Scans for Bollinger band crossovers and sends email notifications (shadow mode — doesn't execute by default).
 
+**CSV mode** (scan all_data files):
 ```bash
 python strategies/bollinger_shadow_strategy.py --data-path all_data.csv
 ```
 - `--skip-live` — test without Gateway connection
 - `--no-notify` — skip email notifications
+- `--summary-only` — one summary email instead of per-signal emails
 - `--execute AAPL` — actually execute for listed symbols (comma-separated)
+- `--lookback-days 2` — days to look back for signals (default: 2)
 
-With portfolio post-filter:
+**Realtime mode** (fetch live data from Alpha Vantage API):
+```bash
+python strategies/bollinger_shadow_strategy.py \
+    --mode realtime \
+    --watchlist api_data/watchlist.csv --watchlist-mode filter \
+    --skip-live --summary-only
+```
+- Fetches live quote + BBANDS + RSI from Alpha Vantage for each watchlist symbol (3 API calls per symbol)
+- Runs the same crossover logic against live data
+- Writes signal CSV to `signals/pending_orders.csv` if anything triggers
+- Email subject: `Bollinger Band (Real Time) | 5 signal(s)`
+- `--watchlist` is **required** for realtime mode
+
+With portfolio post-filter (CSV mode):
 ```bash
 python strategies/bollinger_shadow_strategy.py --data-path all_data.csv --skip-live --no-notify \
     --portfolio-data all_data_0.csv --price-above 50 --top-k-sharpe 10
@@ -767,6 +819,31 @@ python strategies/run_template.py \
 
 # Executor picks up and places orders
 python -m ibkr.execute_signals --signals signals/pending_orders.csv
+```
+
+#### Bollinger Band Pipeline (Backtest → Scan → Paper Trade)
+
+```bash
+# 1. Full backtest — per-symbol P&L, win rate, Sharpe + email summary
+python strategies/run_bollinger.py \
+    --data-path 'all_data_*.csv' \
+    --start-date 2024-01-01 --end-date 2024-06-30 \
+    --watchlist api_data/watchlist.csv --watchlist-mode filter
+
+# 2. Daily watch — scan for crossovers in last 2 days + email
+python strategies/run_bollinger.py \
+    --data-path 'all_data_*.csv' \
+    --mode daily --lookback-days 2 \
+    --watchlist api_data/watchlist.csv --watchlist-mode filter
+
+# 3. Real-time scan — live Alpha Vantage data + email + signal CSV
+python strategies/bollinger_shadow_strategy.py \
+    --mode realtime \
+    --watchlist api_data/watchlist.csv --watchlist-mode filter \
+    --skip-live --summary-only
+
+# 4. Paper trade execution (requires SSH tunnel + Gateway)
+python -m ibkr.execute_signals --signals signals/pending_orders.csv --gateway --client-id 10
 ```
 
 #### Going Live

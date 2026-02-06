@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'str
 from account.account import Account
 from account.account_values import AccountValues
 from account.backtest_account import BacktestAccount
-from order import OptionOrder, OrderOperation
+from order import OptionOrder, StockOrder, OrderOperation
 from base_strategy import BaseStrategy
 
 
@@ -44,6 +44,7 @@ def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_dat
         historical_options_df = select_all_by_symbol(HISTORICAL_OPTIONS_TABLE_NAME, symbols, start_date=start_date, end_date=end_date)
 
     daily_positions = []  # List of tuples (date, position)
+    last_known_prices = {}  # Carry forward prices for held symbols with data gaps
     for date in pd.date_range(start_date, end_date):
         # Get the 'symbol' and 'open' columns for every row where the 'date' column matches the current date
         current_prices = core_stock_df.loc[core_stock_df['date'] == date, ['symbol', 'open', 'adjusted_close', 'high', 'low']]
@@ -58,6 +59,14 @@ def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_dat
 
         # Convert current_prices df to dict
         symbol_price_map = current_prices.set_index('symbol').to_dict()['open']
+
+        # Update last known prices and fill gaps for held symbols
+        last_known_prices.update(symbol_price_map)
+        held_symbols = set(strategy.account.stock_positions.keys())
+        missing = held_symbols - set(symbol_price_map.keys())
+        for sym in missing:
+            if sym in last_known_prices:
+                symbol_price_map[sym] = last_known_prices[sym]
 
         orders = strategy.evaluate(date, current_prices, current_options)
         new_account_values = None
@@ -82,7 +91,50 @@ def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_dat
             new_account_values = strategy.account.update_account_values(pd.to_datetime(date), symbol_price_map, historical_options_df)
         print(f"{date} Account values: {new_account_values}")
 
-    # TODO: write account details to some file, then plot the daily account values and daily positions
+    # Force-close any remaining open positions at the end of the backtest
+    if hasattr(strategy, 'positions') and strategy.positions:
+        print(f"\nForce-closing {len(strategy.positions)} open position(s) at end of backtest...")
+        for symbol, pos in list(strategy.positions.items()):
+            # Use last known price
+            if symbol in last_known_prices:
+                exit_price = last_known_prices[symbol]
+            else:
+                exit_price = pos['entry_price']
+
+            shares = pos['shares']
+            entry_price = pos['entry_price']
+            entry_date = pos['entry_date']
+            hold_days = (pd.to_datetime(end_date) - entry_date).days
+            pct_return = (exit_price - entry_price) / entry_price * 100
+
+            # Execute the sell order in the account
+            date_str = pd.to_datetime(end_date).strftime('%Y-%m-%d')
+            sell_order = StockOrder(symbol, OrderOperation.SELL, shares, exit_price, date_str)
+            strategy.account.execute_order(sell_order, exit_price * shares / shares)
+
+            # Record in trade log if strategy tracks it
+            if hasattr(strategy, 'trade_log'):
+                strategy.trade_log.append({
+                    'symbol': symbol,
+                    'entry_date': entry_date.strftime('%Y-%m-%d') if hasattr(entry_date, 'strftime') else str(entry_date)[:10],
+                    'exit_date': date_str,
+                    'entry_price': entry_price,
+                    'exit_price': exit_price,
+                    'shares': shares,
+                    'pnl': (exit_price - entry_price) * shares,
+                    'return_pct': pct_return,
+                    'hold_days': hold_days,
+                })
+
+            print(f"  CLOSE {symbol}: force-closed, held {hold_days}d, return: {pct_return:+.2f}%")
+
+        strategy.positions.clear()
+
+        # Final account update
+        new_account_values = strategy.account.update_account_values(
+            pd.to_datetime(end_date), last_known_prices, historical_options_df)
+        print(f"Final account values: {new_account_values}")
+
     return strategy.account.account_values
 
 
@@ -102,9 +154,12 @@ def get_strategy(strategy_name: str, account: Account, symbols: set[str]) -> Bas
     elif strategy_name == "RegressionMomentumStrategy":
         from regression_momentum_strategy import RegressionMomentumStrategy
         return RegressionMomentumStrategy(account, symbols)
+    elif strategy_name == "BollingerBacktestStrategy":
+        from bollinger_backtest_strategy import BollingerBacktestStrategy
+        return BollingerBacktestStrategy(account, symbols)
 
     raise ValueError(f"Unknown strategy_name: {strategy_name}. "
-                     f"Use run_template.py, run_backtest.py, or run_regression_momentum.py instead.")
+                     f"Use run_template.py, run_backtest.py, run_regression_momentum.py, or run_bollinger.py instead.")
 
 
 if __name__ == "__main__":

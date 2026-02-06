@@ -37,6 +37,7 @@ import argparse
 import logging
 import os
 import smtplib
+import time
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
@@ -78,6 +79,124 @@ def get_realtime_quote(symbol: str) -> dict:
         'change_pct': gq.get('10. change percent', '0%').replace('%', ''),
         'latest_trading_day': gq.get('07. latest trading day', ''),
     }
+
+
+def fetch_realtime_bollinger(symbol: str) -> pd.DataFrame:
+    """
+    Fetch live quote + BBANDS + RSI for bollinger strategy via Alpha Vantage API.
+
+    Makes 3 API calls per symbol:
+      1. GLOBAL_QUOTE → price, open, high, low, volume
+      2. BBANDS (daily, close, period=20) → upper/middle/lower bands
+      3. RSI (daily, close, period=14) → rsi_14
+
+    Returns a 2-row DataFrame (yesterday + today) with columns matching
+    the all_data CSV format used by bollinger_shadow_strategy.find_signals().
+
+    Args:
+        symbol: Stock ticker symbol
+
+    Returns:
+        pd.DataFrame with columns: date, symbol, adjusted_close, open, high, low,
+        volume, bbands_upper_20, bbands_middle_20, bbands_lower_20, rsi_14
+    """
+    # 1. Real-time quote via GLOBAL_QUOTE endpoint
+    quote = get_realtime_quote(symbol)
+
+    # 2. BBANDS via Technical Analysis endpoint (daily, close, period=20)
+    bbands_resp = alpha_client.fetch(
+        function='BBANDS', symbol=symbol,
+        interval='daily', series_type='close', time_period=20
+    )
+    bbands_key = 'Technical Analysis: BBANDS'
+    if bbands_key not in bbands_resp:
+        raise ValueError(f"No BBANDS data returned for {symbol}")
+    bbands_df = pd.DataFrame.from_dict(bbands_resp[bbands_key], orient='index')
+    bbands_df.index = pd.to_datetime(bbands_df.index)
+    bbands_df = bbands_df.apply(pd.to_numeric).sort_index().tail(2)
+    bbands_df = bbands_df.rename(columns={
+        'Real Upper Band': 'bbands_upper_20',
+        'Real Middle Band': 'bbands_middle_20',
+        'Real Lower Band': 'bbands_lower_20',
+    })
+
+    # 3. RSI via Technical Analysis endpoint (daily, close, period=14)
+    rsi_resp = alpha_client.fetch(
+        function='RSI', symbol=symbol,
+        interval='daily', series_type='close', time_period=14
+    )
+    rsi_key = 'Technical Analysis: RSI'
+    if rsi_key not in rsi_resp:
+        raise ValueError(f"No RSI data returned for {symbol}")
+    rsi_df = pd.DataFrame.from_dict(rsi_resp[rsi_key], orient='index')
+    rsi_df.index = pd.to_datetime(rsi_df.index)
+    rsi_df = rsi_df.apply(pd.to_numeric).sort_index().tail(2)
+    rsi_df = rsi_df.rename(columns={'RSI': 'rsi_14'})
+
+    # Merge bbands + rsi on date index
+    df = bbands_df.join(rsi_df, how='inner')
+    df.index.name = 'date'
+    df = df.reset_index()
+    df['symbol'] = symbol
+
+    # Map prices: yesterday's row gets prev_close, today's row gets live price.
+    # This is critical for crossover detection (strategy compares row N-1 vs row N).
+    if len(df) == 2:
+        df.loc[df.index[0], 'adjusted_close'] = quote['prev_close']
+        df.loc[df.index[1], 'adjusted_close'] = quote['price']
+    else:
+        df['adjusted_close'] = quote['price']
+
+    df['open'] = quote['open']
+    df['high'] = quote['high']
+    df['low'] = quote['low']
+    df['volume'] = quote['volume']
+
+    return df
+
+
+def fetch_realtime_batch(symbols: list[str], fetch_fn, timeout_per_symbol: int = 30) -> pd.DataFrame:
+    """
+    Fetch real-time data for multiple symbols using a per-symbol fetch function.
+
+    Iterates symbols, calls fetch_fn(symbol) for each, skips failures with a
+    warning, and concatenates results into a single DataFrame.
+
+    Args:
+        symbols: List of stock ticker symbols
+        fetch_fn: Callable that takes a symbol string and returns a pd.DataFrame
+        timeout_per_symbol: Max seconds per symbol (logged but not enforced via signal)
+
+    Returns:
+        pd.DataFrame with all symbols concatenated, or empty DataFrame if all fail
+    """
+    frames = []
+    total = len(symbols)
+    start = time.time()
+
+    for i, sym in enumerate(symbols, 1):
+        elapsed = time.time() - start
+        rate = elapsed / i if i > 1 else 0
+        eta = rate * (total - i)
+        print(f"  Fetching {sym} ({i}/{total})... "
+              f"[elapsed: {elapsed:.0f}s, est remaining: {eta:.0f}s]")
+        try:
+            df = fetch_fn(sym)
+            if df is not None and not df.empty:
+                frames.append(df)
+        except Exception as e:
+            print(f"    WARNING: {sym} failed: {e}")
+            continue
+
+    elapsed_total = time.time() - start
+    succeeded = len(frames)
+    failed = total - succeeded
+    print(f"\n  Batch complete: {succeeded}/{total} symbols fetched "
+          f"in {elapsed_total:.0f}s ({failed} failed)")
+
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
 
 
 def get_third_friday(year: int, month: int) -> date:

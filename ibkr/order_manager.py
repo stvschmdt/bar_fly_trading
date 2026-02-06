@@ -57,6 +57,23 @@ class OrderManager:
         """Get IB instance from connection."""
         return self.connection.ib
 
+    @property
+    def target_account(self) -> Optional[str]:
+        """Get target trading account (prefers DU sub-accounts for paper trading)."""
+        if self.connection.config.account:
+            return self.connection.config.account
+        try:
+            all_accounts = self.ib.managedAccounts()
+            # Prefer DU sub-accounts (paper) over DFO (FA master)
+            account = next((a for a in all_accounts if a.startswith('DU')), None)
+            if not account:
+                account = next((a for a in all_accounts if a.startswith('U')), None)
+            if not account and all_accounts:
+                account = all_accounts[0]
+            return account
+        except Exception:
+            return None
+
     def create_market_order(
         self,
         signal: TradeSignal,
@@ -77,6 +94,11 @@ class OrderManager:
 
         order = MarketOrder(action, quantity)
         order.tif = "DAY"  # Time in force: day order
+        # FA multi-account: must specify target account
+        acct = self.target_account
+        if acct:
+            order.account = acct
+            logger.info(f"Market order: {action} {quantity} → account {acct}")
 
         return order
 
@@ -115,6 +137,9 @@ class OrderManager:
 
         order = LimitOrder(action, quantity, limit_price)
         order.tif = "DAY"
+        acct = self.target_account
+        if acct:
+            order.account = acct
 
         return order
 
@@ -140,6 +165,9 @@ class OrderManager:
 
         order = StopOrder(action, quantity, round(stop_price, 2))
         order.tif = "DAY"
+        acct = self.target_account
+        if acct:
+            order.account = acct
 
         return order
 

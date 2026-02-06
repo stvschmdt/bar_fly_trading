@@ -81,6 +81,74 @@ def check_live_trading_allowed():
     return False
 
 
+def log_account_state(executor, label=""):
+    """Log verbose account and portfolio state."""
+    prefix = f"[{label}] " if label else ""
+    logger.info("=" * 70)
+    logger.info(f"{prefix}ACCOUNT & PORTFOLIO STATE")
+    logger.info("=" * 70)
+
+    account = executor.get_account_summary()
+    if account:
+        logger.info(f"  Net Liquidation:    ${account.net_liquidation:>14,.2f}")
+        logger.info(f"  Total Cash:         ${account.total_cash:>14,.2f}")
+        logger.info(f"  Available Funds:    ${account.available_funds:>14,.2f}")
+        logger.info(f"  Buying Power:       ${account.buying_power:>14,.2f}")
+        logger.info(f"  Gross Positions:    ${account.gross_position_value:>14,.2f}")
+        logger.info(f"  Unrealized P&L:     ${account.unrealized_pnl:>14,.2f}")
+        logger.info(f"  Realized P&L:       ${account.realized_pnl:>14,.2f}")
+    else:
+        logger.warning(f"  Could not retrieve account summary")
+
+    positions = executor.get_position_summary()
+    open_positions = positions.get('positions', {})
+    if open_positions:
+        logger.info(f"  Open Positions ({len(open_positions)}):")
+        for sym, pos in open_positions.items():
+            shares = getattr(pos, 'shares', pos.get('shares', 0) if isinstance(pos, dict) else 0)
+            avg_cost = getattr(pos, 'avg_cost', pos.get('avg_cost', 0) if isinstance(pos, dict) else 0)
+            mkt_val = getattr(pos, 'market_value', pos.get('market_value', 0) if isinstance(pos, dict) else 0)
+            logger.info(f"    {sym:6s}  {shares:>4} shares  avg_cost=${avg_cost:>8.2f}  mkt_val=${mkt_val:>10,.2f}")
+    else:
+        logger.info(f"  Open Positions: none")
+    logger.info("=" * 70)
+    return account
+
+
+def format_account_state_text(executor, label=""):
+    """Format account state as text for email body."""
+    prefix = f"[{label}] " if label else ""
+    lines = []
+    lines.append(f"{prefix}ACCOUNT & PORTFOLIO STATE")
+    lines.append("=" * 50)
+
+    account = executor.get_account_summary()
+    if account:
+        lines.append(f"  Net Liquidation:    ${account.net_liquidation:>14,.2f}")
+        lines.append(f"  Total Cash:         ${account.total_cash:>14,.2f}")
+        lines.append(f"  Available Funds:    ${account.available_funds:>14,.2f}")
+        lines.append(f"  Buying Power:       ${account.buying_power:>14,.2f}")
+        lines.append(f"  Gross Positions:    ${account.gross_position_value:>14,.2f}")
+        lines.append(f"  Unrealized P&L:     ${account.unrealized_pnl:>14,.2f}")
+        lines.append(f"  Realized P&L:       ${account.realized_pnl:>14,.2f}")
+    else:
+        lines.append("  Could not retrieve account summary")
+
+    positions = executor.get_position_summary()
+    open_positions = positions.get('positions', {})
+    if open_positions:
+        lines.append(f"  Open Positions ({len(open_positions)}):")
+        for sym, pos in open_positions.items():
+            shares = getattr(pos, 'shares', pos.get('shares', 0) if isinstance(pos, dict) else 0)
+            avg_cost = getattr(pos, 'avg_cost', pos.get('avg_cost', 0) if isinstance(pos, dict) else 0)
+            mkt_val = getattr(pos, 'market_value', pos.get('market_value', 0) if isinstance(pos, dict) else 0)
+            lines.append(f"    {sym:6s}  {shares:>4} shares  avg_cost=${avg_cost:>8.2f}  mkt_val=${mkt_val:>10,.2f}")
+    else:
+        lines.append("  Open Positions: none")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def execute_signal_file(filepath, executor, dry_run=False):
     """
     Read and execute all signals in a CSV file.
@@ -99,18 +167,27 @@ def execute_signal_file(filepath, executor, dry_run=False):
         return []
 
     logger.info(f"Processing {len(signals)} signal(s) from {filepath}")
+
+    # Pre-execution: verbose account state
+    pre_account = None
+    if not dry_run and executor:
+        pre_account = log_account_state(executor, label="PRE-EXECUTION")
+
     results = []
 
     for sig in signals:
         action = sig['action'].upper()
         symbol = sig['symbol'].upper()
         shares = int(sig.get('shares', 0)) or None  # 0 -> None (auto-size)
+        signal_price = float(sig.get('price', 0))
         reason = sig.get('reason', '')
         strategy = sig.get('strategy', '')
 
         label = f"{action} {symbol}"
         if shares:
             label += f" x{shares}"
+        if signal_price > 0:
+            label += f" @ ${signal_price:.2f}"
         if reason:
             label += f" ({reason})"
 
@@ -126,13 +203,16 @@ def execute_signal_file(filepath, executor, dry_run=False):
             })
             continue
 
+        logger.info("-" * 50)
         logger.info(f"Executing: {label}")
 
         try:
             if action == 'BUY':
-                result = executor.execute_buy(symbol, shares=shares, reason=reason)
+                result = executor.execute_buy(symbol, shares=shares, reason=reason,
+                                              fallback_price=signal_price)
             elif action == 'SELL':
-                result = executor.execute_sell(symbol, shares=shares, reason=reason)
+                result = executor.execute_sell(symbol, shares=shares, reason=reason,
+                                              fallback_price=signal_price)
             else:
                 logger.warning(f"Unknown action '{action}' for {symbol}, skipping")
                 results.append({
@@ -150,11 +230,11 @@ def execute_signal_file(filepath, executor, dry_run=False):
             filled_shares = result.order.filled_shares if result.order else 0
             error = result.error_message or ''
 
-            logger.info(
-                f"  {'OK' if result.success else 'FAIL'}: {symbol} "
-                f"{filled_shares} shares @ ${fill_price:.2f}"
-                + (f" - {error}" if error else "")
-            )
+            if result.success:
+                logger.info(f"  FILLED: {symbol} {filled_shares} shares @ ${fill_price:.2f} "
+                           f"(total: ${filled_shares * fill_price:,.2f})")
+            else:
+                logger.warning(f"  FAILED: {symbol} - {error}")
 
             results.append({
                 **sig,
@@ -176,7 +256,125 @@ def execute_signal_file(filepath, executor, dry_run=False):
                 'executed_at': datetime.now().isoformat(timespec='seconds'),
             })
 
+    # Post-execution: verbose account state + summary
+    if not dry_run and executor:
+        post_account = log_account_state(executor, label="POST-EXECUTION")
+
+        # Print execution summary
+        filled = [r for r in results if r['status'] == 'filled']
+        failed = [r for r in results if r['status'] == 'failed']
+        errors = [r for r in results if r['status'] == 'error']
+        total_cost = sum(r['fill_price'] * r['filled_shares'] for r in filled)
+
+        logger.info("=" * 70)
+        logger.info("EXECUTION SUMMARY")
+        logger.info("=" * 70)
+        logger.info(f"  Total signals:  {len(results)}")
+        logger.info(f"  Filled:         {len(filled)}")
+        logger.info(f"  Failed:         {len(failed)}")
+        logger.info(f"  Errors:         {len(errors)}")
+        logger.info(f"  Total cost:     ${total_cost:,.2f}")
+        if filled:
+            logger.info(f"  Fills:")
+            for r in filled:
+                logger.info(f"    {r['action']} {r['symbol']}: {r['filled_shares']} shares @ ${r['fill_price']:.2f} "
+                           f"= ${r['filled_shares'] * r['fill_price']:,.2f}")
+        if failed:
+            logger.info(f"  Failures:")
+            for r in failed:
+                logger.info(f"    {r['symbol']}: {r['error']}")
+        if errors:
+            logger.info(f"  Errors:")
+            for r in errors:
+                logger.info(f"    {r['symbol']}: {r['error']}")
+        logger.info("=" * 70)
+
+        # Wait for IBKR to update portfolio state before fetching summary
+        import time
+        time.sleep(2)
+
+        # Send batch execution summary email
+        _send_execution_summary_email(executor, results, pre_account, post_account)
+
     return results
+
+
+def _send_execution_summary_email(executor, results, pre_account, post_account):
+    """Send a comprehensive execution summary email."""
+    if not executor.notifier:
+        return
+
+    filled = [r for r in results if r['status'] == 'filled']
+    failed = [r for r in results if r['status'] == 'failed']
+    errors = [r for r in results if r['status'] == 'error']
+    total_cost = sum(r['fill_price'] * r['filled_shares'] for r in filled)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    subject = f"[EXECUTION] {len(filled)}/{len(results)} filled | ${total_cost:,.2f} deployed"
+
+    body_lines = [
+        "TRADE EXECUTION REPORT",
+        "=" * 50,
+        f"Time:           {timestamp}",
+        f"Total signals:  {len(results)}",
+        f"Filled:         {len(filled)}",
+        f"Failed:         {len(failed)}",
+        f"Errors:         {len(errors)}",
+        f"Total deployed: ${total_cost:,.2f}",
+        "",
+    ]
+
+    if filled:
+        body_lines.append("FILLS")
+        body_lines.append("-" * 50)
+        for r in filled:
+            body_lines.append(
+                f"  {r['action']:4s} {r['symbol']:6s}  {r['filled_shares']:>4} shares "
+                f"@ ${r['fill_price']:>8.2f}  = ${r['filled_shares'] * r['fill_price']:>10,.2f}"
+            )
+        body_lines.append("")
+
+    if failed:
+        body_lines.append("FAILURES")
+        body_lines.append("-" * 50)
+        for r in failed:
+            body_lines.append(f"  {r['action']:4s} {r['symbol']:6s}  {r.get('error', 'unknown')}")
+        body_lines.append("")
+
+    if errors:
+        body_lines.append("ERRORS")
+        body_lines.append("-" * 50)
+        for r in errors:
+            body_lines.append(f"  {r['action']:4s} {r['symbol']:6s}  {r.get('error', 'unknown')}")
+        body_lines.append("")
+
+    # Pre-execution account state
+    if pre_account:
+        body_lines.append("PRE-EXECUTION ACCOUNT")
+        body_lines.append("-" * 50)
+        body_lines.append(f"  Net Liquidation:  ${pre_account.net_liquidation:>14,.2f}")
+        body_lines.append(f"  Total Cash:       ${pre_account.total_cash:>14,.2f}")
+        body_lines.append(f"  Available Funds:  ${pre_account.available_funds:>14,.2f}")
+        body_lines.append(f"  Buying Power:     ${pre_account.buying_power:>14,.2f}")
+        body_lines.append("")
+
+    # Post-execution account state
+    if post_account:
+        body_lines.append("POST-EXECUTION ACCOUNT")
+        body_lines.append("-" * 50)
+        body_lines.append(f"  Net Liquidation:  ${post_account.net_liquidation:>14,.2f}")
+        body_lines.append(f"  Total Cash:       ${post_account.total_cash:>14,.2f}")
+        body_lines.append(f"  Available Funds:  ${post_account.available_funds:>14,.2f}")
+        body_lines.append(f"  Buying Power:     ${post_account.buying_power:>14,.2f}")
+        body_lines.append(f"  Gross Positions:  ${post_account.gross_position_value:>14,.2f}")
+        body_lines.append(f"  Unrealized P&L:   ${post_account.unrealized_pnl:>14,.2f}")
+        body_lines.append("")
+
+    # Post-execution portfolio
+    body_lines.append(format_account_state_text(executor, label="CURRENT PORTFOLIO"))
+
+    body = "\n".join(body_lines)
+    executor.notifier._send_email(subject, body)
 
 
 def archive_signal_file(filepath, results, archive_dir):
