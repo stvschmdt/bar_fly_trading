@@ -587,9 +587,12 @@ def print_earnings_summary(symbol: str, earnings_data: dict = None):
     return result
 
 
-def print_news_sentiment(symbol: str):
+def print_news_sentiment(symbol: str, prefetched: tuple = None):
     """Print formatted news sentiment data."""
-    weighted_avg, articles = get_news_sentiment(symbol)
+    if prefetched:
+        weighted_avg, articles = prefetched
+    else:
+        weighted_avg, articles = get_news_sentiment(symbol)
 
     print(f"\n{'=' * 70}")
     print(f"  NEWS SENTIMENT: {symbol}")
@@ -872,6 +875,19 @@ def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
                 </tr>"""
             html += "</table>"
 
+    # BFT AI Summary (combined news + earnings LLM)
+    if llm_result and llm_result.get('summary'):
+        summary_heading = llm_title or "BFT AI Summary"
+        html += f"""
+        <h3 style="border-bottom: 1px solid #ccc; padding-bottom: 4px;">{summary_heading}</h3>
+        <p style="line-height: 1.5;">{llm_result['summary']}</p>
+        """
+        if llm_result.get('bullets'):
+            html += "<ul>"
+            for b in llm_result['bullets']:
+                html += f"<li>{b}</li>"
+            html += "</ul>"
+
     # News Sentiment
     if news_data is not None and weighted_avg is not None:
         if weighted_avg > 0.15:
@@ -900,19 +916,6 @@ def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
               </td>
             </tr>"""
         html += "</table>"
-
-    # BFT AI Summary (combined news + earnings LLM)
-    if llm_result and llm_result.get('summary'):
-        summary_heading = llm_title or "BFT AI Summary"
-        html += f"""
-        <h3 style="border-bottom: 1px solid #ccc; padding-bottom: 4px;">{summary_heading}</h3>
-        <p style="line-height: 1.5;">{llm_result['summary']}</p>
-        """
-        if llm_result.get('bullets'):
-            html += "<ul>"
-            for b in llm_result['bullets']:
-                html += f"<li>{b}</li>"
-            html += "</ul>"
 
     # Earnings Report Summary (earnings-only LLM)
     if earnings_summary and earnings_summary.get('summary'):
@@ -1026,7 +1029,7 @@ if __name__ == '__main__':
     llm_result = None
     earnings_summary_result = None
 
-    # 2) Earnings & Overview (raw data, before news)
+    # 2) Earnings & Overview (raw data)
     needs_earnings = (args.summary and not args.no_earnings) or args.earnings_summary
     if needs_earnings:
         earnings_data = get_earnings_overview(args.symbol)
@@ -1034,17 +1037,21 @@ if __name__ == '__main__':
     elif args.summary and args.no_earnings:
         earnings_data = {'symbol': args.symbol}
 
-    # 3) News Sentiment
+    # Fetch news data silently (needed for LLM before display)
     if args.news:
-        weighted_avg, news_data = print_news_sentiment(args.symbol)
+        weighted_avg, news_data = get_news_sentiment(args.symbol)
 
-    # 4) BFT AI Summary (combined news + earnings LLM)
+    # 3) BFT AI Summary (combined news + earnings LLM)
     if args.summary:
         if args.summary and args.earnings_summary:
             title = "BFT AI SUMMARY AND EARNINGS REPORT"
         else:
             title = "BFT AI SUMMARY"
         llm_result = print_summary(args.symbol, news_data, earnings_data, title=title)
+
+    # 4) News Sentiment (display after LLM summary)
+    if args.news:
+        print_news_sentiment(args.symbol, prefetched=(weighted_avg, news_data))
 
     # 5) BFT AI Earnings Report Summary (earnings-only LLM)
     if args.earnings_summary and not args.summary:
