@@ -491,13 +491,22 @@ def get_technical_data(symbol: str, data_path: str) -> dict | None:
 
     Args:
         symbol: Stock ticker symbol
-        data_path: Path to merged_predictions.csv or all_data CSV
+        data_path: Path to CSV (supports globs like 'all_data_*.csv')
 
     Returns:
         Dict of technical indicator values, or None if symbol not found
     """
+    import glob as glob_mod
     try:
-        df = pd.read_csv(data_path)
+        if '*' in data_path or '?' in data_path:
+            files = sorted(glob_mod.glob(data_path))
+            if not files:
+                logger.warning(f"No files matching {data_path}")
+                return None
+            dfs = [pd.read_csv(f) for f in files]
+            df = pd.concat(dfs, ignore_index=True)
+        else:
+            df = pd.read_csv(data_path)
     except Exception as e:
         logger.warning(f"Could not read data file {data_path}: {e}")
         return None
