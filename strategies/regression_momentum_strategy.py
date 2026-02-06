@@ -22,11 +22,12 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
-# Add bar_fly_trading to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'bar_fly_trading')))
+# Add project root and strategies dir to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from order import Order, StockOrder, OrderOperation
-from strategy.base_strategy import BaseStrategy
+from base_strategy import BaseStrategy
 
 
 # Column name mappings for merged vs individual prediction files

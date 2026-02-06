@@ -4,8 +4,13 @@
 
 
 import argparse
+import os
+import sys
 
 import pandas as pd
+
+# Add strategies dir to path for base_strategy and strategy classes
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'strategies'))
 
 from account.account import Account
 from account.account_values import AccountValues
@@ -14,13 +19,7 @@ from api_data.core_stock import CORE_STOCK_TABLE_NAME
 from api_data.historical_options import HISTORICAL_OPTIONS_TABLE_NAME
 from api_data.storage import select_all_by_symbol, connect_database
 from order import OptionOrder, OrderOperation
-from strategy.base_strategy import BaseStrategy
-from strategy.bollinger_bands_strategy import BollingerBandsStrategy
-from strategy.buy_hold_strategy import BuyHoldStrategy
-from strategy.technical_heuristics_strategy import TechnicalHeuristicsStrategy
-from strategy.technical_strategy import TechnicalStrategy
-from strategy.test_strategy import TestStrategy
-from strategy.weekly_call_strategy import WeeklyCallStrategy
+from base_strategy import BaseStrategy
 
 
 def backtest(strategy: BaseStrategy, symbols: set[str], start_date: str, end_date: str) -> AccountValues:
@@ -81,20 +80,16 @@ def get_account(account_id: str, start_value: float, start_date: str) -> Backtes
 
 
 def get_strategy(strategy_name: str, account: Account, symbols: set[str]) -> BaseStrategy:
-    if strategy_name == "TestStrategy":
-        return TestStrategy(account, symbols)
-    elif strategy_name == "BollingerBandsStrategy":
-        return BollingerBandsStrategy(account, symbols)
-    elif strategy_name == "TechnicalStrategy":
-        return TechnicalStrategy(account, symbols)
-    elif strategy_name == "BuyHoldStrategy":
-        return BuyHoldStrategy(account, symbols)
-    elif strategy_name == "TechnicalHeuristicsStrategy":
-        return TechnicalHeuristicsStrategy(account, symbols)
-    elif strategy_name == "WeeklyCallStrategy":
-        return WeeklyCallStrategy(account, symbols)
+    # Import strategies on demand — only needed when backtest.py is run directly
+    if strategy_name == "MLPredictionStrategy":
+        from ml_prediction_strategy import MLPredictionStrategy
+        return MLPredictionStrategy(account, symbols)
+    elif strategy_name == "RegressionMomentumStrategy":
+        from regression_momentum_strategy import RegressionMomentumStrategy
+        return RegressionMomentumStrategy(account, symbols)
 
-    raise ValueError(f"Unknown strategy_name: {strategy_name}")
+    raise ValueError(f"Unknown strategy_name: {strategy_name}. "
+                     f"Use run_template.py, run_backtest.py, or run_regression_momentum.py instead.")
 
 
 if __name__ == "__main__":
