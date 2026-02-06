@@ -56,6 +56,7 @@ from account.backtest_account import BacktestAccount
 from api_data.storage import connect_database
 from backtest import backtest
 from backtest_stats import compute_stats, print_stats, write_trade_log, write_symbols, read_symbols
+from signal_writer import SignalWriter
 from portfolio import (
     load_data as portfolio_load_data,
     load_watchlist,
@@ -86,7 +87,8 @@ def get_available_symbols(predictions_path):
 
 
 def run_backtest(symbols, start_date, end_date, start_cash, predictions_path,
-                 db='local', position_size=0.1, output_trades=None, output_symbols=None):
+                 db='local', position_size=0.1, output_trades=None, output_symbols=None,
+                 output_signals=None):
     """
     Run the Regression Momentum backtest.
 
@@ -164,6 +166,22 @@ Backtest Setup:
     if output_symbols:
         write_symbols(symbols, output_symbols)
 
+    # Write pending signals for the last day's orders (for live execution bridge)
+    if output_signals and strategy.trade_log:
+        writer = SignalWriter(output_signals)
+        # Export the most recent day's entries as pending signals
+        last_date = max(t['entry_date'] for t in strategy.trade_log)
+        for t in strategy.trade_log:
+            if t['entry_date'] == last_date:
+                writer.add(
+                    action='BUY',
+                    symbol=t['symbol'],
+                    price=t['entry_price'],
+                    strategy='regression_momentum',
+                    reason=f"pred backtest entry {last_date}",
+                )
+        writer.save()
+
     return account_values
 
 
@@ -234,6 +252,8 @@ Examples:
                         help="Path to write trade log CSV")
     parser.add_argument("--output-symbols", type=str, default=None,
                         help="Path to write filtered symbol list CSV")
+    parser.add_argument("--output-signals", type=str, default=None,
+                        help="Path to write pending signal CSV for live execution")
 
     args = parser.parse_args()
 
@@ -299,4 +319,5 @@ Examples:
         db=args.db,
         position_size=args.position_size,
         output_trades=args.output_trades,
+        output_signals=args.output_signals,
     )
