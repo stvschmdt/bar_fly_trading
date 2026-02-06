@@ -281,6 +281,8 @@ def compute_sharpe(df: pd.DataFrame, symbols: list[str] = None,
             'n_days': len(returns),
         })
 
+    if not records:
+        return pd.DataFrame(columns=['symbol', 'sharpe', 'mean_return', 'std_return', 'n_days'])
     return pd.DataFrame(records).sort_values('sharpe', ascending=False).reset_index(drop=True)
 
 
