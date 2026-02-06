@@ -918,7 +918,7 @@ def main():
     )
     parser.add_argument(
         "--portfolio-data", type=str, default=None,
-        help="Path to data CSV for portfolio post-filter ranking (e.g. all_data_0.csv)"
+        help="Path to data CSV for portfolio post-filter ranking (default: same as --data-path)"
     )
     parser.add_argument(
         "--price-above", type=float, default=None,
@@ -985,6 +985,10 @@ def main():
     )
 
     # --- Portfolio post-filter on signals ---
+    # Default portfolio-data to same as data-path
+    if not args.portfolio_data:
+        args.portfolio_data = args.data_path
+
     has_portfolio_filters = any([
         args.price_above is not None, args.price_below is not None,
         args.filter_field, args.top_k_sharpe is not None,

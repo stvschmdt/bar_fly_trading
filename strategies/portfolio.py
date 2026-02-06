@@ -25,6 +25,7 @@ All filters are composable: apply multiple flags in one call to build a pipeline
 """
 
 import argparse
+import glob as globmod
 import os
 
 import numpy as np
@@ -37,17 +38,23 @@ import pandas as pd
 
 def load_data(data_path: str) -> pd.DataFrame:
     """
-    Load a CSV data file (all_data_*.csv or predictions_*.csv).
+    Load CSV data file(s). Supports glob patterns (e.g. 'all_data_*.csv').
 
     Handles both 'symbol' and 'ticker' column naming conventions.
 
     Args:
-        data_path: Path to CSV file
+        data_path: Path to CSV file or glob pattern
 
     Returns:
         DataFrame with 'symbol' and 'date' columns guaranteed
     """
-    df = pd.read_csv(data_path)
+    if '*' in data_path:
+        files = sorted(globmod.glob(data_path))
+        if not files:
+            raise FileNotFoundError(f"No files matching: {data_path}")
+        df = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
+    else:
+        df = pd.read_csv(data_path)
 
     # Normalise symbol column
     if 'ticker' in df.columns and 'symbol' not in df.columns:
