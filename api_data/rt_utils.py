@@ -366,6 +366,134 @@ def get_earnings_overview(symbol: str) -> dict:
     return result
 
 
+def get_technical_data(symbol: str, data_path: str) -> dict | None:
+    """
+    Read the latest row of technical indicators for a symbol from a merged CSV.
+
+    Args:
+        symbol: Stock ticker symbol
+        data_path: Path to merged_predictions.csv or all_data CSV
+
+    Returns:
+        Dict of technical indicator values, or None if symbol not found
+    """
+    try:
+        df = pd.read_csv(data_path)
+    except Exception as e:
+        logger.warning(f"Could not read data file {data_path}: {e}")
+        return None
+
+    sym_df = df[df['symbol'] == symbol].sort_values('date')
+    if sym_df.empty:
+        logger.warning(f"{symbol} not found in {data_path}")
+        return None
+
+    row = sym_df.iloc[-1]
+    tech_cols = {
+        # Moving averages
+        'adjusted_close': 'Price',
+        'sma_20': 'SMA 20', 'sma_50': 'SMA 50', 'sma_200': 'SMA 200',
+        'ema_20': 'EMA 20', 'ema_50': 'EMA 50', 'ema_200': 'EMA 200',
+        'sma_20_pct': 'Price vs SMA20 %', 'sma_50_pct': 'Price vs SMA50 %',
+        'sma_200_pct': 'Price vs SMA200 %',
+        # Oscillators
+        'macd': 'MACD', 'macd_9_ema': 'MACD Signal Line',
+        'rsi_14': 'RSI 14', 'adx_14': 'ADX 14', 'cci_14': 'CCI 14',
+        # Volatility
+        'atr_14': 'ATR 14',
+        'bbands_upper_20': 'Bollinger Upper', 'bbands_middle_20': 'Bollinger Mid',
+        'bbands_lower_20': 'Bollinger Lower',
+        # Options
+        'pcr': 'Put/Call Ratio',
+        # Signals (-1/0/1)
+        'macd_signal': 'MACD Signal', 'macd_zero_signal': 'MACD Zero Signal',
+        'adx_signal': 'ADX Signal', 'atr_signal': 'ATR Signal',
+        'bollinger_bands_signal': 'Bollinger Signal', 'rsi_signal': 'RSI Signal',
+        'sma_cross_signal': 'SMA Cross Signal', 'cci_signal': 'CCI Signal',
+        'pcr_signal': 'Put/Call Signal', 'bull_bear_delta': 'Bull/Bear Delta',
+    }
+
+    result = {'symbol': symbol, 'date': row.get('date', 'N/A')}
+    for col, label in tech_cols.items():
+        if col in row.index and pd.notna(row[col]):
+            result[label] = row[col]
+
+    return result
+
+
+def summarize_technical_with_llm(symbol: str, tech_data: dict, model: str = 'llama3.1:8b') -> dict:
+    """
+    Use local ollama LLM to generate a 3-bullet technical outlook.
+
+    Args:
+        symbol: Stock ticker symbol
+        tech_data: Dict from get_technical_data()
+        model: Ollama model name
+
+    Returns:
+        Dict with 'bullets' (list[str], max 3, each under 150 chars)
+    """
+    try:
+        import ollama
+    except ImportError:
+        logger.error("ollama package not installed. Run: pip install ollama")
+        return {'bullets': []}
+
+    # Build technical context
+    lines = []
+    for key, val in tech_data.items():
+        if key in ('symbol', 'date'):
+            continue
+        lines.append(f"{key}: {val}")
+    tech_ctx = '\n'.join(lines)
+
+    prompt = f"""Given the following technical indicators for {symbol} as of {tech_data.get('date', 'latest')}, provide exactly 3 bullet points describing the technical outlook.
+
+TECHNICAL INDICATORS:
+{tech_ctx}
+
+Rules:
+- Each bullet must be under 150 characters
+- Describe whether each signal is bullish, bearish, or neutral
+- Reference specific indicator values (e.g. RSI, MACD, SMA crossovers)
+- Be concise and direct
+
+Format:
+- [bullet 1]
+- [bullet 2]
+- [bullet 3]"""
+
+    system_msg = "You are a technical analysis expert. Provide brief, precise technical outlook bullets. Each bullet must be under 150 characters. No disclaimers."
+
+    try:
+        response = ollama.chat(model=model, messages=[
+            {'role': 'system', 'content': system_msg},
+            {'role': 'user', 'content': prompt},
+        ])
+        content = response['message']['content']
+    except Exception as e:
+        logger.error(f"LLM technical inference failed: {e}")
+        return {'bullets': []}
+
+    # Parse bullets (handle -, *, •, numbered)
+    bullets = []
+    for line in content.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        # Strip common bullet prefixes
+        if line[0] in ('-', '*', '•'):
+            bullet = line.lstrip('-*• ').strip()
+        elif len(line) > 2 and line[0].isdigit() and line[1] in ('.', ')'):
+            bullet = line[2:].strip()
+        else:
+            continue
+        if bullet:
+            bullets.append(bullet[:150])
+
+    return {'bullets': bullets[:3]}
+
+
 def summarize_with_llm(symbol: str, news_data: list[dict], earnings_data: dict, model: str = 'llama3.1:8b') -> dict:
     """
     Use local ollama LLM to summarize earnings + news into a condensed output.
@@ -676,19 +804,18 @@ def print_earnings_overview(symbol: str, earnings_data: dict):
 
 
 def print_summary(symbol: str, news_data: list[dict], earnings_data: dict,
-                  include_earnings_summary: bool = False):
+                  include_earnings_summary: bool = False,
+                  tech_data: dict = None):
     """
-    Print LLM-generated summary with optional two-part layout.
+    Print LLM-generated summary with optional multi-part layout.
 
-    When include_earnings_summary=True, prints two subsections:
-      1. BFT AI Current Outlook (news-driven)
-      2. BFT Latest Earnings Summary (divisions/guidance/forward-looking)
-
-    When False, prints a single "BFT AI Current Outlook" section.
+    Sections (in order):
+      1. BFT AI Current Outlook (news-driven, always)
+      2. BFT Technical Outlook (technical indicators, if tech_data provided)
+      3. BFT Latest Earnings Summary (divisions/guidance, if include_earnings_summary)
 
     Returns:
-        Tuple of (outlook_result, earnings_summary_result) — earnings_summary_result
-        is None if include_earnings_summary is False.
+        Tuple of (outlook_result, earnings_summary_result, technical_result)
     """
     if include_earnings_summary:
         print(f"\n{'=' * 70}")
@@ -709,7 +836,21 @@ def print_summary(symbol: str, news_data: list[dict], earnings_data: dict,
         for b in outlook_result['bullets']:
             print(f"    - {b}")
 
-    # Part 2: Earnings Summary (divisions/guidance/forward-looking)
+    # Part 2: Technical Outlook (from merged data)
+    technical_result = None
+    if tech_data:
+        print(f"\n  {'─' * 50}")
+        print(f"  BFT TECHNICAL OUTLOOK: {symbol}")
+        print(f"  {'─' * 50}")
+        print(f"  (data as of {tech_data.get('date', 'N/A')})")
+
+        technical_result = summarize_technical_with_llm(symbol, tech_data)
+
+        if technical_result['bullets']:
+            for b in technical_result['bullets']:
+                print(f"    - {b}")
+
+    # Part 3: Earnings Summary (divisions/guidance/forward-looking)
     earnings_summary_result = None
     if include_earnings_summary:
         print(f"\n  {'─' * 50}")
@@ -726,7 +867,7 @@ def print_summary(symbol: str, news_data: list[dict], earnings_data: dict,
                 print(f"    - {b}")
 
     print(f"\n{'=' * 70}\n")
-    return outlook_result, earnings_summary_result
+    return outlook_result, earnings_summary_result, technical_result
 
 
 def print_snapshot(symbol: str, months_out: int = 1, num_strikes: int = 2, option_type: str = 'both'):
@@ -792,13 +933,10 @@ def _print_snapshot_from_data(quote: dict, options: pd.DataFrame, months_out: in
 def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
                      news_data: list[dict] = None, weighted_avg: float = None,
                      earnings_data: dict = None, llm_result: dict = None,
-                     earnings_summary: dict = None) -> str:
+                     earnings_summary: dict = None,
+                     technical_result: dict = None) -> str:
     """
     Build an HTML email body with quote, options, news, earnings, and LLM summary sections.
-
-    When both llm_result and earnings_summary are provided, renders two subsections:
-      - BFT AI Current Outlook (news-driven)
-      - BFT Latest Earnings Summary (divisions/guidance/forward-looking)
 
     Args:
         symbol: Stock ticker symbol
@@ -809,6 +947,7 @@ def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
         earnings_data: Earnings/overview dict (optional)
         llm_result: Current outlook LLM summary dict (optional)
         earnings_summary: Earnings-only LLM summary dict (optional)
+        technical_result: Technical outlook LLM dict (optional)
 
     Returns:
         HTML string
@@ -947,6 +1086,15 @@ def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
                 html += f"<li>{b}</li>"
             html += "</ul>"
 
+    # Technical Outlook
+    if technical_result and technical_result.get('bullets'):
+        html += f"""
+        <h4 style="border-bottom: 1px solid #ccc; padding-bottom: 4px; color: #6a1b9a;">BFT Technical Outlook</h4>
+        <ul>"""
+        for b in technical_result['bullets']:
+            html += f"<li>{b}</li>"
+        html += "</ul>"
+
     # News Sentiment
     if news_data is not None and weighted_avg is not None:
         if weighted_avg > 0.15:
@@ -1074,6 +1222,8 @@ if __name__ == '__main__':
                         help='Send the output as an HTML email report')
     parser.add_argument('--email-to', type=str, default=None,
                         help='Override IBKR_NOTIFY_EMAIL and send only to this address')
+    parser.add_argument('--data-path', type=str, default=None,
+                        help='Path to merged_predictions.csv for technical indicators')
 
     args = parser.parse_args()
 
@@ -1105,6 +1255,16 @@ if __name__ == '__main__':
     earnings_data = None
     llm_result = None
     earnings_summary_result = None
+    technical_result = None
+    tech_data = None
+
+    # Fetch technical data if data-path provided
+    if args.data_path:
+        tech_data = get_technical_data(args.symbol, args.data_path)
+        if tech_data:
+            print(f"  Technical data loaded for {args.symbol} (as of {tech_data.get('date', 'N/A')})")
+        else:
+            print(f"  WARNING: No technical data found for {args.symbol} in {args.data_path}")
 
     # 2) Earnings & Overview (raw data)
     needs_earnings = (args.summary and not args.no_earnings) or args.earnings_summary
@@ -1118,13 +1278,14 @@ if __name__ == '__main__':
     if args.news:
         weighted_avg, news_data = get_news_sentiment(args.symbol)
 
-    # 3) BFT AI Summary — two-part when earnings included
+    # 3) BFT AI Summary — two-part when earnings included, optional technical
     if args.summary:
         include_earnings = needs_earnings
         try:
-            llm_result, earnings_summary_result = print_summary(
+            llm_result, earnings_summary_result, technical_result = print_summary(
                 args.symbol, news_data, earnings_data,
                 include_earnings_summary=include_earnings,
+                tech_data=tech_data,
             )
         except Exception as e:
             logger.error(f"LLM summary failed: {e}")
@@ -1158,5 +1319,6 @@ if __name__ == '__main__':
             earnings_data=earnings_data,
             llm_result=llm_result,
             earnings_summary=earnings_summary_result,
+            technical_result=technical_result,
         )
         send_email_report(subject, html)
