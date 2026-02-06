@@ -424,17 +424,23 @@ def summarize_with_llm(symbol: str, news_data: list[dict], earnings_data: dict, 
     else:
         weighted_avg = 0.0
 
-    prompt = f"""Analyze {symbol} based on the following data.
+    prompt = f"""Analyze {symbol}'s current market outlook based on the following data.
 
-EARNINGS & FUNDAMENTALS:
+COMPANY CONTEXT:
 {earnings_ctx}
 
-NEWS ARTICLES (weighted sentiment score: {weighted_avg:.3f}):
+RECENT NEWS (weighted sentiment score: {weighted_avg:.3f}):
 {news_ctx}
 
+Focus your analysis on:
+- Current market sentiment and what recent news signals about near-term direction
+- Key catalysts, risks, or events emerging from the news flow
+- How sentiment aligns with or diverges from the fundamental picture
+- Any sector or macro themes affecting the stock right now
+
 Provide:
-1. A concise summary paragraph (under 3000 characters) covering the company's current financial position and market sentiment.
-2. Exactly 5 bullet points highlighting the most important figures, numbers, or facts.
+1. A concise summary paragraph (under 2500 characters) covering the current outlook, sentiment drivers, and near-term catalysts or risks.
+2. Exactly 5 bullet points highlighting the most actionable or notable current developments.
 
 Format your response as:
 SUMMARY:
@@ -447,7 +453,7 @@ BULLETS:
 - [bullet 4]
 - [bullet 5]"""
 
-    system_msg = "You are a financial analyst assistant. Be concise and data-driven. Focus on numbers and facts. Do not add disclaimers."
+    system_msg = "You are a financial analyst assistant specializing in market sentiment and current outlook. Focus on what recent news and sentiment mean for near-term positioning. Be concise and data-driven. Do not add disclaimers."
 
     try:
         response = ollama.chat(model=model, messages=[
@@ -471,7 +477,7 @@ BULLETS:
     else:
         summary = content.strip()
 
-    return {'summary': summary[:3000], 'bullets': bullets[:5]}
+    return {'summary': summary, 'bullets': bullets[:5]}
 
 
 def _build_earnings_context(symbol: str, earnings_data: dict) -> str:
@@ -524,9 +530,16 @@ def summarize_earnings_with_llm(symbol: str, earnings_data: dict, model: str = '
 EARNINGS & FUNDAMENTALS:
 {earnings_ctx}
 
+Focus your analysis on:
+- Key business divisions and segments driving revenue and earnings
+- Management guidance and forward-looking statements
+- Earnings surprise direction and what it signals about business unit performance
+- Analyst consensus shifts and what they imply about future quarters
+- Any notable changes in margins, revenue mix, or segment contributions
+
 Provide:
-1. A concise summary paragraph (under 3000 characters) covering the company's financial position, valuation, earnings trajectory, and analyst consensus.
-2. Exactly 5 bullet points highlighting the most important figures, numbers, or facts from the data above.
+1. A concise summary paragraph (under 2500 characters) focused on divisional performance, management guidance, and forward outlook.
+2. Exactly 5 bullet points highlighting the most important figures tied to business units, guidance, or forward-looking indicators.
 
 Format your response as:
 SUMMARY:
@@ -539,7 +552,7 @@ BULLETS:
 - [bullet 4]
 - [bullet 5]"""
 
-    system_msg = "You are a financial analyst assistant. Be concise and data-driven. Focus on numbers and facts. Do not add disclaimers."
+    system_msg = "You are a financial analyst assistant specializing in earnings analysis. Focus on business divisions, segment performance, management guidance, and forward-looking indicators. Be concise and data-driven. Do not add disclaimers."
 
     try:
         response = ollama.chat(model=model, messages=[
@@ -563,7 +576,7 @@ BULLETS:
     else:
         summary = content.strip()
 
-    return {'summary': summary[:3000], 'bullets': bullets[:5]}
+    return {'summary': summary, 'bullets': bullets[:5]}
 
 
 def print_earnings_summary(symbol: str, earnings_data: dict = None):
@@ -662,23 +675,58 @@ def print_earnings_overview(symbol: str, earnings_data: dict):
     print(f"{'=' * 70}\n")
 
 
-def print_summary(symbol: str, news_data: list[dict], earnings_data: dict, title: str = None):
-    """Print LLM-generated summary."""
-    label = title or "BFT AI SUMMARY"
-    print(f"\n{'=' * 70}")
-    print(f"  {label}: {symbol}")
-    print(f"{'=' * 70}")
-    print("  Generating summary...")
+def print_summary(symbol: str, news_data: list[dict], earnings_data: dict,
+                  include_earnings_summary: bool = False):
+    """
+    Print LLM-generated summary with optional two-part layout.
 
-    result = summarize_with_llm(symbol, news_data, earnings_data)
+    When include_earnings_summary=True, prints two subsections:
+      1. BFT AI Current Outlook (news-driven)
+      2. BFT Latest Earnings Summary (divisions/guidance/forward-looking)
 
-    print(f"\n  {result['summary']}\n")
-    if result['bullets']:
+    When False, prints a single "BFT AI Current Outlook" section.
+
+    Returns:
+        Tuple of (outlook_result, earnings_summary_result) — earnings_summary_result
+        is None if include_earnings_summary is False.
+    """
+    if include_earnings_summary:
+        print(f"\n{'=' * 70}")
+        print(f"  BFT AI SUMMARY AND EARNINGS REPORT: {symbol}")
+        print(f"{'=' * 70}")
+
+    # Part 1: Current Outlook (news-driven)
+    print(f"\n  {'─' * 50}")
+    print(f"  BFT AI CURRENT OUTLOOK: {symbol}")
+    print(f"  {'─' * 50}")
+    print("  Generating current outlook...")
+
+    outlook_result = summarize_with_llm(symbol, news_data, earnings_data)
+
+    print(f"\n  {outlook_result['summary']}\n")
+    if outlook_result['bullets']:
         print(f"  Key Points:")
-        for b in result['bullets']:
+        for b in outlook_result['bullets']:
             print(f"    - {b}")
+
+    # Part 2: Earnings Summary (divisions/guidance/forward-looking)
+    earnings_summary_result = None
+    if include_earnings_summary:
+        print(f"\n  {'─' * 50}")
+        print(f"  BFT LATEST EARNINGS SUMMARY: {symbol}")
+        print(f"  {'─' * 50}")
+        print("  Generating earnings summary...")
+
+        earnings_summary_result = summarize_earnings_with_llm(symbol, earnings_data)
+
+        print(f"\n  {earnings_summary_result['summary']}\n")
+        if earnings_summary_result['bullets']:
+            print(f"  Key Figures:")
+            for b in earnings_summary_result['bullets']:
+                print(f"    - {b}")
+
     print(f"\n{'=' * 70}\n")
-    return result
+    return outlook_result, earnings_summary_result
 
 
 def print_snapshot(symbol: str, months_out: int = 1, num_strikes: int = 2, option_type: str = 'both'):
@@ -744,9 +792,13 @@ def _print_snapshot_from_data(quote: dict, options: pd.DataFrame, months_out: in
 def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
                      news_data: list[dict] = None, weighted_avg: float = None,
                      earnings_data: dict = None, llm_result: dict = None,
-                     earnings_summary: dict = None, llm_title: str = None) -> str:
+                     earnings_summary: dict = None) -> str:
     """
     Build an HTML email body with quote, options, news, earnings, and LLM summary sections.
+
+    When both llm_result and earnings_summary are provided, renders two subsections:
+      - BFT AI Current Outlook (news-driven)
+      - BFT Latest Earnings Summary (divisions/guidance/forward-looking)
 
     Args:
         symbol: Stock ticker symbol
@@ -755,7 +807,7 @@ def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
         news_data: List of article dicts (optional)
         weighted_avg: Weighted sentiment score (optional)
         earnings_data: Earnings/overview dict (optional)
-        llm_result: LLM summary dict with 'summary' and 'bullets' (optional)
+        llm_result: Current outlook LLM summary dict (optional)
         earnings_summary: Earnings-only LLM summary dict (optional)
 
     Returns:
@@ -875,11 +927,18 @@ def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
                 </tr>"""
             html += "</table>"
 
-    # BFT AI Summary (combined news + earnings LLM)
-    if llm_result and llm_result.get('summary'):
-        summary_heading = llm_title or "BFT AI Summary"
+    # BFT AI Summary — two-part layout when both are available
+    has_outlook = llm_result and llm_result.get('summary')
+    has_earnings_llm = earnings_summary and earnings_summary.get('summary')
+
+    if has_outlook and has_earnings_llm:
+        # Umbrella heading
+        html += f"""<h3 style="border-bottom: 2px solid #333; padding-bottom: 4px;">BFT AI Summary and Earnings Report</h3>"""
+
+    # Part 1: Current Outlook
+    if has_outlook:
         html += f"""
-        <h3 style="border-bottom: 1px solid #ccc; padding-bottom: 4px;">{summary_heading}</h3>
+        <h4 style="border-bottom: 1px solid #ccc; padding-bottom: 4px; color: #1565c0;">BFT AI Current Outlook</h4>
         <p style="line-height: 1.5;">{llm_result['summary']}</p>
         """
         if llm_result.get('bullets'):
@@ -917,10 +976,10 @@ def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
             </tr>"""
         html += "</table>"
 
-    # Earnings Report Summary (earnings-only LLM)
-    if earnings_summary and earnings_summary.get('summary'):
+    # Part 2: Earnings Summary
+    if has_earnings_llm:
         html += f"""
-        <h3 style="border-bottom: 1px solid #ccc; padding-bottom: 4px;">BFT AI Earnings Report Summary</h3>
+        <h4 style="border-bottom: 1px solid #ccc; padding-bottom: 4px; color: #2e7d32;">BFT Latest Earnings Summary</h4>
         <p style="line-height: 1.5;">{earnings_summary['summary']}</p>
         """
         if earnings_summary.get('bullets'):
@@ -1013,6 +1072,8 @@ if __name__ == '__main__':
                         help='Skip earnings data in --summary (news-only LLM summary)')
     parser.add_argument('--email', action='store_true',
                         help='Send the output as an HTML email report')
+    parser.add_argument('--email-to', type=str, default=None,
+                        help='Override IBKR_NOTIFY_EMAIL and send only to this address')
 
     args = parser.parse_args()
 
@@ -1057,14 +1118,14 @@ if __name__ == '__main__':
     if args.news:
         weighted_avg, news_data = get_news_sentiment(args.symbol)
 
-    # 3) BFT AI Summary (combined news + earnings LLM)
+    # 3) BFT AI Summary — two-part when earnings included
     if args.summary:
-        if args.summary and args.earnings_summary:
-            title = "BFT AI SUMMARY AND EARNINGS REPORT"
-        else:
-            title = "BFT AI SUMMARY"
+        include_earnings = needs_earnings
         try:
-            llm_result = print_summary(args.symbol, news_data, earnings_data, title=title)
+            llm_result, earnings_summary_result = print_summary(
+                args.symbol, news_data, earnings_data,
+                include_earnings_summary=include_earnings,
+            )
         except Exception as e:
             logger.error(f"LLM summary failed: {e}")
             print(f"\n  [BFT AI Summary unavailable: {e}]\n")
@@ -1073,7 +1134,7 @@ if __name__ == '__main__':
     if args.news:
         print_news_sentiment(args.symbol, prefetched=(weighted_avg, news_data))
 
-    # 5) BFT AI Earnings Report Summary (earnings-only LLM)
+    # 5) BFT AI Earnings Report Summary (standalone, only when --earnings-summary without --summary)
     if args.earnings_summary and not args.summary:
         try:
             earnings_summary_result = print_earnings_summary(args.symbol, earnings_data)
@@ -1083,14 +1144,11 @@ if __name__ == '__main__':
 
     # Send email if requested
     if args.email:
+        # Override recipient if --email-to is set
+        if args.email_to:
+            os.environ['IBKR_NOTIFY_EMAIL'] = args.email_to
         change_sign = '+' if quote['change'] >= 0 else ''
         subject = f"{args.symbol} ${quote['price']:.2f} {change_sign}{quote['change']:.2f} ({change_sign}{quote['change_pct']}%) - RT Report"
-        if args.summary and args.earnings_summary:
-            email_llm_title = "BFT AI Summary and Earnings Report"
-        elif args.summary:
-            email_llm_title = "BFT AI Summary"
-        else:
-            email_llm_title = None
         html = build_email_html(
             symbol=args.symbol,
             quote=quote,
@@ -1100,6 +1158,5 @@ if __name__ == '__main__':
             earnings_data=earnings_data,
             llm_result=llm_result,
             earnings_summary=earnings_summary_result,
-            llm_title=email_llm_title,
         )
         send_email_report(subject, html)
