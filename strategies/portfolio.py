@@ -500,7 +500,6 @@ Examples:
         print_summary(data, result_symbols)
 
     if args.output:
-        with open(args.output, 'w') as f:
-            for s in result_symbols:
-                f.write(s + '\n')
+        out_df = pd.DataFrame({'symbol': result_symbols})
+        out_df.to_csv(args.output, index=False)
         print(f"Saved {len(result_symbols)} symbols to {args.output}")

@@ -29,6 +29,17 @@ from order import Order, StockOrder, OrderOperation
 from strategy.base_strategy import BaseStrategy
 
 
+# Column name mappings for merged vs individual prediction files
+MERGED_COLUMN_MAP = {
+    'pred_return_reg_3d': 'pred_reg_3d',
+    'pred_return_reg_10d': 'pred_reg_10d',
+}
+
+INDIVIDUAL_COLUMN_MAP = {
+    'pred_return': None,  # renamed per-file in _load_from_dir
+}
+
+
 class RegressionMomentumStrategy(BaseStrategy):
     """
     Strategy using regression model predictions with momentum confirmation.
@@ -45,53 +56,101 @@ class RegressionMomentumStrategy(BaseStrategy):
     MIN_HOLD_DAYS = 2
     MAX_HOLD_DAYS = 13
 
-    def __init__(self, account, symbols, predictions_dir=None, position_size=0.1):
+    def __init__(self, account, symbols, predictions_path=None, position_size=0.1):
         """
         Initialize the strategy.
 
         Args:
             account: BacktestAccount instance
             symbols: Set of symbols to trade
-            predictions_dir: Directory containing prediction CSV files
+            predictions_path: Path to merged_predictions.csv or a predictions directory
             position_size: Fraction of portfolio per position (default 0.1 = 10%)
         """
         super().__init__(account, symbols)
-        self.predictions_dir = predictions_dir
+        self.predictions_path = predictions_path
         self.position_size = position_size
 
         # Track positions: {symbol: {'shares': int, 'entry_date': date, 'entry_price': float}}
         self.positions = {}
 
+        # Completed trade log for stats
+        self.trade_log = []
+
         # Load predictions if path provided
         self.predictions = None
-        if predictions_dir:
+        if predictions_path:
             self._load_predictions()
 
-    def set_predictions_dir(self, path):
-        """Set predictions directory after initialization."""
-        self.predictions_dir = path
-        self._load_predictions()
-
     def _load_predictions(self):
-        """Load and merge regression predictions from multiple files."""
-        if not self.predictions_dir:
+        """Load predictions from a merged CSV or a predictions directory."""
+        path = self.predictions_path
+        if not path:
             return
 
-        # Load 3-day regression predictions
-        reg_3d_path = os.path.join(self.predictions_dir, 'pred_reg_3d.csv')
-        reg_10d_path = os.path.join(self.predictions_dir, 'pred_reg_10d.csv')
+        if os.path.isfile(path):
+            self._load_from_merged(path)
+        elif os.path.isdir(path):
+            self._load_from_dir(path)
+        else:
+            print(f"[RegressionMomentumStrategy] Warning: Path not found: {path}")
+
+    def _load_from_merged(self, csv_path):
+        """Load predictions from a single merged_predictions.csv file."""
+        df = pd.read_csv(csv_path)
+
+        # Standardize columns
+        df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+        if 'ticker' in df.columns and 'symbol' not in df.columns:
+            df['symbol'] = df['ticker']
+
+        # Map merged column names to strategy's internal names
+        rename = {}
+        for src, dst in MERGED_COLUMN_MAP.items():
+            if src in df.columns:
+                rename[src] = dst
+
+        if not rename:
+            print(f"[RegressionMomentumStrategy] Warning: No prediction columns found in {csv_path}")
+            print(f"  Expected columns like: {list(MERGED_COLUMN_MAP.keys())}")
+            return
+
+        df = df.rename(columns=rename)
+
+        # Keep only needed columns
+        needed = ['date', 'symbol', 'pred_reg_3d', 'pred_reg_10d', 'adx_signal', 'cci_signal']
+        missing = [c for c in needed if c not in df.columns]
+        if missing:
+            print(f"[RegressionMomentumStrategy] Warning: Missing columns: {missing}")
+            return
+
+        self.predictions = df[needed].copy()
+        self.predictions = self.predictions[self.predictions['symbol'].isin(self.symbols)]
+
+        print(f"[RegressionMomentumStrategy] Loaded from merged file: {csv_path}")
+        print(f"  Rows: {len(self.predictions):,}")
+        print(f"  Symbols: {self.predictions['symbol'].nunique()}")
+        print(f"  Date range: {self.predictions['date'].min()} to {self.predictions['date'].max()}")
+
+    def _load_from_dir(self, predictions_dir):
+        """Load predictions from individual files in a directory (legacy)."""
+        reg_3d_path = os.path.join(predictions_dir, 'pred_reg_3d.csv')
+        reg_10d_path = os.path.join(predictions_dir, 'pred_reg_10d.csv')
+
+        # Also check for predictions_reg_3d.csv naming
+        if not os.path.exists(reg_3d_path):
+            reg_3d_path = os.path.join(predictions_dir, 'predictions_reg_3d.csv')
+        if not os.path.exists(reg_10d_path):
+            reg_10d_path = os.path.join(predictions_dir, 'predictions_reg_10d.csv')
 
         if not os.path.exists(reg_3d_path) or not os.path.exists(reg_10d_path):
             print(f"[RegressionMomentumStrategy] Warning: Prediction files not found")
-            print(f"  Expected: {reg_3d_path}")
-            print(f"  Expected: {reg_10d_path}")
+            print(f"  Checked: {reg_3d_path}")
+            print(f"  Checked: {reg_10d_path}")
             return
 
-        # Load regression predictions
         reg_3d = pd.read_csv(reg_3d_path)
         reg_10d = pd.read_csv(reg_10d_path)
 
-        # Standardize column names
         reg_3d['date'] = pd.to_datetime(reg_3d['date']).dt.strftime('%Y-%m-%d')
         reg_10d['date'] = pd.to_datetime(reg_10d['date']).dt.strftime('%Y-%m-%d')
 
@@ -100,20 +159,16 @@ class RegressionMomentumStrategy(BaseStrategy):
         if 'ticker' in reg_10d.columns:
             reg_10d['symbol'] = reg_10d['ticker']
 
-        # Extract needed columns
         reg_3d_sub = reg_3d[['date', 'symbol', 'pred_return', 'adx_signal', 'cci_signal']].copy()
         reg_3d_sub.columns = ['date', 'symbol', 'pred_reg_3d', 'adx_signal', 'cci_signal']
 
         reg_10d_sub = reg_10d[['date', 'symbol', 'pred_return']].copy()
         reg_10d_sub.columns = ['date', 'symbol', 'pred_reg_10d']
 
-        # Merge predictions
         self.predictions = reg_3d_sub.merge(reg_10d_sub, on=['date', 'symbol'], how='inner')
-
-        # Filter to symbols we're trading
         self.predictions = self.predictions[self.predictions['symbol'].isin(self.symbols)]
 
-        print(f"[RegressionMomentumStrategy] Loaded predictions:")
+        print(f"[RegressionMomentumStrategy] Loaded from directory: {predictions_dir}")
         print(f"  Rows: {len(self.predictions):,}")
         print(f"  Symbols: {self.predictions['symbol'].nunique()}")
         print(f"  Date range: {self.predictions['date'].min()} to {self.predictions['date'].max()}")
@@ -203,6 +258,19 @@ class RegressionMomentumStrategy(BaseStrategy):
                     pct_return = (current_price - entry_price) / entry_price * 100
 
                     orders.append(StockOrder(symbol, OrderOperation.SELL, shares, current_price, date_str))
+
+                    # Record completed trade
+                    self.trade_log.append({
+                        'symbol': symbol,
+                        'entry_date': entry_date.strftime('%Y-%m-%d'),
+                        'exit_date': date_str,
+                        'entry_price': entry_price,
+                        'exit_price': current_price,
+                        'shares': shares,
+                        'pnl': (current_price - entry_price) * shares,
+                        'return_pct': pct_return,
+                        'hold_days': hold_days,
+                    })
 
                     print(f"  EXIT {symbol}: held {hold_days}d, return: {pct_return:+.2f}%")
 

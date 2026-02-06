@@ -165,26 +165,28 @@ class TradeNotifier:
             logger.debug("Email notifications not configured")
             return False
 
-        # Support comma-separated emails
+        # Support comma-separated emails — send individually so recipients don't see each other
         recipients = [e.strip() for e in self.config.notify_email.split(",")]
 
         try:
-            msg = MIMEMultipart()
-            msg["From"] = self.config.smtp_user
-            msg["To"] = ", ".join(recipients)
-            msg["Subject"] = subject
-            msg.attach(MIMEText(body, "plain"))
-
+            sent = []
             with smtplib.SMTP(self.config.smtp_server, self.config.smtp_port) as server:
                 server.starttls()
                 server.login(self.config.smtp_user, self.config.smtp_password)
-                server.send_message(msg)
+                for recipient in recipients:
+                    msg = MIMEMultipart()
+                    msg["From"] = self.config.smtp_user
+                    msg["To"] = recipient
+                    msg["Subject"] = subject
+                    msg.attach(MIMEText(body, "plain"))
+                    server.send_message(msg)
+                    sent.append(recipient)
 
-            logger.info(f"Email sent to {len(recipients)} recipient(s): {subject}")
+            logger.info(f"Email sent individually to {len(sent)} recipient(s): {subject}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to send email: {e}")
+            logger.error(f"Failed to send email ({len(sent)}/{len(recipients)} sent): {e}")
             return False
 
     def _send_sms(self, body: str) -> bool:

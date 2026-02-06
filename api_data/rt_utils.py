@@ -967,24 +967,27 @@ def send_email_report(subject: str, html_body: str) -> bool:
     recipients = [e.strip() for e in notify_email.split(',')]
 
     try:
-        msg = MIMEMultipart('alternative')
-        msg['From'] = smtp_user
-        msg['To'] = ', '.join(recipients)
-        msg['Subject'] = subject
-
-        msg.attach(MIMEText(html_body, 'html'))
-
+        sent = []
         with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls()
             server.login(smtp_user, smtp_password)
-            server.send_message(msg)
+            for recipient in recipients:
+                msg = MIMEMultipart('alternative')
+                msg['From'] = smtp_user
+                msg['To'] = recipient
+                msg['Subject'] = subject
+                msg.attach(MIMEText(html_body, 'html'))
+                server.send_message(msg)
+                sent.append(recipient)
 
-        print(f"  Email sent to {len(recipients)} recipient(s): {', '.join(recipients)}")
-        logger.info(f"Email report sent: {subject} -> {recipients}")
+        print(f"  Email sent individually to {len(sent)} recipient(s): {', '.join(sent)}")
+        logger.info(f"Email report sent: {subject} -> {sent}")
         return True
 
     except Exception as e:
         logger.error(f"Failed to send email: {e}")
+        if sent:
+            print(f"  Partial send ({len(sent)}/{len(recipients)}): {', '.join(sent)}")
         print(f"  ERROR: Failed to send email: {e}")
         return False
 
@@ -1014,7 +1017,20 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Always show the quote + options snapshot
-    quote, options = get_options_snapshot(args.symbol, args.months_out, args.strikes, args.type)
+    try:
+        quote, options = get_options_snapshot(args.symbol, args.months_out, args.strikes, args.type)
+    except Exception as e:
+        logger.error(f"Failed to fetch options for {args.symbol}: {e}")
+        # Fall back to quote-only
+        try:
+            quote = get_realtime_quote(args.symbol)
+            options = pd.DataFrame()
+            logger.info(f"Continuing with quote only (no options data)")
+        except Exception as e2:
+            logger.error(f"Failed to fetch quote for {args.symbol}: {e2}")
+            print(f"Error: Could not fetch data for {args.symbol}. Check symbol and API key.")
+            import sys
+            sys.exit(1)
     # Print snapshot using already-fetched data
     _print_snapshot_from_data(quote, options, args.months_out, args.strikes, args.type)
 
@@ -1047,7 +1063,11 @@ if __name__ == '__main__':
             title = "BFT AI SUMMARY AND EARNINGS REPORT"
         else:
             title = "BFT AI SUMMARY"
-        llm_result = print_summary(args.symbol, news_data, earnings_data, title=title)
+        try:
+            llm_result = print_summary(args.symbol, news_data, earnings_data, title=title)
+        except Exception as e:
+            logger.error(f"LLM summary failed: {e}")
+            print(f"\n  [BFT AI Summary unavailable: {e}]\n")
 
     # 4) News Sentiment (display after LLM summary)
     if args.news:
@@ -1055,7 +1075,11 @@ if __name__ == '__main__':
 
     # 5) BFT AI Earnings Report Summary (earnings-only LLM)
     if args.earnings_summary and not args.summary:
-        earnings_summary_result = print_earnings_summary(args.symbol, earnings_data)
+        try:
+            earnings_summary_result = print_earnings_summary(args.symbol, earnings_data)
+        except Exception as e:
+            logger.error(f"LLM earnings summary failed: {e}")
+            print(f"\n  [BFT AI Earnings Summary unavailable: {e}]\n")
 
     # Send email if requested
     if args.email:

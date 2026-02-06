@@ -36,7 +36,10 @@ class MLPredictionStrategy(BaseStrategy):
         super().__init__(account, symbols)
         self.predictions_path = predictions_path
         self.position_size = position_size
-        self.holdings = {}  # Track current holdings {symbol: shares}
+        self.holdings = {}  # {symbol: {'shares': int, 'entry_date': date, 'entry_price': float}}
+
+        # Completed trade log for stats
+        self.trade_log = []
 
         if predictions_path:
             self.predictions = self._load_predictions()
@@ -112,20 +115,43 @@ class MLPredictionStrategy(BaseStrategy):
                 continue
 
             pred_class = int(pred['pred_class'])
-            currently_holding = symbol in self.holdings and self.holdings[symbol] > 0
+            has_position = symbol in self.holdings and self.holdings[symbol]['shares'] > 0
 
             # Simple buy/sell logic
-            if pred_class == 1 and not currently_holding:
+            if pred_class == 1 and not has_position:
                 # BUY signal
                 shares = self.account.get_max_buyable_shares(current_price, self.position_size)
                 if shares > 0:
                     orders.append(StockOrder(symbol, OrderOperation.BUY, shares, current_price, date_str))
-                    self.holdings[symbol] = shares
+                    self.holdings[symbol] = {
+                        'shares': shares,
+                        'entry_date': pd.to_datetime(date),
+                        'entry_price': current_price,
+                    }
 
-            elif pred_class == 0 and currently_holding:
+            elif pred_class == 0 and has_position:
                 # SELL signal
-                shares = self.holdings[symbol]
+                pos = self.holdings[symbol]
+                shares = pos['shares']
+                entry_price = pos['entry_price']
+                entry_date = pos['entry_date']
+                hold_days = (pd.to_datetime(date) - entry_date).days
+                pct_return = (current_price - entry_price) / entry_price * 100
+
                 orders.append(StockOrder(symbol, OrderOperation.SELL, shares, current_price, date_str))
-                self.holdings[symbol] = 0
+
+                self.trade_log.append({
+                    'symbol': symbol,
+                    'entry_date': entry_date.strftime('%Y-%m-%d'),
+                    'exit_date': date_str,
+                    'entry_price': entry_price,
+                    'exit_price': current_price,
+                    'shares': shares,
+                    'pnl': (current_price - entry_price) * shares,
+                    'return_pct': pct_return,
+                    'hold_days': hold_days,
+                })
+
+                del self.holdings[symbol]
 
         return orders

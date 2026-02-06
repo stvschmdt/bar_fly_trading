@@ -7,32 +7,34 @@ Portfolio filtering/ranking via portfolio.py is applied before the backtest
 to narrow the symbol universe.
 
 Usage:
+    # Using merged predictions file
     python run_regression_momentum.py \
+        --predictions merged_predictions.csv \
+        --use-all-symbols \
+        --start-date 2024-07-01 \
+        --end-date 2024-12-31
+
+    # Specific symbols
+    python run_regression_momentum.py \
+        --predictions merged_predictions.csv \
         --symbols AAPL GOOGL MSFT NVDA \
         --start-date 2024-07-01 \
         --end-date 2024-12-31 \
         --start-cash 100000
 
-    # Or use all symbols from predictions:
-    python run_regression_momentum.py \
-        --use-all-symbols \
-        --start-date 2024-07-01 \
-        --end-date 2024-12-31
-
     # Portfolio filtering: price band + top 15 by Sharpe
     python run_regression_momentum.py \
+        --predictions merged_predictions.csv \
         --use-all-symbols \
         --portfolio-data all_data_0.csv \
         --price-above 25 --top-k-sharpe 15 \
         --start-date 2024-07-01 \
         --end-date 2024-12-31
 
-    # Watchlist filter + field filter (beta < 1.5)
+    # Legacy: predictions directory (individual files)
     python run_regression_momentum.py \
+        --predictions output/ \
         --use-all-symbols \
-        --portfolio-data all_data_0.csv \
-        --watchlist api_data/watchlist.csv --watchlist-mode filter \
-        --filter-field beta --filter-below 1.5 \
         --start-date 2024-07-01 \
         --end-date 2024-12-31
 """
@@ -43,13 +45,17 @@ import sys
 
 import pandas as pd
 
-# Add bar_fly_trading to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'bar_fly_trading')))
+# Add bar_fly_trading and strategies to path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, current_dir)
+sys.path.insert(0, parent_dir)
 
 from account.account_values import AccountValues
 from account.backtest_account import BacktestAccount
 from api_data.storage import connect_database
 from backtest import backtest
+from backtest_stats import compute_stats, print_stats, write_trade_log, write_symbols, read_symbols
 from portfolio import (
     load_data as portfolio_load_data,
     load_watchlist,
@@ -60,24 +66,27 @@ from portfolio import (
 from regression_momentum_strategy import RegressionMomentumStrategy
 
 
-# Default paths
-DEFAULT_PREDICTIONS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '..', 'mlr', 'stockformer', 'output', 'predictions')
-)
+def get_available_symbols(predictions_path):
+    """Get list of symbols available in predictions (file or directory)."""
+    if os.path.isfile(predictions_path):
+        df = pd.read_csv(predictions_path, nrows=1)
+        col = 'ticker' if 'ticker' in df.columns else 'symbol'
+        df = pd.read_csv(predictions_path, usecols=[col])
+        return set(df[col].unique())
+    elif os.path.isdir(predictions_path):
+        # Legacy: check for individual files
+        for name in ['pred_reg_3d.csv', 'predictions_reg_3d.csv']:
+            pred_file = os.path.join(predictions_path, name)
+            if os.path.exists(pred_file):
+                df = pd.read_csv(pred_file, nrows=1)
+                col = 'ticker' if 'ticker' in df.columns else 'symbol'
+                df = pd.read_csv(pred_file, usecols=[col])
+                return set(df[col].unique())
+    return set()
 
 
-def get_available_symbols(predictions_dir):
-    """Get list of symbols available in predictions."""
-    pred_file = os.path.join(predictions_dir, 'pred_reg_3d.csv')
-    if not os.path.exists(pred_file):
-        return set()
-
-    df = pd.read_csv(pred_file, usecols=['ticker'] if 'ticker' in pd.read_csv(pred_file, nrows=1).columns else ['symbol'])
-    col = 'ticker' if 'ticker' in df.columns else 'symbol'
-    return set(df[col].unique())
-
-
-def run_backtest(symbols, start_date, end_date, start_cash, predictions_dir, db='local', position_size=0.1):
+def run_backtest(symbols, start_date, end_date, start_cash, predictions_path,
+                 db='local', position_size=0.1, output_trades=None, output_symbols=None):
     """
     Run the Regression Momentum backtest.
 
@@ -86,9 +95,11 @@ def run_backtest(symbols, start_date, end_date, start_cash, predictions_dir, db=
         start_date: Start date (YYYY-MM-DD)
         end_date: End date (YYYY-MM-DD)
         start_cash: Initial cash balance
-        predictions_dir: Path to predictions directory
+        predictions_path: Path to merged_predictions.csv or predictions directory
         db: Database to use ('local' or 'remote')
         position_size: Fraction of portfolio per position
+        output_trades: Path to write trade log CSV (optional)
+        output_symbols: Path to write symbol list CSV (optional)
 
     Returns:
         Final AccountValues
@@ -108,7 +119,7 @@ def run_backtest(symbols, start_date, end_date, start_cash, predictions_dir, db=
     strategy = RegressionMomentumStrategy(
         account=account,
         symbols=symbols,
-        predictions_dir=predictions_dir,
+        predictions_path=predictions_path,
         position_size=position_size
     )
 
@@ -127,45 +138,31 @@ Backtest Setup:
   Symbols: {len(symbols)} stocks
   Date Range: {start_date} to {end_date}
   Starting Cash: ${start_cash:,.2f}
-  Predictions: {predictions_dir}
+  Predictions: {predictions_path}
 """)
     print("=" * 70 + "\n")
 
     # Run backtest
     account_values = backtest(strategy, symbols, start_date, end_date)
 
-    # Print results
-    print("\n" + "=" * 70)
-    print("BACKTEST RESULTS")
-    print("=" * 70)
-
+    # Compute and print stats
     final_value = account_values.cash + account_values.stock_value + account_values.options_value
-    total_return = (final_value - start_cash) / start_cash * 100
+    stats = compute_stats(strategy.trade_log, start_cash)
+    print_stats(stats, start_cash, final_value)
 
-    print(f"""
-Final Account Values:
-  Cash:          ${account_values.cash:,.2f}
-  Stock Value:   ${account_values.stock_value:,.2f}
-  Options Value: ${account_values.options_value:,.2f}
-  ─────────────────────────────────
-  Total Value:   ${final_value:,.2f}
-
-Performance:
-  Starting:      ${start_cash:,.2f}
-  Ending:        ${final_value:,.2f}
-  Total Return:  {total_return:+.2f}%
-
-Open Positions: {len(strategy.get_open_positions())}
-""")
-
-    # List open positions if any
+    # Open positions
     open_positions = strategy.get_open_positions()
     if open_positions:
-        print("Open Positions:")
+        print(f"\nOpen Positions ({len(open_positions)}):")
         for symbol, pos in open_positions.items():
             print(f"  {symbol}: {pos['shares']} shares @ ${pos['entry_price']:.2f}")
+        print()
 
-    print("=" * 70 + "\n")
+    # Write output files
+    if output_trades:
+        write_trade_log(strategy.trade_log, output_trades)
+    if output_symbols:
+        write_symbols(symbols, output_symbols)
 
     return account_values
 
@@ -176,26 +173,28 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Backtest specific symbols
-  python run_regression_momentum.py --symbols AAPL NVDA --start-date 2024-07-01 --end-date 2024-12-31
-
-  # Backtest all available symbols
-  python run_regression_momentum.py --use-all-symbols --start-date 2024-07-01 --end-date 2024-12-31
+  # Backtest with merged predictions
+  python run_regression_momentum.py --predictions merged_predictions.csv \\
+      --use-all-symbols --start-date 2024-07-01 --end-date 2024-12-31
 
   # Portfolio filter: price > $25, top 15 by Sharpe
-  python run_regression_momentum.py --use-all-symbols --portfolio-data all_data_0.csv \\
+  python run_regression_momentum.py --predictions merged_predictions.csv \\
+      --use-all-symbols --portfolio-data all_data_0.csv \\
       --price-above 25 --top-k-sharpe 15 --start-date 2024-07-01 --end-date 2024-12-31
 
-  # Watchlist + field filter (beta < 1.5)
-  python run_regression_momentum.py --use-all-symbols --portfolio-data all_data_0.csv \\
-      --watchlist api_data/watchlist.csv --watchlist-mode filter \\
-      --filter-field beta --filter-below 1.5 --start-date 2024-07-01 --end-date 2024-12-31
+  # Legacy: predictions directory
+  python run_regression_momentum.py --predictions output/ \\
+      --use-all-symbols --start-date 2024-07-01 --end-date 2024-12-31
         """
     )
 
     # --- Backtest args ---
+    parser.add_argument("--predictions", type=str, required=True,
+                        help="Path to merged_predictions.csv or predictions directory")
     parser.add_argument("--symbols", type=str, nargs="+",
                         help="Symbols to trade (e.g., AAPL GOOGL MSFT)")
+    parser.add_argument("--symbols-file", type=str, default=None,
+                        help="CSV file with symbol list (output of portfolio or prior backtest)")
     parser.add_argument("--use-all-symbols", action="store_true",
                         help="Use all symbols available in predictions")
     parser.add_argument("--start-date", type=str, required=True,
@@ -204,8 +203,6 @@ Examples:
                         help="Backtest end date (YYYY-MM-DD)")
     parser.add_argument("--start-cash", type=float, default=100000,
                         help="Initial cash balance (default: 100000)")
-    parser.add_argument("--predictions-dir", type=str, default=DEFAULT_PREDICTIONS_DIR,
-                        help="Directory containing prediction CSV files")
     parser.add_argument("--position-size", type=float, default=0.1,
                         help="Position size as fraction of portfolio (default: 0.1 = 10%%)")
     parser.add_argument("--db", type=str, default='local', choices=['local', 'remote'],
@@ -232,19 +229,28 @@ Examples:
     parser.add_argument("--top-k-sharpe", type=int, default=None,
                         help="Keep top K symbols ranked by Sharpe ratio")
 
+    # --- Output files ---
+    parser.add_argument("--output-trades", type=str, default=None,
+                        help="Path to write trade log CSV")
+    parser.add_argument("--output-symbols", type=str, default=None,
+                        help="Path to write filtered symbol list CSV")
+
     args = parser.parse_args()
 
     # Determine symbols
     if args.use_all_symbols:
-        symbols = get_available_symbols(args.predictions_dir)
+        symbols = get_available_symbols(args.predictions)
         if not symbols:
-            print(f"Error: No symbols found in {args.predictions_dir}")
+            print(f"Error: No symbols found in {args.predictions}")
             sys.exit(1)
         print(f"Using all {len(symbols)} symbols from predictions")
+    elif args.symbols_file:
+        symbols = set(read_symbols(args.symbols_file))
+        print(f"Loaded {len(symbols)} symbols from {args.symbols_file}")
     elif args.symbols:
         symbols = set(args.symbols)
     else:
-        print("Error: Must specify --symbols or --use-all-symbols")
+        print("Error: Must specify --symbols, --symbols-file, or --use-all-symbols")
         sys.exit(1)
 
     # --- Portfolio ranking pipeline ---
@@ -254,7 +260,6 @@ Examples:
     ])
 
     if has_portfolio_filters:
-        # Load portfolio data (required for price/field/sharpe filters)
         portfolio_df = None
         if args.portfolio_data:
             print(f"Loading portfolio data: {args.portfolio_data}")
@@ -263,7 +268,6 @@ Examples:
         wl = load_watchlist(args.watchlist) if args.watchlist else None
 
         if portfolio_df is not None:
-            # Full pipeline: watchlist + price + field + sharpe
             symbols_list = portfolio_pipeline(
                 portfolio_df,
                 symbols=list(symbols),
@@ -278,9 +282,12 @@ Examples:
             )
             symbols = set(symbols_list)
         elif wl:
-            # Watchlist-only (no data CSV needed)
             symbols = set(apply_watchlist(list(symbols), wl, args.watchlist_mode))
             print(f"After watchlist ({args.watchlist_mode}): {len(symbols)} symbols")
+
+    # Write symbol list before backtest (portfolio-filtered set)
+    if args.output_symbols:
+        write_symbols(symbols, args.output_symbols)
 
     # Run backtest
     run_backtest(
@@ -288,7 +295,8 @@ Examples:
         start_date=args.start_date,
         end_date=args.end_date,
         start_cash=args.start_cash,
-        predictions_dir=args.predictions_dir,
+        predictions_path=args.predictions,
         db=args.db,
-        position_size=args.position_size
+        position_size=args.position_size,
+        output_trades=args.output_trades,
     )

@@ -250,27 +250,8 @@ def train(cfg):
 # Run All Horizons
 # =============================================================================
 
-def run_all_horizons(cfg):
-    """
-    Run train + infer for all combinations of horizons and label modes.
-
-    Horizons: 3, 10, 30 days
-    Label modes: regression, binary, buckets
-
-    Total: 9 runs
-    """
-    targets = [
-        (3, "3d"),
-        (10, "10d"),
-        (30, "30d"),
-    ]
-    label_modes = [
-        ("regression", "reg"),
-        ("binary", "bin"),
-        ("buckets", "buck"),
-    ]
-
-    # Parse base paths
+def _build_suffixed_paths(cfg):
+    """Parse base output paths and return split_ext helper + base components."""
     base_model = cfg["model_out"]
     base_log = cfg["log_path"]
     base_pred = cfg["output_csv"]
@@ -283,12 +264,76 @@ def run_all_horizons(cfg):
             ext = default_ext
         return base, ext
 
-    model_base, model_ext = split_ext(base_model, ".pt")
-    log_base, log_ext = split_ext(base_log, ".csv")
-    pred_base, pred_ext = split_ext(base_pred, ".csv")
+    return {
+        "model": split_ext(base_model, ".pt"),
+        "log": split_ext(base_log, ".csv"),
+        "pred": split_ext(base_pred, ".csv"),
+    }
+
+
+HORIZONS = [
+    (3, "3d"),
+    (10, "10d"),
+    (30, "30d"),
+]
+
+ALL_LABEL_MODES = [
+    ("regression", "reg"),
+    ("binary", "bin"),
+    ("buckets", "buck"),
+]
+
+
+def _resolve_label_modes(single_label_mode=None):
+    """Return list of (label_mode, tag) tuples, filtered if single_label_mode is set."""
+    if single_label_mode:
+        modes = [(m, t) for m, t in ALL_LABEL_MODES if m == single_label_mode]
+        if not modes:
+            raise ValueError(f"Unknown label mode: {single_label_mode}. "
+                             f"Choose from: {[m for m, _ in ALL_LABEL_MODES]}")
+        return modes
+    return ALL_LABEL_MODES
+
+
+def _find_model_file(model_base, model_ext, suffix):
+    """Search for a model file, checking suffixed path and current directory fallback."""
+    # Primary: output/model_checkpoint_reg_3d.pt
+    if model_base is not None:
+        primary = f"{model_base}_{suffix}{model_ext}"
+    else:
+        primary = f"model_{suffix}{model_ext}"
+
+    if os.path.exists(primary):
+        return primary
+
+    # Fallback: check current directory (model_checkpoint_reg_3d.pt)
+    basename = os.path.basename(primary)
+    if os.path.exists(basename):
+        return basename
+
+    return None
+
+
+def run_all_horizons(cfg, single_label_mode=None):
+    """
+    Run train + infer for all horizons, optionally filtered to one label mode.
+
+    Args:
+        cfg: Configuration dict
+        single_label_mode: If set, only run this label mode (e.g., "regression").
+                           Used by parallel training to split work across processes.
+    """
+    label_modes = _resolve_label_modes(single_label_mode)
+    n_runs = len(label_modes) * len(HORIZONS)
+    print(f"Running {n_runs} train+infer configurations")
+
+    paths = _build_suffixed_paths(cfg)
+    model_base, model_ext = paths["model"]
+    log_base, log_ext = paths["log"]
+    pred_base, pred_ext = paths["pred"]
 
     for label_mode, label_tag in label_modes:
-        for horizon, tag in targets:
+        for horizon, tag in HORIZONS:
             print("\n" + "=" * 60)
             print(f"RUN: horizon={horizon}, label_mode={label_mode}")
             print("=" * 60)
@@ -318,6 +363,64 @@ def run_all_horizons(cfg):
             # Train and infer
             train(run_cfg)
             infer(run_cfg)
+
+
+def run_batch_inference(cfg, single_label_mode=None):
+    """
+    Run inference-only for all horizons, optionally filtered to one label mode.
+
+    Auto-discovers model files by checking the suffixed path and current directory.
+    Skips any configurations where the model file is not found.
+
+    Args:
+        cfg: Configuration dict
+        single_label_mode: If set, only run this label mode (e.g., "regression").
+    """
+    label_modes = _resolve_label_modes(single_label_mode)
+    n_expected = len(label_modes) * len(HORIZONS)
+
+    paths = _build_suffixed_paths(cfg)
+    model_base, model_ext = paths["model"]
+    pred_base, pred_ext = paths["pred"]
+
+    completed = 0
+    skipped = []
+
+    for label_mode, label_tag in label_modes:
+        for horizon, tag in HORIZONS:
+            suffix = f"{label_tag}_{tag}"
+
+            # Find the model file
+            model_path = _find_model_file(model_base, model_ext, suffix)
+            if model_path is None:
+                expected = f"{model_base}_{suffix}{model_ext}" if model_base else f"model_{suffix}{model_ext}"
+                print(f"\nSkipping {label_mode}/{tag}: model not found ({expected})")
+                skipped.append(suffix)
+                continue
+
+            print("\n" + "=" * 60)
+            print(f"INFERENCE: horizon={horizon}, label_mode={label_mode}")
+            print(f"  Model: {model_path}")
+            print("=" * 60)
+
+            run_cfg = cfg.copy()
+            run_cfg["horizon"] = horizon
+            run_cfg["label_mode"] = label_mode
+            run_cfg["model_out"] = model_path
+            run_cfg["output_csv"] = (
+                f"{pred_base}_{suffix}{pred_ext}"
+                if pred_base is not None
+                else f"predictions_{suffix}.csv"
+            )
+
+            infer(run_cfg)
+            completed += 1
+
+    print("\n" + "=" * 60)
+    print(f"Batch inference complete: {completed}/{n_expected} models")
+    if skipped:
+        print(f"  Skipped (model not found): {', '.join(skipped)}")
+    print("=" * 60)
 
 
 # =============================================================================
@@ -617,21 +720,30 @@ if __name__ == "__main__":
 
     # Inference-only mode
     if args.infer_only:
-        if args.horizon is None or args.label_mode is None:
-            raise ValueError("--infer-only requires both --horizon and --label-mode")
-        if not os.path.exists(cfg["model_out"]):
-            raise FileNotFoundError(f"Model not found: {cfg['model_out']}. "
-                                    "Use --model-out to specify a trained model.")
-        print(f"Running inference only: horizon={args.horizon}, label_mode={args.label_mode}")
-        print(f"Model: {cfg['model_out']}")
-        print(f"Output mode: {cfg['output_mode']}")
-        infer(cfg)
+        if args.horizon is not None and args.label_mode is not None:
+            # Single model inference
+            if not os.path.exists(cfg["model_out"]):
+                raise FileNotFoundError(f"Model not found: {cfg['model_out']}. "
+                                        "Use --model-out to specify a trained model.")
+            print(f"Running inference only: horizon={args.horizon}, label_mode={args.label_mode}")
+            print(f"Model: {cfg['model_out']}")
+            print(f"Output mode: {cfg['output_mode']}")
+            infer(cfg)
+        else:
+            # Batch inference: all horizons for one or all label modes
+            print(f"Running batch inference (label_mode={args.label_mode or 'all'})...")
+            run_batch_inference(cfg, single_label_mode=args.label_mode)
 
     # Single config: train + infer
     elif args.horizon is not None and args.label_mode is not None:
         print(f"Running single config: horizon={args.horizon}, label_mode={args.label_mode}")
         train(cfg)
         infer(cfg)
+
+    # Single label mode, all 3 horizons (used by parallel training script)
+    elif args.label_mode is not None and args.horizon is None:
+        print(f"Running all horizons for label_mode={args.label_mode}...")
+        run_all_horizons(cfg, single_label_mode=args.label_mode)
 
     # All 9 combinations
     else:
