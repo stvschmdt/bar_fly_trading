@@ -259,6 +259,7 @@ class StockScreenerV2:
             if symbol not in SECTORS:
                 self._plot_pe_ratio(symbol, symbol_data)
             self._plot_rsi(symbol, symbol_data)
+            self._plot_cci(symbol, symbol_data)
             self._plot_macd(symbol, symbol_data)
 
     def _plot_master_technicals(self, symbol, df, title=None, output_path=None):
@@ -552,6 +553,69 @@ class StockScreenerV2:
         _format_dates(ax)
         ax.set_ylabel('RSI', fontsize=10)
         ax.set_title(f'{symbol} — RSI', fontsize=11, fontweight='bold', pad=10)
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+
+    def _plot_cci(self, symbol, df):
+        """CCI with overbought/oversold zones and zero-cross arrows."""
+        output_path = os.path.join(self.output_dir, f'{symbol}_technical_cci.jpg')
+        fig, ax = plt.subplots(figsize=(14, 5))
+        _style_ax(ax)
+        dates = df['date']
+        cci = df['cci_14']
+
+        ax.plot(dates, cci, color=COLORS['price'], linewidth=1.5, label='CCI 14')
+        ax.axhline(100, color=COLORS['bear_marker'], linewidth=0.8, linestyle='--', alpha=0.5)
+        ax.axhline(-100, color=COLORS['bull_marker'], linewidth=0.8, linestyle='--', alpha=0.5)
+        ax.axhline(0, color=COLORS['neutral'], linewidth=0.5, linestyle='-', alpha=0.3)
+
+        # Zone fills
+        ax.axhspan(100, max(cci.max() * 1.2, 200), alpha=0.08, color=COLORS['bear_marker'])
+        ax.axhspan(min(cci.min() * 1.2, -200), -100, alpha=0.08, color=COLORS['bull_marker'])
+
+        cci_range = max(abs(cci.max()), abs(cci.min()), 1)
+
+        for i in range(1, len(df)):
+            c = cci.iloc[i]
+            cp = cci.iloc[i-1]
+
+            if c >= 100 and cp < 100:
+                # SELL — crossed into overbought
+                ax.annotate('', xy=(dates.iloc[i], c),
+                            xytext=(dates.iloc[i], c + cci_range * 0.1),
+                            arrowprops=dict(arrowstyle='->', color=COLORS['bear_marker'], lw=2.0),
+                            zorder=12)
+            elif c <= -100 and cp > -100:
+                # BUY — crossed into oversold
+                ax.annotate('', xy=(dates.iloc[i], c),
+                            xytext=(dates.iloc[i], c - cci_range * 0.1),
+                            arrowprops=dict(arrowstyle='->', color=COLORS['bull_marker'], lw=2.0),
+                            zorder=12)
+
+            # Zero-line crosses (bold — these are important)
+            if c > 0 and cp <= 0:
+                # Bullish zero cross — green arrow up
+                ax.annotate('', xy=(dates.iloc[i], c),
+                            xytext=(dates.iloc[i], -cci_range * 0.12),
+                            arrowprops=dict(arrowstyle='->', color=COLORS['bull_marker'], lw=2.5),
+                            zorder=13)
+            elif c < 0 and cp >= 0:
+                # Bearish zero cross — red arrow down
+                ax.annotate('', xy=(dates.iloc[i], c),
+                            xytext=(dates.iloc[i], cci_range * 0.12),
+                            arrowprops=dict(arrowstyle='->', color=COLORS['bear_marker'], lw=2.5, linestyle='--'),
+                            zorder=13)
+
+        ax.scatter([], [], marker='^', color=COLORS['bull_marker'], s=40, label='Buy (oversold)')
+        ax.scatter([], [], marker='v', color=COLORS['bear_marker'], s=40, label='Sell (overbought)')
+        ax.scatter([], [], marker='^', color=COLORS['bull_marker'], s=60, label='Zero cross up (bullish)')
+        ax.scatter([], [], marker='v', color=COLORS['bear_marker'], s=60, label='Zero cross down (bearish)')
+        ax.legend(loc='upper right', fontsize=7, framealpha=0.8)
+
+        _format_dates(ax)
+        ax.set_ylabel('CCI', fontsize=10)
+        ax.set_title(f'{symbol} — CCI', fontsize=11, fontweight='bold', pad=10)
         fig.tight_layout()
         fig.savefig(output_path, dpi=150, bbox_inches='tight')
         plt.close(fig)
