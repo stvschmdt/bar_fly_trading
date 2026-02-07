@@ -28,9 +28,10 @@ def clean_up():
     # Delete table_image.png, overnight_<date> and screener_results_<date>.csv
     if TABLE_IMAGE_JPG.exists():
         TABLE_IMAGE_JPG.unlink()
-    for path in BASE_DIR.glob('overnight_*'):
-        if path.suffix == '.pdf' or path.is_dir():
-            path.unlink(missing_ok=True) if path.is_file() else shutil.rmtree(path, ignore_errors=True)
+    for pattern in ['overnight_*', 'overnight_v2_*']:
+        for path in BASE_DIR.glob(pattern):
+            if path.suffix == '.pdf' or path.is_dir():
+                path.unlink(missing_ok=True) if path.is_file() else shutil.rmtree(path, ignore_errors=True)
     for file in BASE_DIR.glob('screener_results_*.csv'):
         file.unlink()
 
@@ -80,7 +81,7 @@ def main():
         check=True
     )
     subprocess.run(
-        [sys.executable, '-m', 'visualizations.screener', '--n_days', '60', '--data', BASE_DIR],
+        [sys.executable, '-m', 'visualizations.screener_v2', '--n_days', '60', '--data', BASE_DIR],
         check=True
     )
 
