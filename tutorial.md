@@ -846,6 +846,40 @@ python strategies/bollinger_shadow_strategy.py \
 python -m ibkr.execute_signals --signals signals/pending_orders.csv --gateway --client-id 10
 ```
 
+#### Real-Time Scan + Execute Loops
+
+For continuous intraday trading, run the scanner and executor as two parallel loops.
+The scanner polls Alpha Vantage on an interval and writes signals; the executor watches
+for the signal file and sends orders to IBKR the moment it appears.
+
+**Terminal 1 — Scanner** (scans every 15 min during market hours):
+```bash
+./scripts/rt_scan_loop.sh --interval 15
+```
+
+**Terminal 2 — Executor** (polls every 2s for signals, paper trading):
+```bash
+./scripts/rt_execute_loop.sh
+```
+
+Both scripts enforce market hours (9:30am–4:00pm ET, Mon–Fri) and sleep outside trading hours.
+
+Scanner options:
+- `--interval N` — minutes between scans (default: 15, can go to 1 or less later)
+- `--watchlist FILE` — override watchlist (default: `api_data/watchlist.csv`)
+- `--dry-run` — print what would run without executing
+- `--once` — single scan, no loop
+
+Executor options:
+- `--poll N` — seconds between file checks (default: 2)
+- `--dry-run` — log what would execute, archive signal file, don't trade
+- `--live` — live trading (default: paper via `--gateway`)
+- `--client-id N` — IBKR client ID (default: 10)
+- `--once` — check once and exit
+
+Logs: `logs/rt_scan.log` and `logs/rt_execute.log`
+Executed signals archived to: `signals/executed/orders_YYYYMMDD_HHMMSS.csv`
+
 #### Going Live
 
 ```bash
