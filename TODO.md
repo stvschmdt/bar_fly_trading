@@ -249,3 +249,14 @@ bar_fly_trading/
 - Every trade requires Gateway connection for real account data
 - Email notifications for all signals (shadow and live)
 - Start conservative: 1 share, few stocks, tight stops
+
+
+# 1. On the source server, dump the database
+mysqldump -u root -p bar_fly_trading > bar_fly_trading_dump.sql
+
+# 2. Copy the dump file to this machine
+scp bar_fly_trading_dump.sql stvschmdt@<this-machine>:~/
+
+# 3. Then on this machine, import it
+docker exec -i mysql mysql -u root -pmy-secret-pw bar_fly_trading < ~/bar_fly_trading_dump.sql
+

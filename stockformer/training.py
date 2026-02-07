@@ -58,7 +58,7 @@ def get_optimizer(model, optimizer_name, lr):
 # Single Epoch
 # =============================================================================
 
-def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode, is_training=True):
+def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode, is_training=True, model_type="encoder"):
     """
     Run one epoch of training or validation.
 
@@ -70,6 +70,7 @@ def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode, is_trai
         device: Device to run on ("cuda" or "cpu")
         label_mode: "regression", "binary", or "buckets"
         is_training: If True, run training; if False, run validation
+        model_type: "encoder" or "cross_attention"
 
     Returns:
         Dict with "loss" and "accuracy" keys
@@ -83,9 +84,16 @@ def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode, is_trai
     correct = 0
     total = 0
 
-    for batch_x, batch_y in loader:
-        # Move data to device
-        batch_x = batch_x.to(device)
+    for batch in loader:
+        # Handle different batch formats based on model type
+        if model_type == "cross_attention":
+            batch_x, batch_market, batch_y = batch
+            batch_x = batch_x.to(device)
+            batch_market = batch_market.to(device)
+        else:
+            batch_x, batch_y = batch
+            batch_x = batch_x.to(device)
+            batch_market = None
 
         if label_mode == "regression":
             batch_y = batch_y.float().to(device)
@@ -95,13 +103,19 @@ def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode, is_trai
         # Forward pass
         if is_training:
             optimizer.zero_grad()
-            outputs = model(batch_x)
+            if model_type == "cross_attention":
+                outputs = model(batch_x, batch_market)
+            else:
+                outputs = model(batch_x)
             loss = loss_fn(outputs, batch_y)
             loss.backward()
             optimizer.step()
         else:
             with torch.no_grad():
-                outputs = model(batch_x)
+                if model_type == "cross_attention":
+                    outputs = model(batch_x, batch_market)
+                else:
+                    outputs = model(batch_x)
                 loss = loss_fn(outputs, batch_y)
 
         # Track metrics
@@ -134,6 +148,7 @@ def train_model(
     num_epochs,
     model_out_path=None,
     log_path=None,
+    model_type="encoder",
 ):
     """
     Full training loop with validation and history tracking.
@@ -149,6 +164,7 @@ def train_model(
         num_epochs: Number of epochs to train
         model_out_path: Path to save the model checkpoint (optional)
         log_path: Path to save training log CSV (optional)
+        model_type: "encoder" or "cross_attention"
 
     Returns:
         Dict with training history (epoch, train_loss, val_loss, train_acc, val_acc)
@@ -171,6 +187,7 @@ def train_model(
             device=device,
             label_mode=label_mode,
             is_training=True,
+            model_type=model_type,
         )
 
         # Validation epoch
@@ -182,6 +199,7 @@ def train_model(
             device=device,
             label_mode=label_mode,
             is_training=False,
+            model_type=model_type,
         )
 
         # Record history

@@ -91,9 +91,9 @@ DEFAULT_CONFIG = {
     # -------------------------------------------------------------------------
     # Output paths
     # -------------------------------------------------------------------------
-    "model_out": "model_checkpoint.pt",
-    "log_path": "training_log.csv",
-    "output_csv": "predictions.csv",
+    "model_out": "output/model_checkpoint.pt",
+    "log_path": "output/training_log.csv",
+    "output_csv": "output/predictions.csv",
 }
 
 

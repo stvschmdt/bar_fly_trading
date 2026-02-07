@@ -160,7 +160,8 @@ class BacktestAccount(Account):
         # Get a string of today's date with time 00:00:00, so we can filter the options data.
         # If we start getting intraday options data, we'll want to match on closest time instead.
         date_without_time = datetime(timestamp.year, timestamp.month, timestamp.day).strftime('%Y-%m-%d %H:%M:%S')
-        self.account_values = self.get_account_values(current_prices, option_data.loc[option_data['date'] == date_without_time])
+        filtered_options = option_data.loc[option_data['date'] == date_without_time] if not option_data.empty else option_data
+        self.account_values = self.get_account_values(current_prices, filtered_options)
         # If the timestamp is already in account_value_history, add one second, so we don't overwrite it
         if timestamp in self.account_value_history:
             timestamp += timedelta(seconds=1)

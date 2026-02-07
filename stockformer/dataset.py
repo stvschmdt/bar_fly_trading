@@ -26,6 +26,11 @@ class StockSequenceDataset(Dataset):
       - A [lookback, feature_dim] float tensor (the input sequence)
       - A label: either a float (regression) or class index (classification)
 
+    For cross-attention mode (market_feature_cols provided):
+      - Returns (stock_seq, market_seq, label)
+      - stock_seq: [lookback, stock_feature_dim]
+      - market_seq: [lookback, market_feature_dim]
+
     Args:
         df: DataFrame with stock data
         lookback: Number of past days to include in each sequence
@@ -36,6 +41,7 @@ class StockSequenceDataset(Dataset):
             - "binary": label is 0 if return < 0, else 1
             - "buckets": label is bucket index based on bucket_edges
         bucket_edges: List of edges for bucket mode (in percent, e.g. [-2, 0, 2])
+        market_feature_cols: Optional list of market feature columns for cross-attention mode
         group_col: Column to group by (default: "ticker")
         date_col: Column for dates (default: "date")
     """
@@ -48,6 +54,7 @@ class StockSequenceDataset(Dataset):
         feature_cols: List[str],
         label_mode: str = "binary",
         bucket_edges: Optional[List[float]] = None,
+        market_feature_cols: Optional[List[str]] = None,
         group_col: str = "ticker",
         date_col: str = "date",
     ):
@@ -57,6 +64,7 @@ class StockSequenceDataset(Dataset):
         self.feature_cols = feature_cols
         self.label_mode = label_mode
         self.bucket_edges = bucket_edges
+        self.market_feature_cols = market_feature_cols
         self.group_col = group_col
         self.date_col = date_col
 
@@ -74,6 +82,20 @@ class StockSequenceDataset(Dataset):
         stds = np.where(stds < 1e-6, 1.0, stds)  # avoid division by zero
         feats = (feats - means) / stds
         self.df[self.feature_cols] = feats
+
+        # Normalize market features if provided (for cross-attention mode)
+        if self.market_feature_cols:
+            self.df[self.market_feature_cols] = (
+                self.df[self.market_feature_cols]
+                .replace([np.inf, -np.inf], np.nan)
+                .fillna(0.0)
+            )
+            market_feats = self.df[self.market_feature_cols].to_numpy(dtype="float32")
+            m_means = market_feats.mean(axis=0)
+            m_stds = market_feats.std(axis=0)
+            m_stds = np.where(m_stds < 1e-6, 1.0, m_stds)
+            market_feats = (market_feats - m_means) / m_stds
+            self.df[self.market_feature_cols] = market_feats
 
         # Precompute valid indices where lookback window is available per ticker
         # Also precompute group indices for fast __getitem__ access
@@ -126,7 +148,7 @@ class StockSequenceDataset(Dataset):
         edges = np.array(self.bucket_edges, dtype="float32")
         return int(np.searchsorted(edges, value, side="right"))
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, Any]:
+    def __getitem__(self, idx: int):
         row_idx = self.indices[idx]
 
         # Use precomputed group info for O(1) access
@@ -151,6 +173,12 @@ class StockSequenceDataset(Dataset):
             label = self._get_bucket_label(target_val)
         else:
             raise ValueError(f"Unknown label_mode: {self.label_mode}")
+
+        # Return market features separately for cross-attention mode
+        if self.market_feature_cols:
+            market_seq = seq_df[self.market_feature_cols].to_numpy(dtype="float32")
+            market_tensor = torch.from_numpy(market_seq)  # [lookback, market_feat_dim]
+            return seq_tensor, market_tensor, label
 
         return seq_tensor, label
 

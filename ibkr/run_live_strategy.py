@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ibkr.config import IBKRConfig, TradingConfig, PredictionConfig
 from ibkr.trade_executor import TradeExecutor
 from ibkr.models import TradeSignal, OrderAction
+from ibkr.execute_signals import check_live_trading_allowed, TRADING_MODE_CONF
 
 # Configure logging
 logging.basicConfig(
@@ -292,6 +293,12 @@ def main():
 
     # Configure IBKR connection
     if args.live:
+        if not check_live_trading_allowed():
+            logger.error("=" * 60)
+            logger.error("LIVE TRADING BLOCKED")
+            logger.error(f"Edit {TRADING_MODE_CONF} and set TRADING_MODE=live")
+            logger.error("=" * 60)
+            sys.exit(1)
         if args.gateway:
             ibkr_config = IBKRConfig.live_gateway(args.client_id)
         else:

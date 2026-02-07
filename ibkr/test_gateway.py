@@ -109,40 +109,33 @@ def test_balance(connection: IBKRConnection, account: str = None) -> bool:
     return True
 
 
-def test_portfolio(connection: IBKRConnection) -> bool:
+def test_portfolio(connection: IBKRConnection, account: str = None) -> bool:
     """Test portfolio positions retrieval."""
     print_header("PORTFOLIO POSITIONS")
 
-    portfolio = connection.ib.portfolio()
+    # Use positions() for FA/multi-account setups (portfolio() doesn't populate)
+    positions = connection.ib.positions(account) if account else connection.ib.positions()
 
-    if not portfolio:
+    if not positions:
         print("No positions currently held")
     else:
-        print(f"{'Symbol':<8} {'Shares':>8} {'Avg Cost':>10} {'Cur Price':>10} {'Mkt Value':>12} {'P&L':>12} {'P&L %':>8}")
-        print("-" * 72)
-        total_value = 0
-        total_pnl = 0
-        for item in portfolio:
-            cur_price = item.marketValue / item.position if item.position != 0 else 0
-            pnl_pct = (item.unrealizedPNL / (item.averageCost * item.position) * 100) if item.averageCost * item.position != 0 else 0
+        print(f"{'Symbol':<8} {'Shares':>8} {'Avg Cost':>10} {'Value':>12} {'Account':<12}")
+        print("-" * 56)
+        for item in positions:
+            value = item.position * item.avgCost
             print(f"{item.contract.symbol:<8} "
                   f"{item.position:>8.0f} "
-                  f"${item.averageCost:>8.2f} "
-                  f"${cur_price:>8.2f} "
-                  f"${item.marketValue:>10.2f} "
-                  f"${item.unrealizedPNL:>10.2f} "
-                  f"{pnl_pct:>7.1f}%")
-            total_value += item.marketValue
-            total_pnl += item.unrealizedPNL
-        print("-" * 72)
-        print(f"{'TOTAL':<8} {'':<8} {'':<10} {'':<10} ${total_value:>10.2f} ${total_pnl:>10.2f}")
+                  f"${item.avgCost:>8.2f} "
+                  f"${value:>10.2f} "
+                  f"{item.account:<12}")
+        print("-" * 56)
 
-    print(f"\nTotal positions: {len(portfolio)}")
+    print(f"\nTotal positions: {len(positions)}")
     print("SUCCESS: Portfolio retrieved")
     return True
 
 
-def test_buy(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool = False) -> bool:
+def test_buy(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool = False, notifier: TradeNotifier = None, account: str = None) -> bool:
     """Test buying shares."""
     from ib_insync import Stock, MarketOrder
 
@@ -154,22 +147,25 @@ def test_buy(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool
     contract = Stock(symbol, "SMART", "USD")
     connection.ib.qualifyContracts(contract)
 
-    # Get current price
-    ticker = connection.ib.reqMktData(contract, snapshot=True)
-    connection.ib.sleep(2)
-    price = ticker.marketPrice() or ticker.last
-    connection.ib.cancelMktData(contract)
-
-    if price:
-        print(f"Current Price: ${price:.2f}")
-        print(f"Estimated Cost: ${price * shares:.2f}")
+    # Resolve account: explicit > auto-detect (DU for paper, U for live)
+    all_accounts = connection.ib.managedAccounts()
+    if account:
+        target_account = account
+    else:
+        target_account = next((acc for acc in all_accounts if acc.startswith('DU')), None)
+        if not target_account:
+            target_account = next((acc for acc in all_accounts if acc.startswith('U')), None)
+    if not target_account:
+        print(f"ERROR: No suitable account found in {all_accounts}")
+        return False
+    print(f"Using Account: {target_account}")
 
     if dry_run:
         print("\nDRY RUN: Order not submitted")
         return True
 
     # Place order
-    order = MarketOrder("BUY", shares)
+    order = MarketOrder("BUY", shares, account=target_account)
     trade = connection.ib.placeOrder(contract, order)
 
     print(f"\nOrder submitted (ID: {trade.order.orderId})")
@@ -188,6 +184,16 @@ def test_buy(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool
 
     if trade.orderStatus.status == "Filled":
         print(f"\nSUCCESS: Bought {trade.orderStatus.filled} share(s) of {symbol}")
+        # Send trade notification
+        if notifier:
+            notifier.notify_trade(
+                action="BUY",
+                symbol=symbol,
+                shares=trade.orderStatus.filled,
+                price=trade.orderStatus.avgFillPrice,
+                status="FILLED",
+                order_id=trade.order.orderId
+            )
         return True
     else:
         # Cancel unfilled order
@@ -199,7 +205,7 @@ def test_buy(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool
         return False
 
 
-def test_sell(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool = False) -> bool:
+def test_sell(connection: IBKRConnection, symbol: str, shares: int, dry_run: bool = False, notifier: TradeNotifier = None, account: str = None) -> bool:
     """Test selling shares."""
     from ib_insync import Stock, MarketOrder
 
@@ -207,10 +213,10 @@ def test_sell(connection: IBKRConnection, symbol: str, shares: int, dry_run: boo
     print(f"Market Hours: {'Yes' if is_market_hours() else 'No (order may not fill)'}")
     print(f"Dry Run: {dry_run}")
 
-    # Check current position
-    portfolio = connection.ib.portfolio()
+    # Check current position (use positions() for FA/multi-account setups)
+    positions = connection.ib.positions(account) if account else connection.ib.positions()
     position = None
-    for item in portfolio:
+    for item in positions:
         if item.contract.symbol == symbol:
             position = item
             break
@@ -220,8 +226,20 @@ def test_sell(connection: IBKRConnection, symbol: str, shares: int, dry_run: boo
         print(f"\nERROR: Insufficient position. Have {held} shares, need {shares}")
         return False
 
-    print(f"Current Position: {position.position} shares")
-    print(f"Position P&L: ${position.unrealizedPNL:.2f}")
+    print(f"Current Position: {position.position:.0f} shares @ avg cost ${position.avgCost:.2f}")
+
+    # Resolve account: explicit > auto-detect (DU for paper, U for live)
+    all_accounts = connection.ib.managedAccounts()
+    if account:
+        target_account = account
+    else:
+        target_account = next((acc for acc in all_accounts if acc.startswith('DU')), None)
+        if not target_account:
+            target_account = next((acc for acc in all_accounts if acc.startswith('U')), None)
+    if not target_account:
+        print(f"ERROR: No suitable account found in {all_accounts}")
+        return False
+    print(f"Using Account: {target_account}")
 
     if dry_run:
         print("\nDRY RUN: Order not submitted")
@@ -232,7 +250,7 @@ def test_sell(connection: IBKRConnection, symbol: str, shares: int, dry_run: boo
     connection.ib.qualifyContracts(contract)
 
     # Place order
-    order = MarketOrder("SELL", shares)
+    order = MarketOrder("SELL", shares, account=target_account)
     trade = connection.ib.placeOrder(contract, order)
 
     print(f"\nOrder submitted (ID: {trade.order.orderId})")
@@ -251,6 +269,16 @@ def test_sell(connection: IBKRConnection, symbol: str, shares: int, dry_run: boo
 
     if trade.orderStatus.status == "Filled":
         print(f"\nSUCCESS: Sold {trade.orderStatus.filled} share(s) of {symbol}")
+        # Send trade notification
+        if notifier:
+            notifier.notify_trade(
+                action="SELL",
+                symbol=symbol,
+                shares=trade.orderStatus.filled,
+                price=trade.orderStatus.avgFillPrice,
+                status="FILLED",
+                order_id=trade.order.orderId
+            )
         return True
     else:
         # Cancel unfilled order
@@ -370,6 +398,9 @@ def main():
 
     print("SUCCESS: Connected to IB Gateway")
 
+    # Create notifier for trade notifications (always enabled for live trades)
+    notifier = TradeNotifier()
+
     # Track results
     results = {}
 
@@ -379,13 +410,13 @@ def main():
             results["balance"] = test_balance(connection, args.account)
 
         if args.all or args.portfolio:
-            results["portfolio"] = test_portfolio(connection)
+            results["portfolio"] = test_portfolio(connection, args.account)
 
         if args.buy:
-            results["buy"] = test_buy(connection, args.symbol, args.shares, args.dry_run)
+            results["buy"] = test_buy(connection, args.symbol, args.shares, args.dry_run, notifier, args.account)
 
         if args.sell:
-            results["sell"] = test_sell(connection, args.symbol, args.shares, args.dry_run)
+            results["sell"] = test_sell(connection, args.symbol, args.shares, args.dry_run, notifier, args.account)
 
     finally:
         # Always disconnect

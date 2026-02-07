@@ -6,9 +6,13 @@ Scans all_data files for stocks that crossed Bollinger bands on the most recent 
 - Lower band crossover → BUY signal (oversold)
 - Upper band crossover → SELL signal (overbought)
 
-This is a SHADOW strategy - it does NOT execute trades.
-It ALWAYS connects to IB Gateway to get real account data (cash, positions).
-It sends notification emails with proposed orders for review.
+This is a SHADOW strategy - it does NOT execute trades by default.
+It connects to IB Gateway for real account data (cash, positions) and
+sends notification emails with proposed orders for review.
+
+Portfolio filtering/ranking via portfolio.py is applied as a post-filter
+after signals are generated — the strategy scans all symbols, then the
+portfolio ranker narrows the output.
 
 Requirements:
     - SSH tunnel to AWS Gateway must be running
@@ -19,14 +23,23 @@ Usage:
     ssh -L 4001:127.0.0.1:4001 sschmidt@54.90.246.184 -N &
 
     # Run strategy (connects to Gateway, sends emails) - SHADOW MODE
-    python bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv
+    python strategies/bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv
 
     # Test without Gateway connection (for debugging data/signals only)
-    python bollinger_shadow_strategy.py --data-path ~/data/all_data.csv --skip-live
+    python strategies/bollinger_shadow_strategy.py --data-path ~/data/all_data.csv --skip-live
 
     # EXECUTE trades for specific symbols (must explicitly list each symbol)
-    python bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv --execute AAPL
-    python bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv --execute AAPL,MSFT
+    python strategies/bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv --execute AAPL
+    python strategies/bollinger_shadow_strategy.py --data-path ~/proj/bar_fly_trading/all_data.csv --execute AAPL,MSFT
+
+    # Portfolio post-filter: price > $50, top 10 by Sharpe
+    python strategies/bollinger_shadow_strategy.py --data-path ~/data/all_data.csv --skip-live --no-notify \
+        --portfolio-data all_data_0.csv --price-above 50 --top-k-sharpe 10
+
+    # Watchlist filter + beta < 1.5
+    python strategies/bollinger_shadow_strategy.py --data-path ~/data/all_data.csv --skip-live --no-notify \
+        --watchlist api_data/watchlist.csv --watchlist-mode filter \
+        --portfolio-data all_data_0.csv --filter-field beta --filter-below 1.5
 """
 
 import argparse
@@ -40,24 +53,24 @@ from typing import Optional
 
 import pandas as pd
 
-# Add parent directory for imports
+# Add parent and ibkr directories for imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, current_dir)
 sys.path.insert(0, parent_dir)
+sys.path.insert(0, os.path.join(parent_dir, 'ibkr'))
 
-try:
-    from ibkr.config import IBKRConfig, TradingConfig
-    from ibkr.connection import IBKRConnection
-    from ibkr.notifier import TradeNotifier
-    from ibkr.trade_executor import TradeExecutor
-    from ibkr.models import TradeSignal, OrderAction
-except ModuleNotFoundError:
-    from config import IBKRConfig, TradingConfig
-    from connection import IBKRConnection
-    from notifier import TradeNotifier
-    from trade_executor import TradeExecutor
-    from models import TradeSignal, OrderAction
+from ibkr.config import IBKRConfig, TradingConfig
+from ibkr.connection import IBKRConnection
+from ibkr.notifier import TradeNotifier
+from ibkr.trade_executor import TradeExecutor
+from ibkr.models import TradeSignal, OrderAction
+from portfolio import (
+    load_data as portfolio_load_data,
+    load_watchlist,
+    apply_watchlist,
+    run_pipeline as portfolio_pipeline,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -108,7 +121,9 @@ class BollingerShadowStrategy:
         data_path: str,
         notifier: Optional[TradeNotifier] = None,
         position_size_pct: float = 0.05,
-        shares_per_trade: int = 10
+        shares_per_trade: int = 10,
+        watchlist: Optional[list[str]] = None,
+        watchlist_mode: str = 'sort'
     ):
         """
         Initialize the shadow strategy.
@@ -118,11 +133,15 @@ class BollingerShadowStrategy:
             notifier: Optional notifier for sending alerts
             position_size_pct: Percentage of cash to use per position
             shares_per_trade: Default shares per trade if not calculated
+            watchlist: Optional ordered list of symbols for filtering/sorting
+            watchlist_mode: 'sort' (default) or 'filter'
         """
         self.data_path = data_path
         self.notifier = notifier  # Can be None to disable notifications
         self.position_size_pct = position_size_pct
         self.shares_per_trade = shares_per_trade
+        self.watchlist = watchlist or []
+        self.watchlist_mode = watchlist_mode
 
         self.data: Optional[pd.DataFrame] = None
         self.signals: list[BollingerSignal] = []
@@ -131,6 +150,10 @@ class BollingerShadowStrategy:
         self.cash_balance: Optional[float] = None
         self.portfolio: dict[str, int] = {}  # symbol -> shares
         self.account_id: Optional[str] = None
+
+        # Filter/rank metadata for summary display
+        self.filters_applied: list[str] = []
+        self.ranks_applied: list[str] = []
 
     def load_data(self) -> bool:
         """Load data from CSV file(s)."""
@@ -253,7 +276,6 @@ class BollingerShadowStrategy:
             symbol_data = self.data[self.data['symbol'] == symbol].copy()
             symbol_data = symbol_data.sort_values('date')
 
-            # Get the most recent row
             if len(symbol_data) < 2:
                 continue
 
@@ -264,98 +286,114 @@ class BollingerShadowStrategy:
             if len(recent_data) < 2:
                 continue
 
-            latest = recent_data.iloc[-1]
-            prev = recent_data.iloc[-2]
+            # Iterate over each consecutive pair of days in the window
+            for idx in range(1, len(recent_data)):
+                latest = recent_data.iloc[idx]
+                prev = recent_data.iloc[idx - 1]
 
-            # Skip if this symbol's latest date is not the overall max date
-            # (symbol may have stopped trading)
-            if latest['date'] != max_date:
-                continue
+                close = latest['adjusted_close']
+                bb_lower = latest['bbands_lower_20']
+                bb_upper = latest['bbands_upper_20']
+                bb_middle = latest.get('bbands_middle_20', (bb_lower + bb_upper) / 2)
 
-            close = latest['adjusted_close']
-            bb_lower = latest['bbands_lower_20']
-            bb_upper = latest['bbands_upper_20']
-            bb_middle = latest.get('bbands_middle_20', (bb_lower + bb_upper) / 2)
+                prev_close = prev['adjusted_close']
+                prev_bb_lower = prev['bbands_lower_20']
+                prev_bb_upper = prev['bbands_upper_20']
 
-            prev_close = prev['adjusted_close']
-            prev_bb_lower = prev['bbands_lower_20']
-            prev_bb_upper = prev['bbands_upper_20']
+                # Skip if missing BB data
+                if pd.isna(bb_lower) or pd.isna(bb_upper):
+                    continue
 
-            # Skip if missing BB data
-            if pd.isna(bb_lower) or pd.isna(bb_upper):
-                continue
+                # Get additional context data
+                volume = latest.get('volume', 0)
+                rsi = latest.get('rsi_14', None)
+                if pd.isna(rsi):
+                    rsi = None
 
-            # Get additional context data
-            volume = latest.get('volume', 0)
-            rsi = latest.get('rsi_14', None)
-            if pd.isna(rsi):
-                rsi = None
+                bull_bear_delta = latest.get('bull_bear_delta', None)
+                if pd.isna(bull_bear_delta):
+                    bull_bear_delta = None
 
-            bull_bear_delta = latest.get('bull_bear_delta', None)
-            if pd.isna(bull_bear_delta):
-                bull_bear_delta = None
+                # Calculate band width as % of middle
+                bb_width_pct = ((bb_upper - bb_lower) / bb_middle * 100) if bb_middle > 0 else 0
 
-            # Calculate band width as % of middle
-            bb_width_pct = ((bb_upper - bb_lower) / bb_middle * 100) if bb_middle > 0 else 0
+                signal = None
 
-            signal = None
+                # Check for LOWER band crossover (BUY signal)
+                # Price crossed below lower band AND RSI <= 40 (not overbought)
+                if close <= bb_lower and prev_close > prev_bb_lower:
+                    # RSI filter: for BUY, RSI should not be > 40
+                    if rsi is not None and rsi > 40:
+                        continue  # Skip - RSI too high for a buy signal
 
-            # Check for LOWER band crossover (BUY signal)
-            # Price crossed below lower band AND RSI <= 40 (not overbought)
-            if close <= bb_lower and prev_close > prev_bb_lower:
-                # RSI filter: for BUY, RSI should not be > 40
-                if rsi is not None and rsi > 40:
-                    continue  # Skip - RSI too high for a buy signal
+                    distance_pct = ((bb_lower - close) / close * 100) if close > 0 else 0
+                    signal = BollingerSignal(
+                        symbol=symbol,
+                        signal_type="BUY",
+                        close_price=close,
+                        bb_lower=bb_lower,
+                        bb_upper=bb_upper,
+                        bb_middle=bb_middle,
+                        signal_date=str(latest['date'].date()),
+                        reason=f"Price crossed below lower BB (RSI: {rsi:.1f})" if rsi else "Price crossed below lower BB",
+                        bb_width_pct=bb_width_pct,
+                        distance_from_band_pct=distance_pct,
+                        volume=volume,
+                        rsi=rsi,
+                        prev_close=prev_close,
+                        bull_bear_delta=bull_bear_delta
+                    )
 
-                distance_pct = ((bb_lower - close) / close * 100) if close > 0 else 0
-                signal = BollingerSignal(
-                    symbol=symbol,
-                    signal_type="BUY",
-                    close_price=close,
-                    bb_lower=bb_lower,
-                    bb_upper=bb_upper,
-                    bb_middle=bb_middle,
-                    signal_date=str(latest['date'].date()),
-                    reason=f"Price crossed below lower BB (RSI: {rsi:.1f})" if rsi else "Price crossed below lower BB",
-                    bb_width_pct=bb_width_pct,
-                    distance_from_band_pct=distance_pct,
-                    volume=volume,
-                    rsi=rsi,
-                    prev_close=prev_close,
-                    bull_bear_delta=bull_bear_delta
-                )
+                # Check for UPPER band crossover (SELL signal)
+                # Price crossed above upper band AND RSI >= 60 (not oversold)
+                elif close >= bb_upper and prev_close < prev_bb_upper:
+                    # RSI filter: for SELL, RSI should not be < 60
+                    if rsi is not None and rsi < 60:
+                        continue  # Skip - RSI too low for a sell signal
 
-            # Check for UPPER band crossover (SELL signal)
-            # Price crossed above upper band AND RSI >= 60 (not oversold)
-            elif close >= bb_upper and prev_close < prev_bb_upper:
-                # RSI filter: for SELL, RSI should not be < 60
-                if rsi is not None and rsi < 60:
-                    continue  # Skip - RSI too low for a sell signal
+                    distance_pct = ((close - bb_upper) / close * 100) if close > 0 else 0
+                    signal = BollingerSignal(
+                        symbol=symbol,
+                        signal_type="SELL",
+                        close_price=close,
+                        bb_lower=bb_lower,
+                        bb_upper=bb_upper,
+                        bb_middle=bb_middle,
+                        signal_date=str(latest['date'].date()),
+                        reason=f"Price crossed above upper BB (RSI: {rsi:.1f})" if rsi else "Price crossed above upper BB",
+                        bb_width_pct=bb_width_pct,
+                        distance_from_band_pct=distance_pct,
+                        volume=volume,
+                        rsi=rsi,
+                        prev_close=prev_close,
+                        bull_bear_delta=bull_bear_delta
+                    )
 
-                distance_pct = ((close - bb_upper) / close * 100) if close > 0 else 0
-                signal = BollingerSignal(
-                    symbol=symbol,
-                    signal_type="SELL",
-                    close_price=close,
-                    bb_lower=bb_lower,
-                    bb_upper=bb_upper,
-                    bb_middle=bb_middle,
-                    signal_date=str(latest['date'].date()),
-                    reason=f"Price crossed above upper BB (RSI: {rsi:.1f})" if rsi else "Price crossed above upper BB",
-                    bb_width_pct=bb_width_pct,
-                    distance_from_band_pct=distance_pct,
-                    volume=volume,
-                    rsi=rsi,
-                    prev_close=prev_close,
-                    bull_bear_delta=bull_bear_delta
-                )
-
-            if signal:
-                self._validate_signal(signal)
-                self.signals.append(signal)
+                if signal:
+                    self._validate_signal(signal)
+                    self.signals.append(signal)
 
         logger.info(f"Found {len(self.signals)} signals")
+
+        # Apply watchlist filtering/sorting if configured
+        if self.watchlist:
+            self.signals = self._apply_watchlist(self.signals)
+
         return self.signals
+
+    def _apply_watchlist(self, signals: list[BollingerSignal]) -> list[BollingerSignal]:
+        """Apply watchlist filter/sort to signals using portfolio.apply_watchlist."""
+        if not self.watchlist:
+            return signals
+
+        signal_symbols = [s.symbol for s in signals]
+        kept = apply_watchlist(signal_symbols, self.watchlist, self.watchlist_mode)
+        kept_set = set(kept)
+        kept_order = {sym: i for i, sym in enumerate(kept)}
+
+        filtered = [s for s in signals if s.symbol in kept_set]
+        filtered.sort(key=lambda s: kept_order.get(s.symbol, len(kept)))
+        return filtered
 
     def _validate_signal(self, signal: BollingerSignal) -> None:
         """Validate a signal against account constraints."""
@@ -412,7 +450,7 @@ class BollingerShadowStrategy:
             return False
 
         summary = self.generate_summary()
-        subject = f"[SHADOW] Bollinger Signals Summary - {len(self.signals)} signal(s) ({datetime.now().strftime('%Y-%m-%d')})"
+        subject = f"Bollinger Band (Real Time) | {len(self.signals)} signal(s) ({datetime.now().strftime('%Y-%m-%d')})"
 
         if self.notifier._send_email(subject, summary):
             logger.info(f"Summary notification sent with {len(self.signals)} signal(s)")
@@ -548,8 +586,14 @@ class BollingerShadowStrategy:
             f"Scan Time:     {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             f"{data_dates}",
             f"Total Signals: {len(self.signals)}",
-            "",
         ]
+
+        if self.filters_applied:
+            lines.append(f"Filters:       {', '.join(self.filters_applied)}")
+        if self.ranks_applied:
+            lines.append(f"Rank:          {', '.join(self.ranks_applied)}")
+
+        lines.append("")
 
         buy_signals = [s for s in self.signals if s.signal_type == "BUY"]
         sell_signals = [s for s in self.signals if s.signal_type == "SELL"]
@@ -710,7 +754,8 @@ class BollingerShadowStrategy:
         port: int = 4001,
         execute_symbols: Optional[list[str]] = None,
         signal_filter: str = "all",
-        summary_only: bool = False
+        summary_only: bool = False,
+        lookback_days: int = 2
     ) -> list[BollingerSignal]:
         """
         Run the full shadow strategy.
@@ -742,7 +787,7 @@ class BollingerShadowStrategy:
             logger.warning("Skipping live account check - using default values")
 
         # Find signals
-        signals = self.find_signals()
+        signals = self.find_signals(lookback_days=lookback_days)
 
         # Apply signal type filter
         if signal_filter == "buy":
@@ -801,9 +846,24 @@ def main():
     )
 
     parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["csv", "realtime"],
+        default="csv",
+        help="Data source: 'csv' (default) reads from all_data files, "
+             "'realtime' fetches live data from Alpha Vantage API"
+    )
+    parser.add_argument(
         "--data-path",
-        required=True,
-        help="Path to all_data CSV file(s), supports glob patterns"
+        required=False,
+        default=None,
+        help="Path to all_data CSV file(s), supports glob patterns (required for --mode csv)"
+    )
+    parser.add_argument(
+        "--output-signals",
+        type=str,
+        default=None,
+        help="Path to write signal CSV for execute_signals (default: signals/pending_orders.csv)"
     )
     parser.add_argument(
         "--skip-live",
@@ -863,14 +923,163 @@ def main():
         help="Explicitly specify symbols to execute trades for (e.g., --execute AAPL or --execute AAPL,MSFT). "
              "Each symbol must have a matching signal. No 'execute all' option - you must list each symbol."
     )
+    # --- Portfolio ranker args ---
+    parser.add_argument(
+        "--watchlist",
+        type=str,
+        default=None,
+        help="Path to watchlist CSV file (optional). Used to filter or sort output signals."
+    )
+    parser.add_argument(
+        "--watchlist-mode",
+        type=str,
+        default='sort',
+        choices=['sort', 'filter'],
+        help="Watchlist mode: 'sort' (default) keeps all signals but orders by watchlist, "
+             "'filter' only keeps signals for symbols in watchlist"
+    )
+    parser.add_argument(
+        "--portfolio-data", type=str, default=None,
+        help="Path to data CSV for portfolio post-filter ranking (default: same as --data-path)"
+    )
+    parser.add_argument(
+        "--price-above", type=float, default=None,
+        help="Post-filter: min stock price (inclusive)"
+    )
+    parser.add_argument(
+        "--price-below", type=float, default=None,
+        help="Post-filter: max stock price (inclusive)"
+    )
+    parser.add_argument(
+        "--filter-field", type=str, default=None,
+        help="Post-filter: column name to filter/rank on (e.g. rsi_14, beta, pe_ratio)"
+    )
+    parser.add_argument(
+        "--filter-above", type=float, default=None,
+        help="Post-filter: min value for --filter-field (inclusive)"
+    )
+    parser.add_argument(
+        "--filter-below", type=float, default=None,
+        help="Post-filter: max value for --filter-field (inclusive)"
+    )
+    parser.add_argument(
+        "--top-k-sharpe", type=int, default=None,
+        help="Post-filter: keep top K signals ranked by Sharpe ratio"
+    )
+    parser.add_argument(
+        "--sort-sharpe", action="store_true",
+        help="Sort signals by Sharpe ratio (no cutoff, ordering only)"
+    )
 
     args = parser.parse_args()
+
+    # Validate: csv mode requires --data-path
+    if args.mode == "csv" and not args.data_path:
+        parser.error("--data-path is required when --mode is 'csv'")
+
+    # ────────────────────────────────────────────────────────────
+    # REALTIME MODE: fetch live data from Alpha Vantage API
+    # ────────────────────────────────────────────────────────────
+    if args.mode == "realtime":
+        from api_data.rt_utils import fetch_realtime_bollinger, fetch_realtime_batch
+        from signal_writer import SignalWriter
+
+        # Load watchlist — required for realtime mode to know which symbols to scan
+        if not args.watchlist:
+            parser.error("--watchlist is required for --mode realtime")
+        watchlist = load_watchlist(args.watchlist)
+        if not watchlist:
+            print("ERROR: Watchlist is empty or could not be loaded")
+            sys.exit(1)
+
+        symbols = watchlist
+        print(f"\n{'=' * 60}")
+        print(f"  BOLLINGER SHADOW - REALTIME MODE")
+        print(f"  Symbols: {len(symbols)} from watchlist")
+        print(f"  API calls: ~{len(symbols) * 3} (quote + BBANDS + RSI per symbol)")
+        print(f"{'=' * 60}\n")
+
+        # Fetch real-time data for all symbols
+        rt_data = fetch_realtime_batch(symbols, fetch_realtime_bollinger)
+        if rt_data.empty:
+            print("\nERROR: No data fetched. Check API key and network.")
+            sys.exit(1)
+
+        # Create strategy with dummy data_path (not used in realtime)
+        notifier = None if args.no_notify else TradeNotifier()
+        strategy = BollingerShadowStrategy(
+            data_path="realtime",
+            notifier=notifier,
+            position_size_pct=args.position_pct,
+            shares_per_trade=args.shares,
+            watchlist=watchlist,
+            watchlist_mode=args.watchlist_mode
+        )
+
+        # Inject realtime data (bypasses load_data)
+        strategy.data = rt_data
+        strategy.data['date'] = pd.to_datetime(strategy.data['date'])
+
+        # Find signals using existing crossover logic
+        signals = strategy.find_signals(lookback_days=args.lookback_days)
+
+        # Apply signal type filter
+        if args.signal_type == "buy":
+            signals = [s for s in signals if s.signal_type == "BUY"]
+        elif args.signal_type == "sell":
+            signals = [s for s in signals if s.signal_type == "SELL"]
+
+        # Print summary
+        print(strategy.generate_summary())
+
+        # Send notifications
+        if signals and not args.no_notify:
+            if args.summary_only:
+                strategy.send_summary_notification()
+            else:
+                strategy.send_notifications()
+
+        # Write signal CSV
+        if signals:
+            output_path = args.output_signals or os.path.join(parent_dir, "signals", "pending_orders.csv")
+            writer = SignalWriter()
+            for sig in signals:
+                writer.add(
+                    action=sig.signal_type,
+                    symbol=sig.symbol,
+                    shares=1,
+                    price=sig.close_price,
+                    strategy="bollinger_shadow",
+                    reason=sig.reason
+                )
+            writer.save(output_path)
+            print(f"\nSignal CSV written: {output_path}")
+            print(f"  {len(signals)} signal(s) ready for execution")
+            print(f"\nTo execute (paper):  python -m ibkr.execute_signals --signals {output_path} --port 4002 --client-id 10")
+            print(f"To dry-run:          python -m ibkr.execute_signals --signals {output_path} --dry-run")
+        else:
+            print("\nNo signals found.")
+
+        sys.exit(0)
+
+    # ────────────────────────────────────────────────────────────
+    # CSV MODE: existing behavior (read from all_data files)
+    # ────────────────────────────────────────────────────────────
 
     # Parse execute symbols
     execute_symbols = None
     if args.execute:
         execute_symbols = [s.strip().upper() for s in args.execute.split(",") if s.strip()]
         logger.info(f"Will execute trades for symbols: {execute_symbols}")
+
+    # Load watchlist if provided
+    watchlist = None
+    if args.watchlist:
+        watchlist = load_watchlist(args.watchlist)
+        if watchlist:
+            logger.info(f"Loaded watchlist with {len(watchlist)} symbols")
+        else:
+            logger.warning("Watchlist is empty or could not be loaded")
 
     # Create strategy
     notifier = None if args.no_notify else TradeNotifier()
@@ -879,18 +1088,81 @@ def main():
         data_path=args.data_path,
         notifier=notifier,
         position_size_pct=args.position_pct,
-        shares_per_trade=args.shares
+        shares_per_trade=args.shares,
+        watchlist=watchlist,
+        watchlist_mode=args.watchlist_mode
     )
 
-    # Run - always connect to Gateway unless --skip-live is set
+    # Build filter/rank metadata for summary display
+    if watchlist:
+        mode_label = "filter" if args.watchlist_mode == "filter" else "sort"
+        strategy.filters_applied.append(f"watchlist ({len(watchlist)} symbols, {mode_label})")
+    if args.signal_type and args.signal_type != "all":
+        strategy.filters_applied.append(f"{args.signal_type} signals only")
+    if args.price_above is not None or args.price_below is not None:
+        parts = []
+        if args.price_above is not None:
+            parts.append(f">= ${args.price_above:.0f}")
+        if args.price_below is not None:
+            parts.append(f"<= ${args.price_below:.0f}")
+        strategy.filters_applied.append(f"price {', '.join(parts)}")
+    if args.filter_field:
+        strategy.filters_applied.append(f"{args.filter_field} range")
+    if args.top_k_sharpe is not None:
+        strategy.ranks_applied.append(f"sharpe ratio (top {args.top_k_sharpe})")
+    elif args.sort_sharpe:
+        strategy.ranks_applied.append("sharpe ratio (sorted)")
+    if not strategy.ranks_applied:
+        strategy.ranks_applied.append("symbol order")
+
+    # Run strategy - generates signals (watchlist applied internally)
     signals = strategy.run(
         skip_live=args.skip_live,
         host=args.host,
         port=args.port,
         execute_symbols=execute_symbols,
         signal_filter=args.signal_type,
-        summary_only=args.summary_only
+        summary_only=args.summary_only,
+        lookback_days=args.lookback_days
     )
+
+    # --- Portfolio post-filter on signals ---
+    # Default portfolio-data to same as data-path
+    if not args.portfolio_data:
+        args.portfolio_data = args.data_path
+
+    has_portfolio_filters = any([
+        args.price_above is not None, args.price_below is not None,
+        args.filter_field, args.top_k_sharpe is not None, args.sort_sharpe,
+    ])
+
+    if signals and has_portfolio_filters:
+        if not args.portfolio_data:
+            logger.warning("Portfolio filters require --portfolio-data. Skipping post-filter.")
+        else:
+            logger.info(f"Applying portfolio post-filter to {len(signals)} signals...")
+            portfolio_df = portfolio_load_data(args.portfolio_data)
+            signal_symbols = [s.symbol for s in signals]
+
+            # Run pipeline on the signal symbols (watchlist already applied above)
+            kept = portfolio_pipeline(
+                portfolio_df,
+                symbols=signal_symbols,
+                price_above=args.price_above,
+                price_below=args.price_below,
+                filter_field=args.filter_field,
+                filter_above=args.filter_above,
+                filter_below=args.filter_below,
+                top_k_sharpe=args.top_k_sharpe,
+                sort_sharpe=args.sort_sharpe,
+            )
+
+            # Filter signals to only those that survived the pipeline
+            kept_set = set(kept)
+            kept_order = {sym: i for i, sym in enumerate(kept)}
+            signals = [s for s in signals if s.symbol in kept_set]
+            signals.sort(key=lambda s: kept_order.get(s.symbol, len(kept)))
+            logger.info(f"Portfolio post-filter: {len(signal_symbols)} -> {len(signals)} signals")
 
     if not signals:
         print("\nNo signals found.")

@@ -151,7 +151,16 @@ class IBKRConnection:
             return None
 
         try:
-            account = self.config.account or self.ib.managedAccounts()[0]
+            if self.config.account:
+                account = self.config.account
+            else:
+                # Auto-detect: prefer DU sub-accounts (paper) over DFO (FA master)
+                all_accounts = self.ib.managedAccounts()
+                account = next((a for a in all_accounts if a.startswith('DU')), None)
+                if not account:
+                    account = next((a for a in all_accounts if a.startswith('U')), None)
+                if not account:
+                    account = all_accounts[0]
             summary = self.ib.accountSummary(account)
 
             # Extract numeric values only (skip string fields like AccountType)

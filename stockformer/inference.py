@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from .config import get_feature_columns, get_target_column, OUTPUT_COLUMN_GROUPS
+from .config import get_feature_columns, get_target_column, OUTPUT_COLUMN_GROUPS, BASE_FEATURE_COLUMNS
 from .data_utils import (
     load_panel_csvs,
     add_future_returns,
@@ -323,9 +323,19 @@ def infer(cfg):
 
         print(f"Data loading time: {load_timer}")
 
-        # Get feature columns
-        feature_cols = get_feature_columns(df, cfg["mode"])
+        # Get feature columns based on model type
+        model_type = cfg.get("model_type", "encoder")
         output_mode = cfg.get("output_mode", "all")
+
+        if model_type == "cross_attention":
+            # For cross-attention: stock features are base features only
+            stock_feature_cols = BASE_FEATURE_COLUMNS.copy()
+            market_feature_cols = [col for col in df.columns if col.startswith("m_") or col.startswith("s_")]
+            feature_cols = stock_feature_cols
+            print(f"Cross-attention mode: {len(stock_feature_cols)} stock features, {len(market_feature_cols)} market features")
+        else:
+            feature_cols = get_feature_columns(df, cfg["mode"])
+            market_feature_cols = None
 
         print(f"Features: {len(feature_cols)} columns")
         print(f"Output mode: {output_mode}")
@@ -338,6 +348,7 @@ def infer(cfg):
             feature_cols=feature_cols,
             label_mode=cfg["label_mode"],
             bucket_edges=cfg.get("bucket_edges"),
+            market_feature_cols=market_feature_cols,
         )
 
         print(f"Inference samples: {len(dataset)}")
@@ -356,11 +367,16 @@ def infer(cfg):
         print(f"Using device: {device}")
 
         # Create and load model
+        # For cross-attention, set market_feature_dim in config
+        if model_type == "cross_attention" and market_feature_cols:
+            cfg["market_feature_dim"] = len(market_feature_cols)
+
         model = create_model(
             feature_dim=len(feature_cols),
             label_mode=cfg["label_mode"],
             bucket_edges=cfg.get("bucket_edges"),
             cfg=cfg,
+            model_type=model_type,
         ).to(device)
 
         print(f"Loading model from: {cfg['model_out']}")
@@ -374,15 +390,25 @@ def infer(cfg):
         all_labels = []
 
         with torch.no_grad():
-            for batch_x, batch_y in loader:
-                batch_x = batch_x.to(device)
+            for batch in loader:
+                # Handle different batch formats based on model type
+                if model_type == "cross_attention":
+                    batch_x, batch_market, batch_y = batch
+                    batch_x = batch_x.to(device)
+                    batch_market = batch_market.to(device)
+                else:
+                    batch_x, batch_y = batch
+                    batch_x = batch_x.to(device)
 
                 if cfg["label_mode"] == "regression":
                     batch_y = batch_y.float()
                 else:
                     batch_y = batch_y.long()
 
-                outputs = model(batch_x)
+                if model_type == "cross_attention":
+                    outputs = model(batch_x, batch_market)
+                else:
+                    outputs = model(batch_x)
 
                 if cfg["label_mode"] == "regression":
                     # Regression: output is the prediction
@@ -429,6 +455,9 @@ def infer(cfg):
 
     # Save predictions
     output_path = cfg.get("output_csv", "predictions.csv")
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
     out_df.to_csv(output_path, index=False)
 
     # Print summary
