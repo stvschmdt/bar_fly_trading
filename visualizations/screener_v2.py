@@ -136,8 +136,8 @@ class StockScreenerV2:
                 logger.warning(f'No data for {symbol} on {self.latest_date}')
                 continue
 
-            latest_bull, latest_bear, latest_signals = self._check_signals(latest, previous)
-            prev_bull, prev_bear, prev_signals = self._check_signals(previous, day_before_data)
+            latest_bull, latest_bear, latest_signals = self._check_signals(previous, latest)
+            prev_bull, prev_bear, prev_signals = self._check_signals(day_before_data, previous)
 
             change_signals = [latest_signals[i] if latest_signals[i] != prev_signals[i] else 0
                               for i in range(len(latest_signals))]
