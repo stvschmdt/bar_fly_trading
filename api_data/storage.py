@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, text
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from logging_config import setup_logging
-from visualizations.screener import StockScreener
+from visualizations.screener_v2 import StockScreenerV2
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -407,8 +407,8 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
     latest_date = df["date"].max()
     # change latest_date to a string
     latest_date = latest_date.strftime("%Y-%m-%d")
-    # create a StockScreener object to use _check functions
-    stock_screener = StockScreener(symbols, latest_date, df.head())
+    # create a StockScreenerV2 object to use _check functions
+    stock_screener = StockScreenerV2(symbols, latest_date, df.head())
     # for each row in the df, use each of the _check functions to create a new column for each
     # the _check functions will build a list of -1,0,1 for each _check function
     # append this list to the df as new columns
