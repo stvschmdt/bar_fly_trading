@@ -50,6 +50,51 @@ from api_data.collector import alpha_client
 logger = logging.getLogger(__name__)
 
 
+def get_realtime_quotes_bulk(symbols: list[str]) -> pd.DataFrame:
+    """
+    Fetch real-time quotes for up to 100 symbols in a single API call.
+
+    Uses the REALTIME_BULK_QUOTES endpoint (premium).
+    Returns price, volume, and timestamp per symbol.
+
+    Args:
+        symbols: List of ticker symbols (max 100 per call;
+                 larger lists are chunked automatically)
+
+    Returns:
+        DataFrame with columns: symbol, price, volume, timestamp
+    """
+    all_rows = []
+    # Chunk into batches of 100
+    for i in range(0, len(symbols), 100):
+        chunk = symbols[i:i + 100]
+        symbol_str = ','.join(chunk)
+        response = alpha_client.fetch(
+            function='REALTIME_BULK_QUOTES', symbol=symbol_str)
+
+        # Parse response
+        if 'data' in response:
+            for row in response['data']:
+                all_rows.append({
+                    'symbol': row.get('symbol', ''),
+                    'price': float(row.get('price', 0)),
+                    'volume': int(row.get('volume', 0)),
+                    'timestamp': row.get('timestamp', ''),
+                })
+        else:
+            failed = list(response.keys())
+            logger.warning(f"Bulk quote unexpected response keys: {failed}")
+            print(f"  WARNING: Bulk quote returned unexpected response: {failed}")
+
+    if not all_rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(all_rows)
+    print(f"  Bulk quotes: {len(df)} symbols fetched "
+          f"in {len(range(0, len(symbols), 100))} API call(s)")
+    return df
+
+
 def get_realtime_quote(symbol: str) -> dict:
     """
     Fetch real-time stock quote from Alpha Vantage.

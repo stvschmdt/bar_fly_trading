@@ -155,7 +155,7 @@ def get_strategy(strategy_name: str, account: Account, symbols: set[str]) -> Bas
         from regression_momentum_strategy import RegressionMomentumStrategy
         return RegressionMomentumStrategy(account, symbols)
     elif strategy_name == "BollingerBacktestStrategy":
-        from bollinger_backtest_strategy import BollingerBacktestStrategy
+        from bollinger_bands_strategy import BollingerBacktestStrategy
         return BollingerBacktestStrategy(account, symbols)
 
     raise ValueError(f"Unknown strategy_name: {strategy_name}. "
