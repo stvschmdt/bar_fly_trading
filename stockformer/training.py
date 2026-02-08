@@ -4,10 +4,15 @@ Training utilities for the StockFormer pipeline.
 Functions:
     - get_optimizer: Returns optimizer based on name
     - run_one_epoch: Runs a single training or validation epoch
-    - train_model: Full training loop with history tracking
+    - train_model: Full training loop with LR scheduler, gradient clipping,
+                   early stopping, and best-model checkpointing
 """
 
+import os
+
 import torch
+import torch.nn as nn
+from torch.optim.lr_scheduler import CosineAnnealingLR
 import pandas as pd
 
 
@@ -58,7 +63,8 @@ def get_optimizer(model, optimizer_name, lr):
 # Single Epoch
 # =============================================================================
 
-def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode, is_training=True, model_type="encoder"):
+def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode,
+                  is_training=True, max_grad_norm=1.0):
     """
     Run one epoch of training or validation.
 
@@ -70,7 +76,7 @@ def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode, is_trai
         device: Device to run on ("cuda" or "cpu")
         label_mode: "regression", "binary", or "buckets"
         is_training: If True, run training; if False, run validation
-        model_type: "encoder" or "cross_attention"
+        max_grad_norm: Max gradient norm for clipping (default: 1.0)
 
     Returns:
         Dict with "loss" and "accuracy" keys
@@ -84,16 +90,9 @@ def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode, is_trai
     correct = 0
     total = 0
 
-    for batch in loader:
-        # Handle different batch formats based on model type
-        if model_type == "cross_attention":
-            batch_x, batch_market, batch_y = batch
-            batch_x = batch_x.to(device)
-            batch_market = batch_market.to(device)
-        else:
-            batch_x, batch_y = batch
-            batch_x = batch_x.to(device)
-            batch_market = None
+    for batch_x, batch_y in loader:
+        # Move data to device
+        batch_x = batch_x.to(device)
 
         if label_mode == "regression":
             batch_y = batch_y.float().to(device)
@@ -103,19 +102,14 @@ def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode, is_trai
         # Forward pass
         if is_training:
             optimizer.zero_grad()
-            if model_type == "cross_attention":
-                outputs = model(batch_x, batch_market)
-            else:
-                outputs = model(batch_x)
+            outputs = model(batch_x)
             loss = loss_fn(outputs, batch_y)
             loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
             optimizer.step()
         else:
             with torch.no_grad():
-                if model_type == "cross_attention":
-                    outputs = model(batch_x, batch_market)
-                else:
-                    outputs = model(batch_x)
+                outputs = model(batch_x)
                 loss = loss_fn(outputs, batch_y)
 
         # Track metrics
@@ -148,10 +142,14 @@ def train_model(
     num_epochs,
     model_out_path=None,
     log_path=None,
+    patience=7,
+    warmup_epochs=3,
+    max_grad_norm=1.0,
     model_type="encoder",
 ):
     """
-    Full training loop with validation and history tracking.
+    Full training loop with cosine LR scheduler, warmup, gradient clipping,
+    early stopping, and best-model checkpointing.
 
     Args:
         model: PyTorch model
@@ -162,22 +160,46 @@ def train_model(
         device: Device to run on ("cuda" or "cpu")
         label_mode: "regression", "binary", or "buckets"
         num_epochs: Number of epochs to train
-        model_out_path: Path to save the model checkpoint (optional)
+        model_out_path: Path to save the best model checkpoint (optional)
         log_path: Path to save training log CSV (optional)
-        model_type: "encoder" or "cross_attention"
+        patience: Early stopping patience (default: 7)
+        warmup_epochs: Number of linear warmup epochs (default: 3)
+        max_grad_norm: Max gradient norm for clipping (default: 1.0)
 
     Returns:
-        Dict with training history (epoch, train_loss, val_loss, train_acc, val_acc)
+        Dict with training history (epoch, train_loss, val_loss, train_acc, val_acc, lr)
     """
+    base_lr = optimizer.param_groups[0]["lr"]
+
+    # Move loss function to device (needed for FocalLoss class weight buffers)
+    if hasattr(loss_fn, 'to'):
+        loss_fn = loss_fn.to(device)
+
+    # Cosine annealing scheduler (applied after warmup)
+    scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs - warmup_epochs, eta_min=1e-6)
+
     history = {
         "epoch": [],
         "train_loss": [],
         "val_loss": [],
         "train_acc": [],
         "val_acc": [],
+        "lr": [],
     }
 
+    best_val_loss = float("inf")
+    best_state_dict = None
+    no_improve = 0
+
     for epoch in range(1, num_epochs + 1):
+        # Linear warmup
+        if epoch <= warmup_epochs:
+            warmup_lr = base_lr * epoch / warmup_epochs
+            for pg in optimizer.param_groups:
+                pg["lr"] = warmup_lr
+
+        current_lr = optimizer.param_groups[0]["lr"]
+
         # Training epoch
         train_metrics = run_one_epoch(
             model=model,
@@ -187,7 +209,7 @@ def train_model(
             device=device,
             label_mode=label_mode,
             is_training=True,
-            model_type=model_type,
+            max_grad_norm=max_grad_norm,
         )
 
         # Validation epoch
@@ -199,8 +221,11 @@ def train_model(
             device=device,
             label_mode=label_mode,
             is_training=False,
-            model_type=model_type,
         )
+
+        # Step scheduler after warmup
+        if epoch > warmup_epochs:
+            scheduler.step()
 
         # Record history
         history["epoch"].append(epoch)
@@ -208,6 +233,7 @@ def train_model(
         history["val_loss"].append(val_metrics["loss"])
         history["train_acc"].append(train_metrics["accuracy"])
         history["val_acc"].append(val_metrics["accuracy"])
+        history["lr"].append(current_lr)
 
         # Print progress
         print(
@@ -215,9 +241,31 @@ def train_model(
             f"TrainLoss={train_metrics['loss']:.4f}  "
             f"ValLoss={val_metrics['loss']:.4f}  "
             f"TrainAcc={train_metrics['accuracy']:.4f}  "
-            f"ValAcc={val_metrics['accuracy']:.4f}",
-            flush=True
+            f"ValAcc={val_metrics['accuracy']:.4f}  "
+            f"LR={current_lr:.2e}",
+            flush=True,
         )
+
+        # Best model checkpointing + early stopping
+        if val_metrics["loss"] < best_val_loss:
+            best_val_loss = val_metrics["loss"]
+            best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            no_improve = 0
+            print(f"  -> New best val_loss: {best_val_loss:.4f}")
+        else:
+            no_improve += 1
+            if no_improve >= patience:
+                print(
+                    f"Early stopping at epoch {epoch} "
+                    f"(no improvement for {patience} epochs). "
+                    f"Best val_loss: {best_val_loss:.4f}"
+                )
+                break
+
+    # Restore best model weights
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
+        print(f"Restored best model (val_loss={best_val_loss:.4f})")
 
     # Save model checkpoint
     if model_out_path is not None:

@@ -1,43 +1,35 @@
 #!/usr/bin/env python
 """
-Runner script for Regression Momentum Strategy.
+Runner script for 52-Week Low Bounce Strategy (M6).
 
-Supports two modes:
+Pure technical strategy — no ML predictions. Uses CSV indicator data only.
+
+Supports three modes:
   1. backtest — full historical backtest via backtest.py
   2. daily   — short lookback (1-2 days), email summary of what hit
+  3. signals — one-shot signal evaluation (for cron / live execution)
 
-Uses the bar_fly_trading backtest framework with stockformer predictions.
-Portfolio filtering/ranking via portfolio.py is applied before the backtest
-to narrow the symbol universe.
+Entry: close < 52_week_low * 1.10 AND RSI < 40 AND bull_bear_delta <= 0
+Exit:  hold >= 30 days OR RSI > 60 OR return > 15%
 
 Usage:
     # Full backtest
-    python run_regression_momentum.py \
-        --predictions merged_predictions.csv \
-        --use-all-symbols \
-        --data-path 'all_data_*.csv' \
-        --start-date 2024-07-01 \
-        --end-date 2024-12-31
+    python run_low_bounce.py \\
+        --data-path 'all_data_*.csv' \\
+        --use-all-symbols \\
+        --start-date 2024-01-01 --end-date 2025-12-31
 
-    # Daily report (morning email of what hit in past 2 days)
-    python run_regression_momentum.py \
-        --predictions merged_predictions.csv \
-        --use-all-symbols \
-        --data-path 'all_data_*.csv' \
-        --mode daily \
-        --lookback-days 2 \
-        --watchlist api_data/watchlist.csv \
-        --sort-sharpe \
-        --summary-only
+    # Daily report
+    python run_low_bounce.py \\
+        --data-path 'all_data_*.csv' \\
+        --use-all-symbols \\
+        --mode daily --lookback-days 2 --summary-only
 
-    # Portfolio filtering: price band + top 15 by Sharpe
-    python run_regression_momentum.py \
-        --predictions merged_predictions.csv \
-        --use-all-symbols \
-        --data-path 'all_data_*.csv' \
-        --price-above 25 --top-k-sharpe 15 \
-        --start-date 2024-07-01 \
-        --end-date 2024-12-31
+    # Signal scan
+    python run_low_bounce.py \\
+        --data-path 'all_data_*.csv' \\
+        --use-all-symbols \\
+        --mode signals --output-signals signals/low_bounce.csv
 """
 
 import argparse
@@ -47,7 +39,6 @@ from datetime import date, datetime, timedelta
 
 import pandas as pd
 
-# Add bar_fly_trading and strategies to path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, current_dir)
@@ -66,75 +57,68 @@ from portfolio import (
     run_pipeline as portfolio_pipeline,
 )
 
-from regression_momentum_strategy import RegressionMomentumStrategy
+from low_bounce_strategy import LowBounceStrategy
 
 
-def get_available_symbols(predictions_path):
-    """Get list of symbols available in predictions (file or directory)."""
-    if os.path.isfile(predictions_path):
-        df = pd.read_csv(predictions_path, nrows=1)
-        col = 'ticker' if 'ticker' in df.columns else 'symbol'
-        df = pd.read_csv(predictions_path, usecols=[col])
-        return set(df[col].unique())
-    elif os.path.isdir(predictions_path):
-        # Legacy: check for individual files
-        for name in ['pred_reg_3d.csv', 'predictions_reg_3d.csv']:
-            pred_file = os.path.join(predictions_path, name)
-            if os.path.exists(pred_file):
-                df = pd.read_csv(pred_file, nrows=1)
-                col = 'ticker' if 'ticker' in df.columns else 'symbol'
-                df = pd.read_csv(pred_file, usecols=[col])
-                return set(df[col].unique())
-    return set()
+def get_available_symbols(data_path):
+    """Get list of symbols available in CSV data."""
+    import glob as glob_mod
+    if '*' in data_path:
+        files = glob_mod.glob(data_path)
+        if not files:
+            return set()
+        df = pd.concat([pd.read_csv(f, usecols=['symbol']) for f in files], ignore_index=True)
+    elif os.path.isfile(data_path):
+        df = pd.read_csv(data_path, usecols=['symbol'])
+    else:
+        return set()
+    return set(df['symbol'].unique())
 
 
 # ================================================================== #
 # MODE 1: FULL BACKTEST
 # ================================================================== #
 
-def run_backtest(symbols, start_date, end_date, start_cash, predictions_path,
-                 data_path=None, position_size=0.1, output_trades=None, output_symbols=None,
-                 output_signals=None, filters_applied=None, ranks_applied=None,
-                 notifier=None):
-    """Run the full Regression Momentum backtest."""
-    # Load price data from CSV (no database needed)
+def run_backtest(symbols, start_date, end_date, start_cash, data_path,
+                 position_size=0.1, max_hold_days=30,
+                 output_trades=None, output_symbols=None, output_signals=None,
+                 filters_applied=None, ranks_applied=None, notifier=None):
+    """Run the full 52-Week Low Bounce backtest."""
     data = None
     if data_path:
         data = portfolio_load_data(data_path)
         print(f"  Loaded {len(data):,} rows from {data_path}")
 
-    # Create account
     account = BacktestAccount(
-        account_id="regression_momentum_backtest",
-        owner_name="Regression Momentum Backtest",
+        account_id="low_bounce_backtest",
+        owner_name="52-Week Low Bounce Backtest",
         account_values=AccountValues(start_cash, 0, 0),
         start_date=pd.to_datetime(start_date)
     )
 
-    # Create strategy
-    strategy = RegressionMomentumStrategy(
+    strategy = LowBounceStrategy(
         account=account,
         symbols=symbols,
-        predictions_path=predictions_path,
-        position_size=position_size
+        data=data,
+        position_size=position_size,
+        max_hold_days=max_hold_days
     )
 
-    # Print header
     print("\n" + "=" * 70)
-    print("REGRESSION MOMENTUM STRATEGY BACKTEST")
+    print("52-WEEK LOW BOUNCE STRATEGY BACKTEST (M6)")
     print("=" * 70)
     print(f"""
 Strategy Parameters:
-  Entry: pred_reg_3d > 1% AND pred_reg_10d > 2% AND adx_signal > 0
-  Exit:  pred_reg_3d < 0 OR cci_signal < 0 OR hold >= 13 days
-  Min Hold: 2 days | Max Hold: 13 days
+  Entry: close < 52w_low * 1.10 AND RSI < 40 AND bull_bear_delta <= 0
+  Exit:  hold >= {max_hold_days}d OR RSI > 60 OR return > 15%
   Position Size: {position_size * 100:.0f}% of portfolio
+  Max Positions: {strategy.MAX_POSITIONS}
 
 Backtest Setup:
   Symbols: {len(symbols)} stocks
   Date Range: {start_date} to {end_date}
   Starting Cash: ${start_cash:,.2f}
-  Predictions: {predictions_path}""")
+  Data: {data_path}""")
 
     if filters_applied:
         print(f"  Filters:       {', '.join(filters_applied)}")
@@ -143,15 +127,12 @@ Backtest Setup:
     print()
     print("=" * 70 + "\n")
 
-    # Run backtest
     account_values = backtest(strategy, symbols, start_date, end_date, data=data)
 
-    # Compute and print stats
     final_value = account_values.get_total_value()
     stats = compute_stats(strategy.trade_log, start_cash)
     print_stats(stats, start_cash, final_value)
 
-    # Open positions
     open_positions = strategy.get_open_positions()
     if open_positions:
         print(f"\nOpen Positions ({len(open_positions)}):")
@@ -159,13 +140,12 @@ Backtest Setup:
             print(f"  {symbol}: {pos['shares']} shares @ ${pos['entry_price']:.2f}")
         print()
 
-    # Write output files
     if output_trades:
         write_trade_log(strategy.trade_log, output_trades)
     if output_symbols:
         write_symbols(symbols, output_symbols)
 
-    # Write pending signals for open positions at backtest end (for live execution bridge)
+    # Write pending signals for open positions at backtest end
     if output_signals:
         open_positions = strategy.get_open_positions()
         if open_positions:
@@ -173,24 +153,22 @@ Backtest Setup:
             for symbol, pos in open_positions.items():
                 entry_str = pos['entry_date'].strftime('%Y-%m-%d') if hasattr(pos['entry_date'], 'strftime') else str(pos['entry_date'])[:10]
                 writer.add(
-                    action='BUY',
-                    symbol=symbol,
+                    action='BUY', symbol=symbol,
                     price=pos['entry_price'],
-                    strategy='regression_momentum',
+                    strategy='low_bounce',
                     reason=f"open position from {entry_str}",
                 )
             writer.save()
             print(f"  Wrote {len(open_positions)} pending signals to {output_signals}")
 
-    # Email backtest results
     if notifier:
         total_trades = stats.get('total_trades', 0)
         total_return = stats.get('total_return_pct', 0)
         subject = (
-            f"[REGRESSION] Backtest Results - "
+            f"[LOW_BOUNCE] Backtest Results - "
             f"{total_trades} trades, {total_return:+.2f}% ({start_date} to {end_date})"
         )
-        body = generate_regression_summary(
+        body = generate_summary(
             strategy, stats, start_cash, final_value,
             lookback_days=0, filters_applied=filters_applied,
             ranks_applied=ranks_applied
@@ -202,16 +180,15 @@ Backtest Setup:
 
 
 # ================================================================== #
-# MODE 2: DAILY REPORT (short lookback + email summary)
+# MODE 2: DAILY REPORT
 # ================================================================== #
 
-def generate_regression_summary(strategy, stats, start_cash, final_value,
-                                lookback_days, filters_applied=None,
-                                ranks_applied=None):
-    """Generate a formatted text summary of regression momentum results."""
+def generate_summary(strategy, stats, start_cash, final_value,
+                     lookback_days, filters_applied=None, ranks_applied=None):
+    """Generate a formatted text summary of 52-week low bounce results."""
     lines = [
         "=" * 85,
-        "REGRESSION MOMENTUM STRATEGY SUMMARY",
+        "52-WEEK LOW BOUNCE STRATEGY SUMMARY (M6)",
         "=" * 85,
         f"Scan Time:     {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"Lookback:      {lookback_days} trading days",
@@ -224,33 +201,31 @@ def generate_regression_summary(strategy, stats, start_cash, final_value,
         lines.append(f"Rank:          {', '.join(ranks_applied)}")
 
     lines.append(f"Symbols:       {len(strategy.symbols)}")
+    lines.append(f"Entry Rule:    close < 52w_low * 1.10, RSI < 40, delta <= 0")
+    lines.append(f"Exit Rule:     hold >= 30d OR RSI > 60 OR return > 15%")
     lines.append("")
 
-    # Separate entries and exits from the trade log
-    # Entries that are still open (in positions)
-    # Completed trades (have exit_date)
     entries = [t for t in strategy.trade_log if 'exit_date' in t and t.get('exit_date')]
     open_positions = strategy.get_open_positions()
 
-    # ENTRIES section - show completed trades with entry info
     lines.append(f"COMPLETED TRADES ({len(entries)}):")
     lines.append("-" * 85)
     if entries:
-        lines.append(f"{'Symbol':<8} {'Entry':<12} {'Exit':<12} {'Entry$':>10} {'Exit$':>10} {'Return':>8} {'Hold':>6}")
+        lines.append(f"{'Symbol':<8} {'Entry':<12} {'Exit':<12} {'Entry$':>10} {'Exit$':>10} {'Return':>8} {'Hold':>6} {'Reason':<20}")
         lines.append("-" * 85)
         for t in entries:
             ret_str = f"{t['return_pct']:+.2f}%"
             hold_str = f"{t['hold_days']}d"
+            reason = t.get('exit_reason', '')
             lines.append(
                 f"{t['symbol']:<8} {t['entry_date']:<12} {t['exit_date']:<12} "
-                f"${t['entry_price']:>8.2f} ${t['exit_price']:>8.2f} {ret_str:>8} {hold_str:>6}"
+                f"${t['entry_price']:>8.2f} ${t['exit_price']:>8.2f} {ret_str:>8} {hold_str:>6} {reason:<20}"
             )
     else:
         lines.append("  (none)")
 
     lines.append("")
 
-    # OPEN POSITIONS section
     lines.append(f"OPEN POSITIONS ({len(open_positions)}):")
     lines.append("-" * 85)
     if open_positions:
@@ -266,7 +241,6 @@ def generate_regression_summary(strategy, stats, start_cash, final_value,
 
     lines.append("")
 
-    # Stats summary
     if stats:
         lines.append("-" * 85)
         lines.append("STATS:")
@@ -282,64 +256,50 @@ def generate_regression_summary(strategy, stats, start_cash, final_value,
     return "\n".join(lines)
 
 
-def run_daily_report(symbols, predictions_path, data_path, position_size=0.1,
+def run_daily_report(symbols, data_path, position_size=0.1,
                      lookback_days=2, start_cash=100000, notifier=None,
                      filters_applied=None, ranks_applied=None):
-    """
-    Run a short lookback backtest and email a summary of what hit.
-
-    This is the "morning report" mode: run over the past N days to see
-    which symbols triggered entry/exit signals.
-    """
-    # Calculate date range: pad with extra calendar days to ensure we cover
-    # enough trading days (weekends, holidays)
+    """Run a short lookback backtest and email a summary of what hit."""
     end_date = date.today().strftime('%Y-%m-%d')
-    start_date = (date.today() - timedelta(days=lookback_days + 5)).strftime('%Y-%m-%d')
+    # M6 has 30-day hold, so need more lookback for daily mode
+    start_date = (date.today() - timedelta(days=lookback_days + 40)).strftime('%Y-%m-%d')
 
-    # Load price data
     data = None
     if data_path:
         data = portfolio_load_data(data_path)
         print(f"  Loaded {len(data):,} rows from {data_path}")
 
-    # Create account
     account = BacktestAccount(
-        account_id="regression_daily",
-        owner_name="Regression Momentum Daily",
+        account_id="low_bounce_daily",
+        owner_name="52-Week Low Bounce Daily",
         account_values=AccountValues(start_cash, 0, 0),
         start_date=pd.to_datetime(start_date)
     )
 
-    # Create strategy
-    strategy = RegressionMomentumStrategy(
+    strategy = LowBounceStrategy(
         account=account,
         symbols=symbols,
-        predictions_path=predictions_path,
+        data=data,
         position_size=position_size
     )
 
-    # Run short backtest
     account_values = backtest(strategy, symbols, start_date, end_date, data=data)
 
-    # Compute stats
     final_value = account_values.get_total_value()
     stats = compute_stats(strategy.trade_log, start_cash)
 
-    # Generate summary
-    summary = generate_regression_summary(
+    summary = generate_summary(
         strategy, stats, start_cash, final_value,
         lookback_days, filters_applied, ranks_applied
     )
 
-    # Print summary
     print(summary)
 
-    # Email via TradeNotifier
     if notifier:
         trade_count = len(strategy.trade_log)
         open_count = len(strategy.get_open_positions())
         subject = (
-            f"[REGRESSION] Momentum Signals Summary - "
+            f"[LOW_BOUNCE] Signals Summary - "
             f"{trade_count} trade(s), {open_count} open ({date.today()})"
         )
         if notifier._send_email(subject, summary):
@@ -351,40 +311,41 @@ def run_daily_report(symbols, predictions_path, data_path, position_size=0.1,
 
 
 # ================================================================== #
-# MODE 3: ONE-SHOT SIGNAL GENERATION (for cron / live execution)
+# MODE 3: ONE-SHOT SIGNAL GENERATION
 # ================================================================== #
 
-def run_signal_eval(symbols, predictions_path, position_size=0.1,
+def run_signal_eval(symbols, data_path, position_size=0.1,
                     output_signals=None, prices_source='live', notifier=None):
-    """
-    Evaluate strategy once for today and write signal CSV.
-
-    Args:
-        symbols: Set of symbols to evaluate
-        predictions_path: Path to merged predictions
-        position_size: Position size fraction
-        output_signals: Path to write signal CSV (None = print only)
-        prices_source: 'live' to fetch from rt_utils, or path to CSV
-    """
+    """Evaluate strategy once for today and write signal CSV."""
     account = BacktestAccount(
-        account_id="regression_signal_runner",
-        owner_name="Regression Momentum Signal Runner",
+        account_id="low_bounce_signal_runner",
+        owner_name="52-Week Low Bounce Signal Runner",
         account_values=AccountValues(100000, 0, 0),
         start_date=pd.to_datetime(date.today())
     )
 
-    strategy = RegressionMomentumStrategy(
+    data = None
+    if data_path:
+        data = portfolio_load_data(data_path)
+
+    strategy = LowBounceStrategy(
         account=account,
         symbols=symbols,
-        predictions_path=predictions_path,
+        data=data,
         position_size=position_size,
     )
 
     # Get current prices
     if isinstance(prices_source, str) and os.path.exists(prices_source):
         current_prices = pd.read_csv(prices_source)
+    elif data is not None:
+        data['date'] = pd.to_datetime(data['date'])
+        latest_date = data['date'].max()
+        latest = data[data['date'] == latest_date].copy()
+        if 'open' not in latest.columns:
+            latest['open'] = latest['adjusted_close']
+        current_prices = latest[['symbol', 'open']].copy()
     else:
-        # Fetch live prices via rt_utils
         from api_data.rt_utils import get_stock_quote
         rows = []
         for sym in symbols:
@@ -411,13 +372,12 @@ def run_signal_eval(symbols, predictions_path, position_size=0.1,
         output_path=output_signals,
     )
 
-    # Email signal results
     if notifier:
         subject = (
-            f"[REGRESSION] Signal Scan - "
+            f"[LOW_BOUNCE] Signal Scan - "
             f"{len(signals)} signal(s) ({today})"
         )
-        lines = [f"Regression Momentum Signal Scan: {today}", f"Symbols: {len(symbols)}", ""]
+        lines = [f"52-Week Low Bounce Signal Scan: {today}", f"Symbols: {len(symbols)}", ""]
         if signals:
             for s in signals:
                 lines.append(f"  BUY {s['symbol']} @ ${s['price']:.2f}: {s['reason']}")
@@ -435,108 +395,104 @@ def run_signal_eval(symbols, predictions_path, position_size=0.1,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run Regression Momentum Strategy (backtest or daily report)",
+        description="Run 52-Week Low Bounce Strategy (M6) — pure technical, no ML",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Full backtest
-  python run_regression_momentum.py --predictions merged_predictions.csv \\
-      --use-all-symbols --data-path 'all_data_*.csv' \\
-      --start-date 2024-07-01 --end-date 2024-12-31
+  python run_low_bounce.py --data-path 'all_data_*.csv' \\
+      --use-all-symbols --start-date 2024-01-01 --end-date 2025-12-31
 
-  # Daily report (morning email)
-  python run_regression_momentum.py --predictions merged_predictions.csv \\
-      --use-all-symbols --data-path 'all_data_*.csv' \\
-      --mode daily --lookback-days 2 \\
-      --watchlist api_data/watchlist.csv --sort-sharpe --summary-only
+  # Daily report
+  python run_low_bounce.py --data-path 'all_data_*.csv' \\
+      --use-all-symbols --mode daily --lookback-days 2 --summary-only
 
-  # Portfolio filter: price > $25, top 15 by Sharpe
-  python run_regression_momentum.py --predictions merged_predictions.csv \\
-      --use-all-symbols --data-path 'all_data_*.csv' \\
-      --price-above 25 --top-k-sharpe 15 \\
-      --start-date 2024-07-01 --end-date 2024-12-31
+  # Signal scan
+  python run_low_bounce.py --data-path 'all_data_*.csv' \\
+      --use-all-symbols --mode signals --output-signals signals/low_bounce.csv
         """
     )
 
     # --- Mode ---
     parser.add_argument("--mode", type=str, default="backtest",
                         choices=["backtest", "daily", "signals"],
-                        help="'backtest' for historical test, 'daily' for short lookback + email, 'signals' for one-shot evaluation (default: backtest)")
+                        help="Strategy mode (default: backtest)")
 
     # --- Data ---
-    parser.add_argument("--predictions", type=str, required=True,
-                        help="Path to merged_predictions.csv or predictions directory")
+    parser.add_argument("--data-path", type=str, default=None,
+                        help="Path to price/indicator CSV(s) (supports globs)")
     parser.add_argument("--symbols", type=str, nargs="+",
                         help="Symbols to trade (e.g., AAPL GOOGL MSFT)")
     parser.add_argument("--symbols-file", type=str, default=None,
-                        help="CSV file with symbol list (output of portfolio or prior backtest)")
+                        help="CSV file with symbol list")
     parser.add_argument("--use-all-symbols", action="store_true",
-                        help="Use all symbols available in predictions")
-    parser.add_argument("--data-path", type=str, default=None,
-                        help="Path to price data CSV(s) for backtest (supports globs, e.g. 'all_data_*.csv')")
+                        help="Use all symbols available in data")
 
     # --- Backtest-specific ---
     parser.add_argument("--start-date", type=str, default=None,
-                        help="Backtest start date (YYYY-MM-DD) — required for backtest mode")
+                        help="Backtest start date (YYYY-MM-DD)")
     parser.add_argument("--end-date", type=str, default=None,
-                        help="Backtest end date (YYYY-MM-DD) — required for backtest mode")
+                        help="Backtest end date (YYYY-MM-DD)")
     parser.add_argument("--start-cash", type=float, default=100000,
                         help="Initial cash balance (default: 100000)")
     parser.add_argument("--position-size", type=float, default=0.1,
-                        help="Position size as fraction of portfolio (default: 0.1 = 10%%)")
+                        help="Position size as fraction of portfolio (default: 0.1)")
+    parser.add_argument("--max-hold-days", type=int, default=30,
+                        help="Max days to hold (default: 30)")
 
-    # --- Daily report-specific ---
+    # --- Daily/signals ---
     parser.add_argument("--lookback-days", type=int, default=2,
-                        help="Days to look back for daily report mode (default: 2)")
+                        help="Days to look back for daily report (default: 2)")
     parser.add_argument("--no-notify", action="store_true",
                         help="Skip sending email notification")
     parser.add_argument("--summary-only", action="store_true",
-                        help="Send summary email (daily mode, default behavior)")
+                        help="Send summary email (daily mode)")
 
-    # --- Portfolio ranker args ---
+    # --- Portfolio ranker ---
     parser.add_argument("--portfolio-data", type=str, default=None,
-                        help="Path to data CSV for portfolio ranking (default: same as --data-path)")
+                        help="Path to data CSV for portfolio ranking (default: --data-path)")
     parser.add_argument("--watchlist", type=str, default=None,
                         help="Path to watchlist CSV file")
     parser.add_argument("--watchlist-mode", type=str, default='sort',
                         choices=['sort', 'filter'],
-                        help="'sort' = watchlist first, 'filter' = watchlist only (default: sort)")
+                        help="Watchlist mode (default: sort)")
     parser.add_argument("--price-above", type=float, default=None,
-                        help="Min stock price filter (inclusive)")
+                        help="Min stock price filter")
     parser.add_argument("--price-below", type=float, default=None,
-                        help="Max stock price filter (inclusive)")
+                        help="Max stock price filter")
     parser.add_argument("--filter-field", type=str, default=None,
-                        help="Column name to filter/rank on (e.g. rsi_14, beta, pe_ratio)")
+                        help="Column name to filter/rank on")
     parser.add_argument("--filter-above", type=float, default=None,
-                        help="Min value for --filter-field (inclusive)")
+                        help="Min value for --filter-field")
     parser.add_argument("--filter-below", type=float, default=None,
-                        help="Max value for --filter-field (inclusive)")
+                        help="Max value for --filter-field")
     parser.add_argument("--top-k-sharpe", type=int, default=None,
                         help="Keep top K symbols ranked by Sharpe ratio")
     parser.add_argument("--sort-sharpe", action="store_true",
-                        help="Sort symbols by Sharpe ratio (no cutoff, ordering only)")
+                        help="Sort symbols by Sharpe ratio")
 
-    # --- Output files ---
+    # --- Output ---
     parser.add_argument("--output-trades", type=str, default=None,
                         help="Path to write trade log CSV")
     parser.add_argument("--output-symbols", type=str, default=None,
                         help="Path to write filtered symbol list CSV")
     parser.add_argument("--output-signals", type=str, default=None,
-                        help="Path to write pending signal CSV for live execution")
-
-    # --- Signal mode ---
+                        help="Path to write pending signal CSV")
     parser.add_argument("--prices-csv", type=str, default=None,
-                        help="CSV with current prices (signals mode, optional)")
+                        help="CSV with current prices (signals mode)")
 
     args = parser.parse_args()
 
     # Determine symbols
     if args.use_all_symbols:
-        symbols = get_available_symbols(args.predictions)
-        if not symbols:
-            print(f"Error: No symbols found in {args.predictions}")
+        if not args.data_path:
+            print("Error: --data-path required with --use-all-symbols")
             sys.exit(1)
-        print(f"Using all {len(symbols)} symbols from predictions")
+        symbols = get_available_symbols(args.data_path)
+        if not symbols:
+            print(f"Error: No symbols found in {args.data_path}")
+            sys.exit(1)
+        print(f"Using all {len(symbols)} symbols from data")
     elif args.symbols_file:
         symbols = set(read_symbols(args.symbols_file))
         print(f"Loaded {len(symbols)} symbols from {args.symbols_file}")
@@ -583,7 +539,7 @@ Examples:
             symbols = set(apply_watchlist(list(symbols), wl, args.watchlist_mode))
             print(f"After watchlist ({args.watchlist_mode}): {len(symbols)} symbols")
 
-    # Build filter/rank metadata for summary display
+    # Build filter/rank metadata
     filters_applied = []
     ranks_applied = []
     if args.watchlist:
@@ -606,11 +562,10 @@ Examples:
     if not ranks_applied:
         ranks_applied.append("symbol order")
 
-    # Write symbol list before backtest (portfolio-filtered set)
     if args.output_symbols:
         write_symbols(symbols, args.output_symbols)
 
-    # Notifier for all modes
+    # Notifier
     notifier = None if args.no_notify else TradeNotifier()
 
     # Dispatch
@@ -624,9 +579,9 @@ Examples:
             start_date=args.start_date,
             end_date=args.end_date,
             start_cash=args.start_cash,
-            predictions_path=args.predictions,
             data_path=args.data_path,
             position_size=args.position_size,
+            max_hold_days=args.max_hold_days,
             output_trades=args.output_trades,
             output_signals=args.output_signals,
             filters_applied=filters_applied,
@@ -635,10 +590,8 @@ Examples:
         )
 
     elif args.mode == "daily":
-
         run_daily_report(
             symbols=symbols,
-            predictions_path=args.predictions,
             data_path=args.data_path,
             position_size=args.position_size,
             lookback_days=args.lookback_days,
@@ -649,10 +602,10 @@ Examples:
         )
 
     elif args.mode == "signals":
-        prices_source = args.prices_csv or 'live'
+        prices_source = args.prices_csv or args.data_path or 'live'
         run_signal_eval(
             symbols=symbols,
-            predictions_path=args.predictions,
+            data_path=args.data_path,
             position_size=args.position_size,
             output_signals=args.output_signals,
             prices_source=prices_source,

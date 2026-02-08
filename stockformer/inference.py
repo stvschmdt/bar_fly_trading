@@ -298,10 +298,11 @@ def infer(cfg):
 
             target_col = get_target_column(cfg["horizon"])
 
-            # Compute target if not present (needed for evaluation)
-            if target_col not in df.columns:
-                print(f"Computing future returns for horizon={cfg['horizon']}...")
-                df = add_future_returns(df, horizons=[cfg["horizon"]])
+            # Always recompute future returns to match training scale (decimal form).
+            # Raw CSVs may have pre-computed values in percentage form which would
+            # cause true_return/true_class to use wrong scale in output.
+            print(f"Computing future returns for horizon={cfg['horizon']}...")
+            df = add_future_returns(df, horizons=[cfg["horizon"]])
 
             # Add technical features
             print("Adding technical features...")

@@ -1,19 +1,21 @@
 """
-Regression Momentum Strategy for bar_fly_trading backtest framework.
+Oversold Reversal Strategy for bar_fly_trading backtest framework.
 
-Top-performing strategy from stockformer analysis with 68.1% win rate.
+Best-performing strategy from v2 analysis with 63% win rate, Sharpe 0.84.
 
 Entry Conditions:
-    - pred_reg_3d > 1% (3-day regression predicts >1% return)
-    - pred_reg_10d > 2% (10-day regression predicts >2% return)
-    - adx_signal > 0 (trend strength confirmation)
+    - rsi_14 < 40 (oversold)
+    - bull_bear_delta <= -2 (bearish technicals)
+    - bin_3d predicts UP (model confirms reversion is coming)
 
 Exit Conditions:
-    - pred_reg_3d < 0 (3-day regression turns negative)
-    - OR cci_signal < 0 (CCI indicates reversal)
-    - OR max hold of 13 days reached
+    - hold >= 3 days (fixed 3-day hold period)
+    - OR rsi_14 > 55 (early recovery)
 
-Hold Constraints: 2-13 days
+Hold Constraints: 1-3 days
+
+The logic: stock is technically oversold (RSI + bearish delta), but the
+ML model says the reversion is coming. Filters out false bottoms.
 """
 
 import os
@@ -33,32 +35,35 @@ from signal_writer import SignalWriter
 
 # Column name mappings for merged vs individual prediction files
 MERGED_COLUMN_MAP = {
-    'pred_return_reg_3d': 'pred_reg_3d',
-    'pred_return_reg_10d': 'pred_reg_10d',
-}
-
-INDIVIDUAL_COLUMN_MAP = {
-    'pred_return': None,  # renamed per-file in _load_from_dir
+    'pred_class_bin_3d': 'pred_bin_3d',
+    'prob_1_bin_3d': 'prob_up_3d',
 }
 
 
-class RegressionMomentumStrategy(BaseStrategy):
+class OversoldReversalStrategy(BaseStrategy):
     """
-    Strategy using regression model predictions with momentum confirmation.
+    Strategy combining oversold technicals with ML model confirmation.
 
-    Win Rate: 68.1% (backtested)
-    Avg Return per Trade: +1.64%
-    Avg Hold: 5.2 days
+    Win Rate: 63.0% (backtested on v2 inference data)
+    Avg Return per Trade: +0.56%
+    Sharpe: 0.84
+
+    The model acts as a filter — when technicals say "oversold" but the
+    binary model still predicts UP, that's a signal the reversion will hold.
     """
 
-    STRATEGY_NAME = "regression_momentum"
+    STRATEGY_NAME = "oversold_reversal"
 
-    # Strategy parameters
-    ENTRY_REG_3D_THRESHOLD = 0.01   # 1% predicted return
-    ENTRY_REG_10D_THRESHOLD = 0.02  # 2% predicted return
-    EXIT_REG_3D_THRESHOLD = 0.0     # Exit when prediction turns negative
-    MIN_HOLD_DAYS = 2
-    MAX_HOLD_DAYS = 13
+    # Entry thresholds
+    RSI_ENTRY_THRESHOLD = 40        # RSI must be below this (oversold)
+    DELTA_ENTRY_THRESHOLD = -2      # bull_bear_delta must be <= this (bearish)
+    PROB_UP_THRESHOLD = 0.50        # model probability of UP (default: majority class)
+
+    # Exit thresholds
+    RSI_EXIT_THRESHOLD = 55         # Early exit if RSI recovers above this
+    MAX_HOLD_DAYS = 3               # Fixed 3-day hold period
+    MIN_HOLD_DAYS = 1               # Must hold at least 1 day
+    MAX_POSITIONS = 10              # Max concurrent positions (10 x 10% = 100%)
 
     def __init__(self, account, symbols, predictions_path=None, position_size=0.1):
         """
@@ -67,7 +72,7 @@ class RegressionMomentumStrategy(BaseStrategy):
         Args:
             account: BacktestAccount instance
             symbols: Set of symbols to trade
-            predictions_path: Path to merged_predictions.csv or a predictions directory
+            predictions_path: Path to merged_predictions.csv or predictions directory
             position_size: Fraction of portfolio per position (default 0.1 = 10%)
         """
         super().__init__(account, symbols)
@@ -86,7 +91,7 @@ class RegressionMomentumStrategy(BaseStrategy):
             self._load_predictions()
 
     def _load_predictions(self):
-        """Load predictions from a merged CSV or a predictions directory."""
+        """Load predictions from a merged CSV or predictions directory."""
         path = self.predictions_path
         if not path:
             return
@@ -96,7 +101,7 @@ class RegressionMomentumStrategy(BaseStrategy):
         elif os.path.isdir(path):
             self._load_from_dir(path)
         else:
-            print(f"[RegressionMomentumStrategy] Warning: Path not found: {path}")
+            print(f"[OversoldReversal] Warning: Path not found: {path}")
 
     def _load_from_merged(self, csv_path):
         """Load predictions from a single merged_predictions.csv file."""
@@ -114,65 +119,66 @@ class RegressionMomentumStrategy(BaseStrategy):
                 rename[src] = dst
 
         if not rename:
-            print(f"[RegressionMomentumStrategy] Warning: No prediction columns found in {csv_path}")
+            print(f"[OversoldReversal] Warning: No prediction columns found in {csv_path}")
             print(f"  Expected columns like: {list(MERGED_COLUMN_MAP.keys())}")
             return
 
         df = df.rename(columns=rename)
 
-        # Keep only needed columns
-        needed = ['date', 'symbol', 'pred_reg_3d', 'pred_reg_10d', 'adx_signal', 'cci_signal']
+        # Keep needed columns (technical indicators + model predictions)
+        needed = ['date', 'symbol', 'rsi_14', 'bull_bear_delta', 'pred_bin_3d', 'prob_up_3d']
         missing = [c for c in needed if c not in df.columns]
         if missing:
-            print(f"[RegressionMomentumStrategy] Warning: Missing columns: {missing}")
+            print(f"[OversoldReversal] Warning: Missing columns: {missing}")
             return
 
         self.predictions = df[needed].copy()
         self.predictions = self.predictions[self.predictions['symbol'].isin(self.symbols)]
 
-        print(f"[RegressionMomentumStrategy] Loaded from merged file: {csv_path}")
+        print(f"[OversoldReversal] Loaded from merged file: {csv_path}")
         print(f"  Rows: {len(self.predictions):,}")
         print(f"  Symbols: {self.predictions['symbol'].nunique()}")
         print(f"  Date range: {self.predictions['date'].min()} to {self.predictions['date'].max()}")
 
     def _load_from_dir(self, predictions_dir):
-        """Load predictions from individual files in a directory (legacy)."""
-        reg_3d_path = os.path.join(predictions_dir, 'pred_reg_3d.csv')
-        reg_10d_path = os.path.join(predictions_dir, 'pred_reg_10d.csv')
+        """Load predictions from individual prediction files in a directory."""
+        bin_3d_path = os.path.join(predictions_dir, 'predictions_bin_3d.csv')
+        if not os.path.exists(bin_3d_path):
+            bin_3d_path = os.path.join(predictions_dir, 'pred_bin_3d.csv')
 
-        # Also check for predictions_reg_3d.csv naming
-        if not os.path.exists(reg_3d_path):
-            reg_3d_path = os.path.join(predictions_dir, 'predictions_reg_3d.csv')
-        if not os.path.exists(reg_10d_path):
-            reg_10d_path = os.path.join(predictions_dir, 'predictions_reg_10d.csv')
-
-        if not os.path.exists(reg_3d_path) or not os.path.exists(reg_10d_path):
-            print(f"[RegressionMomentumStrategy] Warning: Prediction files not found")
-            print(f"  Checked: {reg_3d_path}")
-            print(f"  Checked: {reg_10d_path}")
+        if not os.path.exists(bin_3d_path):
+            print(f"[OversoldReversal] Warning: Binary 3d prediction file not found")
+            print(f"  Checked: {predictions_dir}/predictions_bin_3d.csv")
             return
 
-        reg_3d = pd.read_csv(reg_3d_path)
-        reg_10d = pd.read_csv(reg_10d_path)
+        df = pd.read_csv(bin_3d_path)
+        df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+        if 'ticker' in df.columns:
+            df['symbol'] = df['ticker']
 
-        reg_3d['date'] = pd.to_datetime(reg_3d['date']).dt.strftime('%Y-%m-%d')
-        reg_10d['date'] = pd.to_datetime(reg_10d['date']).dt.strftime('%Y-%m-%d')
+        # Map column names
+        rename = {}
+        if 'pred_class' in df.columns:
+            rename['pred_class'] = 'pred_bin_3d'
+        if 'pred_class_bin_3d' in df.columns:
+            rename['pred_class_bin_3d'] = 'pred_bin_3d'
+        if 'prob_1' in df.columns:
+            rename['prob_1'] = 'prob_up_3d'
+        if 'prob_1_bin_3d' in df.columns:
+            rename['prob_1_bin_3d'] = 'prob_up_3d'
 
-        if 'ticker' in reg_3d.columns:
-            reg_3d['symbol'] = reg_3d['ticker']
-        if 'ticker' in reg_10d.columns:
-            reg_10d['symbol'] = reg_10d['ticker']
+        df = df.rename(columns=rename)
 
-        reg_3d_sub = reg_3d[['date', 'symbol', 'pred_return', 'adx_signal', 'cci_signal']].copy()
-        reg_3d_sub.columns = ['date', 'symbol', 'pred_reg_3d', 'adx_signal', 'cci_signal']
+        needed = ['date', 'symbol', 'rsi_14', 'bull_bear_delta', 'pred_bin_3d', 'prob_up_3d']
+        missing = [c for c in needed if c not in df.columns]
+        if missing:
+            print(f"[OversoldReversal] Warning: Missing columns in dir: {missing}")
+            return
 
-        reg_10d_sub = reg_10d[['date', 'symbol', 'pred_return']].copy()
-        reg_10d_sub.columns = ['date', 'symbol', 'pred_reg_10d']
-
-        self.predictions = reg_3d_sub.merge(reg_10d_sub, on=['date', 'symbol'], how='inner')
+        self.predictions = df[needed].copy()
         self.predictions = self.predictions[self.predictions['symbol'].isin(self.symbols)]
 
-        print(f"[RegressionMomentumStrategy] Loaded from directory: {predictions_dir}")
+        print(f"[OversoldReversal] Loaded from directory: {predictions_dir}")
         print(f"  Rows: {len(self.predictions):,}")
         print(f"  Symbols: {self.predictions['symbol'].nunique()}")
         print(f"  Date range: {self.predictions['date'].min()} to {self.predictions['date'].max()}")
@@ -183,7 +189,6 @@ class RegressionMomentumStrategy(BaseStrategy):
             return None
 
         date_str = date.strftime('%Y-%m-%d') if hasattr(date, 'strftime') else str(date)[:10]
-
         mask = (self.predictions['date'] == date_str) & (self.predictions['symbol'] == symbol)
         rows = self.predictions[mask]
 
@@ -193,31 +198,43 @@ class RegressionMomentumStrategy(BaseStrategy):
         return rows.iloc[0]
 
     def _check_entry_conditions(self, pred):
-        """Check if entry conditions are met."""
+        """
+        Check if entry conditions are met.
+
+        Entry: RSI < 40 AND bull_bear_delta <= -2 AND bin_3d predicts UP
+        """
         if pred is None:
             return False
 
-        # Entry: pred_reg_3d > 1% AND pred_reg_10d > 2% AND adx_signal > 0
-        return (pred['pred_reg_3d'] > self.ENTRY_REG_3D_THRESHOLD and
-                pred['pred_reg_10d'] > self.ENTRY_REG_10D_THRESHOLD and
-                pred['adx_signal'] > 0)
+        rsi = pred['rsi_14']
+        delta = pred['bull_bear_delta']
+        model_up = pred['pred_bin_3d']
+
+        # All three conditions must be true
+        return (rsi < self.RSI_ENTRY_THRESHOLD and
+                delta <= self.DELTA_ENTRY_THRESHOLD and
+                model_up == 1)
 
     def _check_exit_conditions(self, pred, hold_days):
-        """Check if exit conditions are met."""
-        # Must hold minimum days
+        """
+        Check if exit conditions are met.
+
+        Exit: hold >= 3 days OR (hold >= 1 day AND RSI > 55)
+        """
         if hold_days < self.MIN_HOLD_DAYS:
             return False
 
-        # Exit at max hold
+        # Always exit at max hold
         if hold_days >= self.MAX_HOLD_DAYS:
             return True
 
-        if pred is None:
-            return False
+        # Early exit if RSI recovered
+        if pred is not None:
+            rsi = pred['rsi_14']
+            if rsi > self.RSI_EXIT_THRESHOLD:
+                return True
 
-        # Exit: pred_reg_3d < 0 OR cci_signal < 0
-        return (pred['pred_reg_3d'] < self.EXIT_REG_3D_THRESHOLD or
-                pred['cci_signal'] < 0)
+        return False
 
     def evaluate(self, date: datetime.date, current_prices: pd.DataFrame, options_data: pd.DataFrame) -> list[Order]:
         """
@@ -261,6 +278,10 @@ class RegressionMomentumStrategy(BaseStrategy):
                     entry_price = self.positions[symbol]['entry_price']
                     pct_return = (current_price - entry_price) / entry_price * 100
 
+                    exit_reason = "max hold 3d"
+                    if pred is not None and pred['rsi_14'] > self.RSI_EXIT_THRESHOLD:
+                        exit_reason = f"RSI recovered ({pred['rsi_14']:.1f})"
+
                     orders.append(StockOrder(symbol, OrderOperation.SELL, shares, current_price, date_str))
 
                     # Record completed trade
@@ -274,16 +295,21 @@ class RegressionMomentumStrategy(BaseStrategy):
                         'pnl': (current_price - entry_price) * shares,
                         'return_pct': pct_return,
                         'hold_days': hold_days,
+                        'exit_reason': exit_reason,
                     })
 
-                    print(f"  EXIT {symbol}: held {hold_days}d, return: {pct_return:+.2f}%")
+                    print(f"  EXIT {symbol}: held {hold_days}d, return: {pct_return:+.2f}% ({exit_reason})")
 
                     # Clear position
                     del self.positions[symbol]
 
             else:
-                # Check entry conditions
+                # Check entry conditions + position/cash guards
+                if len(self.positions) >= self.MAX_POSITIONS:
+                    continue  # At capacity, skip new entries but keep checking exits
                 if self._check_entry_conditions(pred):
+                    if self.account.account_values.cash_balance < current_price:
+                        continue
                     shares = self.account.get_max_buyable_shares(current_price, self.position_size)
                     if shares > 0:
                         orders.append(StockOrder(symbol, OrderOperation.BUY, shares, current_price, date_str))
@@ -295,13 +321,15 @@ class RegressionMomentumStrategy(BaseStrategy):
                             'entry_price': current_price
                         }
 
-                        print(f"  ENTRY {symbol}: pred_3d={pred['pred_reg_3d']:.3f}, pred_10d={pred['pred_reg_10d']:.3f}")
+                        print(f"  ENTRY {symbol}: RSI={pred['rsi_14']:.1f}, delta={pred['bull_bear_delta']:.0f}, prob_up={pred['prob_up_3d']:.3f}")
 
         return orders
 
     def run_signals(self, current_prices, trade_date=None, output_path=None):
         """
         One-shot signal evaluation for today. Writes signal CSV if any triggers.
+
+        Used by --mode signals for cron/scheduler integration.
 
         Args:
             current_prices: DataFrame with [symbol, open] at minimum
@@ -328,9 +356,9 @@ class RegressionMomentumStrategy(BaseStrategy):
 
             if self._check_entry_conditions(pred):
                 reason = (
-                    f"pred_3d={pred['pred_reg_3d']:.3f}, "
-                    f"pred_10d={pred['pred_reg_10d']:.3f}, "
-                    f"adx={pred['adx_signal']:.0f}"
+                    f"RSI={pred['rsi_14']:.1f}, "
+                    f"delta={pred['bull_bear_delta']:.0f}, "
+                    f"prob_up={pred['prob_up_3d']:.3f}"
                 )
                 sig = {'action': 'BUY', 'symbol': symbol, 'shares': 0,
                        'price': current_price, 'reason': reason}

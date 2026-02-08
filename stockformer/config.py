@@ -11,7 +11,7 @@ Edit OUTPUT_COLUMN_GROUPS to customize prediction output columns.
 # =============================================================================
 
 CORE_FIELDS = [
-    "date", "symbol", "open", "high", "low", "close", "volume"
+    "date", "symbol", "open", "high", "low", "adjusted_close", "volume"
 ]
 
 MOVING_AVG_FIELDS = [
@@ -58,7 +58,7 @@ DEFAULT_CONFIG = {
     # -------------------------------------------------------------------------
     # Sequence and label settings
     # -------------------------------------------------------------------------
-    "lookback": 5,            # Number of past days to feed into the model
+    "lookback": 20,           # Number of past days to feed into the model
     "horizon": 3,             # Prediction horizon in days (3, 10, or 30)
     "label_mode": "binary",   # Options: "regression", "binary", "buckets"
     "bucket_edges": [-6, -4, -2, 0, 2, 4, 6],  # Bucket edges in percent for "buckets" mode
@@ -68,10 +68,19 @@ DEFAULT_CONFIG = {
     # Training hyperparameters
     # -------------------------------------------------------------------------
     "batch_size": 128,
-    "lr": 1e-3,
-    "num_epochs": 10,
+    "lr": 5e-4,               # Lowered from 1e-3 to prevent early majority-class collapse
+    "num_epochs": 30,
     "val_fraction": 0.2,
-    "optimizer": "adam",      # Options: "adam", "adamw", "sgd"
+    "optimizer": "adamw",     # Options: "adam", "adamw", "sgd"
+
+    # -------------------------------------------------------------------------
+    # Loss function settings (anti-collapse)
+    # -------------------------------------------------------------------------
+    "loss_name": None,        # None = auto from label_mode (focal for cls, huber for reg)
+    "focal_gamma": 2.0,       # Focal loss focusing parameter (higher = more focus on hard examples)
+    "label_smoothing": 0.1,   # Smooth one-hot targets to prevent overconfident predictions
+    "class_weights": "auto",  # "auto" = inverse-frequency from training data, None = uniform
+    "entropy_weight": 0.1,    # Entropy regularization weight (encourages diverse predictions)
 
     # -------------------------------------------------------------------------
     # Model architecture
@@ -80,7 +89,7 @@ DEFAULT_CONFIG = {
     "nhead": 4,               # Number of attention heads
     "num_layers": 3,          # Number of transformer encoder layers
     "dim_feedforward": 256,   # Hidden dimension of feedforward network
-    "dropout": 0.1,
+    "dropout": 0.15,          # Increased from 0.1 to reduce overfitting
 
     # -------------------------------------------------------------------------
     # System / runtime
@@ -91,9 +100,9 @@ DEFAULT_CONFIG = {
     # -------------------------------------------------------------------------
     # Output paths
     # -------------------------------------------------------------------------
-    "model_out": "output/model_checkpoint.pt",
-    "log_path": "output/training_log.csv",
-    "output_csv": "output/predictions.csv",
+    "model_out": "model_checkpoint.pt",
+    "log_path": "training_log.csv",
+    "output_csv": "predictions.csv",
 }
 
 
@@ -106,49 +115,60 @@ DEFAULT_CONFIG = {
 # Note: feature names must match what's computed in features.py
 
 BASE_FEATURE_COLUMNS = [
-    # Price & Volume (0% null)
-    "open", "high", "low", "close", "volume",
-    "adjusted_open", "adjusted_high", "adjusted_low",
-
-    # Moving Averages (<2% null)
-    "sma_20", "sma_50", "sma_200",
-    "ema_20", "ema_50", "ema_200",
-    "sma_20_pct", "sma_50_pct", "sma_200_pct",
-
-    # Technical Indicators (<1% null)
-    "macd", "macd_9_ema",
-    "rsi_14", "adx_14", "atr_14", "cci_14",
-    "bbands_upper_20", "bbands_middle_20", "bbands_lower_20",
-
-    # Percent Changes (0% null)
-    "adjusted_close_pct", "volume_pct", "open_pct", "high_pct", "low_pct",
-
-    # 52-Week Range (~14% null - fundamentals)
-    "52_week_high", "52_week_low", "52_week_high_pct", "52_week_low_pct",
-
-    # Economic Indicators (<2% null, except inflation=100% removed)
-    "treasury_yield_2year", "treasury_yield_10year",
-    "ffer", "cpi", "retail_sales", "durables",
-    "unemployment", "nonfarm_payroll",
-
-    # Fundamentals (~14% null - quarterly data)
-    "reported_eps", "estimated_eps", "ttm_eps",
-    "surprise", "surprise_percentage",
-    "market_capitalization", "book_value", "dividend_yield",
-    "eps", "price_to_book_ratio", "beta", "shares_outstanding",
-    "forward_pe", "pe_ratio",
-
-    # Analyst Ratings (~14% null)
-    "analyst_rating_strong_buy", "analyst_rating_buy",
-    "analyst_rating_hold", "analyst_rating_sell", "analyst_rating_strong_sell",
-
-    # Temporal (0% null)
-    "day_of_week_num", "month", "day_of_year", "year",
-
-    # Signals - derived indicators (0% null)
-    "macd_signal", "adx_signal", "atr_signal", "pe_ratio_signal",
-    "bollinger_bands_signal", "rsi_signal", "sma_cross_signal",
-    "cci_signal", "bull_bear_delta",
+    # Price & volume
+    "close",
+    "volume",
+    "volume_pct",
+    # Momentum / rate of change
+    "close_1d_roc",
+    "close_3d_roc",
+    "close_10d_roc",
+    "close_5d_vol",
+    "vol_3d_mean",
+    "vol_10d_mean",
+    # Moving averages
+    "sma_20",
+    "sma_50",
+    "sma_200",
+    "ema_20",
+    "ema_50",
+    "sma_20_pct",
+    "sma_50_pct",
+    "sma_200_pct",
+    # Technical indicators
+    "rsi_14",
+    "macd",
+    "macd_9_ema",
+    "adx_14",
+    "atr_14",
+    "cci_14",
+    "bbands_upper_20",
+    "bbands_middle_20",
+    "bbands_lower_20",
+    # Relative position
+    "52_week_high_pct",
+    "52_week_low_pct",
+    "high_pct",
+    "low_pct",
+    "open_pct",
+    "adjusted_close_pct",
+    # Signals (screener composite)
+    "macd_signal",
+    "rsi_signal",
+    "adx_signal",
+    "atr_signal",
+    "cci_signal",
+    "bollinger_bands_signal",
+    "sma_cross_signal",
+    "pe_ratio_signal",
+    "bull_bear_delta",
+    # Fundamentals
+    "pe_ratio",
+    "forward_pe",
+    "beta",
+    # Macro
+    "treasury_yield_10year",
+    "treasury_yield_2year",
 ]
 
 
