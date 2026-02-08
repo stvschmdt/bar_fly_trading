@@ -171,6 +171,10 @@ def train_model(
     """
     base_lr = optimizer.param_groups[0]["lr"]
 
+    # Move loss function to device (needed for FocalLoss class weight buffers)
+    if hasattr(loss_fn, 'to'):
+        loss_fn = loss_fn.to(device)
+
     # Cosine annealing scheduler (applied after warmup)
     scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs - warmup_epochs, eta_min=1e-6)
 

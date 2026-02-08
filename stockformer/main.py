@@ -20,6 +20,7 @@ Usage:
 import argparse
 import os
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -33,7 +34,7 @@ from .data_utils import (
 from .features import add_all_features
 from .dataset import StockSequenceDataset, make_train_val_split
 from .model import create_model
-from .losses import get_loss_function
+from .losses import get_loss_function, compute_class_weights
 from .training import get_optimizer, train_model
 from .logging_utils import (
     Timer,
@@ -197,8 +198,44 @@ def train(cfg):
         model_summary = log_model_summary(model)
         print_model_summary(model_summary)
 
-        # Get loss function and optimizer
-        loss_fn = get_loss_function(cfg["label_mode"])
+        # Compute class weights from training data (for classification modes)
+        # Uses the underlying dataframe directly for speed (avoids iterating 1M+ items)
+        class_weights = None
+        if cfg["label_mode"] != "regression" and cfg.get("class_weights") == "auto":
+            print("\nComputing class weights from training data...")
+
+            # Get training sample row indices from the Subset
+            train_row_idxs = [dataset.indices[i] for i in train_ds.indices]
+            train_targets = dataset.df.loc[train_row_idxs, target_col].to_numpy(dtype="float64")
+
+            # Convert raw target values to class labels (same logic as dataset.__getitem__)
+            if cfg["label_mode"] == "binary":
+                train_labels = (train_targets >= 0.0).astype(int)
+                num_classes = 2
+            elif cfg["label_mode"] == "buckets":
+                edges = np.array(cfg["bucket_edges"], dtype="float32") / 100.0
+                train_labels = np.searchsorted(edges, train_targets, side="right").astype(int)
+                num_classes = len(cfg["bucket_edges"]) + 1
+            else:
+                train_labels = np.zeros(len(train_targets), dtype=int)
+                num_classes = None
+
+            class_weights = compute_class_weights(train_labels, num_classes=num_classes)
+            class_dist = np.bincount(train_labels, minlength=num_classes or 2)
+            print(f"  Class distribution: {dict(enumerate(class_dist))}")
+            print(f"  Class weights: {class_weights.tolist()}")
+
+        # Get loss function with anti-collapse settings
+        loss_fn = get_loss_function(
+            label_mode=cfg["label_mode"],
+            loss_name=cfg.get("loss_name"),
+            class_weights=class_weights,
+            label_smoothing=cfg.get("label_smoothing", 0.0),
+            focal_gamma=cfg.get("focal_gamma", 2.0),
+            entropy_weight=cfg.get("entropy_weight", 0.0),
+        )
+        print(f"Loss function: {loss_fn}")
+
         optimizer = get_optimizer(model, cfg["optimizer"], cfg["lr"])
 
         # Train
@@ -559,6 +596,38 @@ def parse_args():
         help="Model architecture: encoder (bidirectional) or cross_attention (market encoder + causal stock decoder)",
     )
 
+    # Loss function settings
+    parser.add_argument(
+        "--loss-name",
+        type=str,
+        default=None,
+        help="Override loss function (focal, cross_entropy, huber, mse, etc.)",
+    )
+    parser.add_argument(
+        "--focal-gamma",
+        type=float,
+        default=DEFAULT_CONFIG.get("focal_gamma", 2.0),
+        help="Focal loss focusing parameter (default: 2.0)",
+    )
+    parser.add_argument(
+        "--label-smoothing",
+        type=float,
+        default=DEFAULT_CONFIG.get("label_smoothing", 0.0),
+        help="Label smoothing factor (default: 0.1)",
+    )
+    parser.add_argument(
+        "--class-weights",
+        type=str,
+        default=DEFAULT_CONFIG.get("class_weights", "auto"),
+        help="Class weighting: 'auto' (inverse-frequency), 'none' (uniform)",
+    )
+    parser.add_argument(
+        "--entropy-weight",
+        type=float,
+        default=DEFAULT_CONFIG.get("entropy_weight", 0.0),
+        help="Entropy regularization weight (default: 0.1)",
+    )
+
     # System
     parser.add_argument(
         "--num-workers",
@@ -676,6 +745,14 @@ def args_to_config(args):
     cfg["dim_feedforward"] = args.dim_feedforward
     cfg["dropout"] = args.dropout
     cfg["model_type"] = args.model_type
+
+    # Loss function settings
+    cfg["loss_name"] = args.loss_name
+    cfg["focal_gamma"] = args.focal_gamma
+    cfg["label_smoothing"] = args.label_smoothing
+    cfg["class_weights"] = args.class_weights if args.class_weights != "none" else None
+    cfg["entropy_weight"] = args.entropy_weight
+
     cfg["num_workers"] = args.num_workers
     cfg["device"] = args.device
     cfg["model_out"] = args.model_out

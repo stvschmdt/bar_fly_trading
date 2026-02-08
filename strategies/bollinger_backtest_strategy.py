@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from order import Order, StockOrder, OrderOperation
 from base_strategy import BaseStrategy
+from signal_writer import SignalWriter
 
 
 class BollingerBacktestStrategy(BaseStrategy):
@@ -36,6 +37,8 @@ class BollingerBacktestStrategy(BaseStrategy):
     Buys when price crosses below lower band (oversold).
     Sells when price reverts to middle band or hold limit is reached.
     """
+
+    STRATEGY_NAME = "bollinger"
 
     # Entry thresholds
     RSI_BUY_MAX = 40       # RSI must be <= this for BUY entry
@@ -274,3 +277,83 @@ class BollingerBacktestStrategy(BaseStrategy):
     def get_open_positions(self):
         """Return current open positions."""
         return self.positions.copy()
+
+    def run_signals(self, current_prices, trade_date=None, output_path=None):
+        """
+        One-shot signal evaluation for today. Writes signal CSV if any triggers.
+
+        Checks for Bollinger band crossovers in the loaded indicator_data
+        for the given trade_date.
+
+        Args:
+            current_prices: DataFrame with [symbol, open] at minimum
+            trade_date: Date to evaluate (defaults to today)
+            output_path: Where to write signal CSV (None = print only)
+
+        Returns:
+            list of signal dicts (may be empty)
+        """
+        from datetime import datetime as dt
+        trade_date = trade_date or dt.now()
+        date_str = (trade_date.strftime('%Y-%m-%d')
+                    if hasattr(trade_date, 'strftime') else str(trade_date)[:10])
+
+        writer = SignalWriter(output_path) if output_path else None
+        signals = []
+
+        if self.indicator_data is None:
+            print(f"[{self.STRATEGY_NAME}] No indicator data loaded")
+            return signals
+
+        for symbol in self.symbols:
+            # Need at least 2 rows for crossover detection
+            sym_data = self.indicator_data[
+                self.indicator_data['symbol'] == symbol
+            ].sort_values('date')
+
+            if len(sym_data) < 2:
+                continue
+
+            latest = sym_data.iloc[-1]
+            prev = sym_data.iloc[-2]
+
+            close = latest['adjusted_close']
+            bb_lower = latest['bbands_lower_20']
+            bb_upper = latest['bbands_upper_20']
+            prev_close = prev['adjusted_close']
+            prev_bb_lower = prev['bbands_lower_20']
+
+            if pd.isna(bb_lower) or pd.isna(bb_upper):
+                continue
+
+            rsi = latest.get('rsi_14', None)
+            if pd.isna(rsi):
+                rsi = None
+
+            # BUY crossover: close crossed below lower band, RSI <= 40
+            if close <= bb_lower and prev_close > prev_bb_lower:
+                if rsi is not None and rsi > self.RSI_BUY_MAX:
+                    continue
+
+                rsi_str = f", RSI={rsi:.1f}" if rsi is not None else ""
+                reason = f"close crossed below lower BB{rsi_str}"
+
+                price_row = current_prices[current_prices['symbol'] == symbol]
+                current_price = float(price_row['open'].iloc[0]) if len(price_row) > 0 else close
+
+                sig = {'action': 'BUY', 'symbol': symbol, 'shares': 0,
+                       'price': current_price, 'reason': reason}
+                signals.append(sig)
+
+                if writer:
+                    writer.add('BUY', symbol, shares=0, price=current_price,
+                               strategy=self.STRATEGY_NAME, reason=reason)
+
+                print(f"  SIGNAL BUY {symbol} @ ${current_price:.2f}: {reason}")
+
+        if writer and signals:
+            writer.save()
+        elif not signals:
+            print(f"[{self.STRATEGY_NAME}] {date_str}: No signals (hold/do nothing)")
+
+        return signals

@@ -94,7 +94,8 @@ def get_available_symbols(predictions_path):
 
 def run_backtest(symbols, start_date, end_date, start_cash, predictions_path,
                  data_path=None, position_size=0.1, output_trades=None, output_symbols=None,
-                 output_signals=None, filters_applied=None, ranks_applied=None):
+                 output_signals=None, filters_applied=None, ranks_applied=None,
+                 notifier=None):
     """Run the full Regression Momentum backtest."""
     # Load price data from CSV (no database needed)
     data = None
@@ -178,6 +179,22 @@ Backtest Setup:
                     reason=f"pred backtest entry {last_date}",
                 )
         writer.save()
+
+    # Email backtest results
+    if notifier:
+        total_trades = stats.get('total_trades', 0)
+        total_return = stats.get('total_return_pct', 0)
+        subject = (
+            f"[REGRESSION] Backtest Results - "
+            f"{total_trades} trades, {total_return:+.2f}% ({start_date} to {end_date})"
+        )
+        body = generate_regression_summary(
+            strategy, stats, start_cash, final_value,
+            lookback_days=0, filters_applied=filters_applied,
+            ranks_applied=ranks_applied
+        )
+        if notifier._send_email(subject, body):
+            print(f"\nEmail sent: {subject}")
 
     return account_values
 
@@ -332,6 +349,85 @@ def run_daily_report(symbols, predictions_path, data_path, position_size=0.1,
 
 
 # ================================================================== #
+# MODE 3: ONE-SHOT SIGNAL GENERATION (for cron / live execution)
+# ================================================================== #
+
+def run_signal_eval(symbols, predictions_path, position_size=0.1,
+                    output_signals=None, prices_source='live', notifier=None):
+    """
+    Evaluate strategy once for today and write signal CSV.
+
+    Args:
+        symbols: Set of symbols to evaluate
+        predictions_path: Path to merged predictions
+        position_size: Position size fraction
+        output_signals: Path to write signal CSV (None = print only)
+        prices_source: 'live' to fetch from rt_utils, or path to CSV
+    """
+    account = BacktestAccount(
+        account_id="regression_signal_runner",
+        owner_name="Regression Momentum Signal Runner",
+        account_values=AccountValues(100000, 0, 0),
+        start_date=pd.to_datetime(date.today())
+    )
+
+    strategy = RegressionMomentumStrategy(
+        account=account,
+        symbols=symbols,
+        predictions_path=predictions_path,
+        position_size=position_size,
+    )
+
+    # Get current prices
+    if isinstance(prices_source, str) and os.path.exists(prices_source):
+        current_prices = pd.read_csv(prices_source)
+    else:
+        # Fetch live prices via rt_utils
+        from api_data.rt_utils import get_stock_quote
+        rows = []
+        for sym in symbols:
+            try:
+                quote = get_stock_quote(sym)
+                if quote and 'price' in quote:
+                    rows.append({'symbol': sym, 'open': quote['price']})
+            except Exception as e:
+                print(f"  Warning: Could not get price for {sym}: {e}")
+        current_prices = pd.DataFrame(rows)
+
+    if current_prices.empty:
+        print("No prices available, cannot evaluate.")
+        return []
+
+    today = date.today()
+    print(f"\n[{strategy.STRATEGY_NAME}] Signal evaluation for {today}")
+    print(f"  Symbols: {len(symbols)}")
+    print(f"  Output: {output_signals or '(print only)'}\n")
+
+    signals = strategy.run_signals(
+        current_prices=current_prices,
+        trade_date=today,
+        output_path=output_signals,
+    )
+
+    # Email signal results
+    if notifier:
+        subject = (
+            f"[REGRESSION] Signal Scan - "
+            f"{len(signals)} signal(s) ({today})"
+        )
+        lines = [f"Regression Momentum Signal Scan: {today}", f"Symbols: {len(symbols)}", ""]
+        if signals:
+            for s in signals:
+                lines.append(f"  BUY {s['symbol']} @ ${s['price']:.2f}: {s['reason']}")
+        else:
+            lines.append("  No signals (hold/do nothing)")
+        if notifier._send_email(subject, "\n".join(lines)):
+            print(f"\nEmail sent: {subject}")
+
+    return signals
+
+
+# ================================================================== #
 # MAIN
 # ================================================================== #
 
@@ -362,8 +458,8 @@ Examples:
 
     # --- Mode ---
     parser.add_argument("--mode", type=str, default="backtest",
-                        choices=["backtest", "daily"],
-                        help="'backtest' for historical test, 'daily' for short lookback + email (default: backtest)")
+                        choices=["backtest", "daily", "signals"],
+                        help="'backtest' for historical test, 'daily' for short lookback + email, 'signals' for one-shot evaluation (default: backtest)")
 
     # --- Data ---
     parser.add_argument("--predictions", type=str, required=True,
@@ -425,6 +521,10 @@ Examples:
                         help="Path to write filtered symbol list CSV")
     parser.add_argument("--output-signals", type=str, default=None,
                         help="Path to write pending signal CSV for live execution")
+
+    # --- Signal mode ---
+    parser.add_argument("--prices-csv", type=str, default=None,
+                        help="CSV with current prices (signals mode, optional)")
 
     args = parser.parse_args()
 
@@ -508,6 +608,9 @@ Examples:
     if args.output_symbols:
         write_symbols(symbols, args.output_symbols)
 
+    # Notifier for all modes
+    notifier = None if args.no_notify else TradeNotifier()
+
     # Dispatch
     if args.mode == "backtest":
         if not args.start_date or not args.end_date:
@@ -526,10 +629,10 @@ Examples:
             output_signals=args.output_signals,
             filters_applied=filters_applied,
             ranks_applied=ranks_applied,
+            notifier=notifier,
         )
 
     elif args.mode == "daily":
-        notifier = None if args.no_notify else TradeNotifier()
 
         run_daily_report(
             symbols=symbols,
@@ -541,4 +644,15 @@ Examples:
             notifier=notifier,
             filters_applied=filters_applied,
             ranks_applied=ranks_applied,
+        )
+
+    elif args.mode == "signals":
+        prices_source = args.prices_csv or 'live'
+        run_signal_eval(
+            symbols=symbols,
+            predictions_path=args.predictions,
+            position_size=args.position_size,
+            output_signals=args.output_signals,
+            prices_source=prices_source,
+            notifier=notifier,
         )

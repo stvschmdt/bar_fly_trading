@@ -109,6 +109,9 @@ class StockTransformer(nn.Module):
         # Attention pooling
         self.attn_pool = nn.Linear(d_model, 1)
 
+        # Layer norm before output heads (stabilizes training)
+        self.output_norm = nn.LayerNorm(d_model)
+
         # MLP output heads (2-layer with GELU + dropout)
         self.reg_head = nn.Sequential(
             nn.Linear(d_model, d_model // 2),
@@ -128,6 +131,10 @@ class StockTransformer(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(d_model // 2, num_buckets),
         )
+
+        # Learnable temperature for classification logit scaling
+        # Initialized to 1.0 (no effect), model learns to calibrate
+        self.temperature = nn.Parameter(torch.ones(1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -152,15 +159,20 @@ class StockTransformer(nn.Module):
         attn_weights = torch.softmax(self.attn_pool(enc).squeeze(-1), dim=1)  # [batch, seq_len]
         pooled = (enc * attn_weights.unsqueeze(-1)).sum(dim=1)  # [batch, d_model]
 
+        # Layer norm before output head
+        pooled = self.output_norm(pooled)
+
         # Apply appropriate output head
         if self.output_mode == "regression":
             return self.reg_head(pooled).squeeze(-1)  # [batch]
 
         elif self.output_mode == "binary":
-            return self.cls_head(pooled)  # [batch, 2]
+            logits = self.cls_head(pooled)  # [batch, 2]
+            return logits / self.temperature  # temperature-scaled logits
 
         elif self.output_mode == "buckets":
-            return self.bucket_head(pooled)  # [batch, num_buckets]
+            logits = self.bucket_head(pooled)  # [batch, num_buckets]
+            return logits / self.temperature  # temperature-scaled logits
 
         else:
             raise ValueError(f"Unknown output_mode: {self.output_mode}")

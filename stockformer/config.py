@@ -68,10 +68,19 @@ DEFAULT_CONFIG = {
     # Training hyperparameters
     # -------------------------------------------------------------------------
     "batch_size": 128,
-    "lr": 1e-3,
+    "lr": 5e-4,               # Lowered from 1e-3 to prevent early majority-class collapse
     "num_epochs": 30,
     "val_fraction": 0.2,
     "optimizer": "adamw",     # Options: "adam", "adamw", "sgd"
+
+    # -------------------------------------------------------------------------
+    # Loss function settings (anti-collapse)
+    # -------------------------------------------------------------------------
+    "loss_name": None,        # None = auto from label_mode (focal for cls, huber for reg)
+    "focal_gamma": 2.0,       # Focal loss focusing parameter (higher = more focus on hard examples)
+    "label_smoothing": 0.1,   # Smooth one-hot targets to prevent overconfident predictions
+    "class_weights": "auto",  # "auto" = inverse-frequency from training data, None = uniform
+    "entropy_weight": 0.1,    # Entropy regularization weight (encourages diverse predictions)
 
     # -------------------------------------------------------------------------
     # Model architecture
@@ -80,7 +89,7 @@ DEFAULT_CONFIG = {
     "nhead": 4,               # Number of attention heads
     "num_layers": 3,          # Number of transformer encoder layers
     "dim_feedforward": 256,   # Hidden dimension of feedforward network
-    "dropout": 0.1,
+    "dropout": 0.15,          # Increased from 0.1 to reduce overfitting
 
     # -------------------------------------------------------------------------
     # System / runtime

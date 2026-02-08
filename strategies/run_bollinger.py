@@ -2,9 +2,10 @@
 """
 Runner script for Bollinger Band Backtest Strategy.
 
-Supports two modes:
+Supports three modes:
   1. backtest — full historical backtest via backtest.py with per-symbol P&L, win rate, Sharpe
   2. daily   — short lookback (1-2 days), email summary of unique symbols that triggered
+  3. signals — one-shot signal evaluation for cron / live execution
 
 Uses the bar_fly_trading backtest framework with Bollinger band crossover + RSI signals.
 Portfolio filtering/ranking via portfolio.py is applied before the backtest
@@ -23,6 +24,12 @@ Usage:
         --mode daily --lookback-days 2 \
         --watchlist api_data/watchlist.csv --watchlist-mode filter \
         --summary-only
+
+    # One-shot signal scan (for cron / live execution)
+    python strategies/run_bollinger.py \
+        --data-path 'all_data_*.csv' \
+        --mode signals --symbols AAPL NVDA MSFT \
+        --output-signals signals/pending_orders.csv
 
     # Portfolio filtering: price > $25, top 15 by Sharpe
     python strategies/run_bollinger.py \
@@ -47,7 +54,8 @@ sys.path.insert(0, parent_dir)
 from account.account_values import AccountValues
 from account.backtest_account import BacktestAccount
 from backtest import backtest
-from backtest_stats import compute_stats, print_stats, write_trade_log, write_symbols
+from backtest_stats import compute_stats, print_stats, write_trade_log, write_symbols, read_symbols
+from signal_writer import SignalWriter
 from ibkr.notifier import TradeNotifier
 from portfolio import (
     load_data as portfolio_load_data,
@@ -65,7 +73,7 @@ from bollinger_backtest_strategy import BollingerBacktestStrategy
 
 def run_backtest(symbols, start_date, end_date, start_cash, data_path,
                  position_size=0.05, max_hold_days=20,
-                 output_trades=None, output_symbols=None,
+                 output_trades=None, output_symbols=None, output_signals=None,
                  filters_applied=None, ranks_applied=None,
                  notifier=None):
     """Run the full Bollinger Band backtest."""
@@ -133,6 +141,21 @@ Backtest Setup:
         write_trade_log(strategy.trade_log, output_trades)
     if output_symbols:
         write_symbols(symbols, output_symbols)
+
+    # Write pending signals for live execution bridge
+    if output_signals and strategy.trade_log:
+        writer = SignalWriter(output_signals)
+        last_date = max(t['entry_date'] for t in strategy.trade_log)
+        for t in strategy.trade_log:
+            if t['entry_date'] == last_date:
+                writer.add(
+                    action='BUY',
+                    symbol=t['symbol'],
+                    price=t['entry_price'],
+                    strategy='bollinger',
+                    reason=f"bollinger entry {last_date}",
+                )
+        writer.save()
 
     # Send email
     if notifier:
@@ -401,6 +424,95 @@ def format_stats_text(stats, start_cash, final_value, strategy,
 
 
 # ================================================================== #
+# MODE 3: ONE-SHOT SIGNAL GENERATION (for cron / live execution)
+# ================================================================== #
+
+def run_signal_eval(symbols, data_path, position_size=0.05,
+                    output_signals=None, prices_source='live', notifier=None):
+    """
+    Evaluate strategy once for today and write signal CSV.
+
+    Args:
+        symbols: Set of symbols to evaluate
+        data_path: Path to price data CSV(s) with indicator columns
+        position_size: Position size fraction
+        output_signals: Path to write signal CSV (None = print only)
+        prices_source: 'live' to fetch from rt_utils, or path to CSV
+    """
+    account = BacktestAccount(
+        account_id="bollinger_signal_runner",
+        owner_name="Bollinger Signal Runner",
+        account_values=AccountValues(100000, 0, 0),
+        start_date=pd.to_datetime(date.today())
+    )
+
+    # Load indicator data from CSV
+    data = portfolio_load_data(data_path) if data_path else None
+
+    strategy = BollingerBacktestStrategy(
+        account=account,
+        symbols=symbols,
+        data=data,
+        position_size=position_size,
+    )
+
+    # Get current prices
+    if isinstance(prices_source, str) and os.path.exists(prices_source):
+        current_prices = pd.read_csv(prices_source)
+    elif data is not None:
+        # Use latest prices from the loaded data
+        data['date'] = pd.to_datetime(data['date'])
+        latest_date = data['date'].max()
+        current_prices = data[data['date'] == latest_date][['symbol', 'open']].copy()
+        if 'open' not in current_prices.columns and 'adjusted_close' in data.columns:
+            current_prices['open'] = data[data['date'] == latest_date]['adjusted_close']
+    else:
+        # Fetch live prices via rt_utils
+        from api_data.rt_utils import get_stock_quote
+        rows = []
+        for sym in symbols:
+            try:
+                quote = get_stock_quote(sym)
+                if quote and 'price' in quote:
+                    rows.append({'symbol': sym, 'open': quote['price']})
+            except Exception as e:
+                print(f"  Warning: Could not get price for {sym}: {e}")
+        current_prices = pd.DataFrame(rows)
+
+    if current_prices.empty:
+        print("No prices available, cannot evaluate.")
+        return []
+
+    today = date.today()
+    print(f"\n[{strategy.STRATEGY_NAME}] Signal evaluation for {today}")
+    print(f"  Symbols: {len(symbols)}")
+    print(f"  Output: {output_signals or '(print only)'}\n")
+
+    signals = strategy.run_signals(
+        current_prices=current_prices,
+        trade_date=today,
+        output_path=output_signals,
+    )
+
+    # Email signal results
+    if notifier:
+        subject = (
+            f"[BOLLINGER] Signal Scan - "
+            f"{len(signals)} signal(s) ({today})"
+        )
+        lines = [f"Bollinger Band Signal Scan: {today}", f"Symbols: {len(symbols)}", ""]
+        if signals:
+            for s in signals:
+                lines.append(f"  BUY {s['symbol']} @ ${s['price']:.2f}: {s['reason']}")
+        else:
+            lines.append("  No signals (hold/do nothing)")
+        if notifier._send_email(subject, "\n".join(lines)):
+            print(f"\nEmail sent: {subject}")
+
+    return signals
+
+
+# ================================================================== #
 # MAIN
 # ================================================================== #
 
@@ -413,11 +525,19 @@ if __name__ == "__main__":
 
     # --- Mode ---
     parser.add_argument("--mode", type=str, default="backtest",
-                        choices=["backtest", "daily"],
-                        help="'backtest' for historical test, 'daily' for short lookback + email (default: backtest)")
+                        choices=["backtest", "daily", "signals"],
+                        help="'backtest' for historical test, 'daily' for short lookback + email, 'signals' for one-shot evaluation (default: backtest)")
 
     # --- Data ---
-    parser.add_argument("--data-path", type=str, required=True,
+    parser.add_argument("--predictions", type=str, default=None,
+                        help="Path to merged_predictions.csv (not used by bollinger, accepted for CLI parity)")
+    parser.add_argument("--symbols", type=str, nargs="+",
+                        help="Symbols to trade (e.g., AAPL GOOGL MSFT)")
+    parser.add_argument("--symbols-file", type=str, default=None,
+                        help="CSV file with symbol list (output of portfolio or prior backtest)")
+    parser.add_argument("--use-all-symbols", action="store_true",
+                        help="Use all symbols available in data")
+    parser.add_argument("--data-path", type=str, default=None,
                         help="Path to price data CSV(s) (supports globs, e.g. 'all_data_*.csv')")
 
     # --- Backtest-specific ---
@@ -468,18 +588,37 @@ if __name__ == "__main__":
                         help="Path to write trade log CSV")
     parser.add_argument("--output-symbols", type=str, default=None,
                         help="Path to write filtered symbol list CSV")
+    parser.add_argument("--output-signals", type=str, default=None,
+                        help="Path to write pending signal CSV for live execution")
+
+    # --- Signal mode ---
+    parser.add_argument("--prices-csv", type=str, default=None,
+                        help="CSV with current prices (signals mode, optional)")
 
     args = parser.parse_args()
+
+    # Validate: data-path is required for all modes (bollinger uses CSV indicators)
+    if not args.data_path:
+        print("Error: --data-path is required for bollinger strategy")
+        sys.exit(1)
 
     # Default portfolio-data to data-path
     if not args.portfolio_data and args.data_path:
         args.portfolio_data = args.data_path
 
-    # Determine symbols from data
-    print(f"Loading symbols from: {args.data_path}")
-    all_data = portfolio_load_data(args.data_path)
-    symbols = set(all_data['symbol'].unique())
-    print(f"Found {len(symbols)} symbols in data")
+    # Determine symbols
+    if args.symbols:
+        symbols = set(args.symbols)
+        print(f"Using {len(symbols)} specified symbols")
+    elif args.symbols_file:
+        symbols = set(read_symbols(args.symbols_file))
+        print(f"Loaded {len(symbols)} symbols from {args.symbols_file}")
+    elif args.use_all_symbols or (not args.symbols and not args.symbols_file):
+        # Default: use all symbols from data
+        print(f"Loading symbols from: {args.data_path}")
+        all_data = portfolio_load_data(args.data_path)
+        symbols = set(all_data['symbol'].unique())
+        print(f"Found {len(symbols)} symbols in data")
 
     # --- Portfolio ranking pipeline ---
     has_portfolio_filters = any([
@@ -538,13 +677,14 @@ if __name__ == "__main__":
     if args.output_symbols:
         write_symbols(symbols, args.output_symbols)
 
+    # Notifier for all modes
+    notifier = None if args.no_notify else TradeNotifier()
+
     # Dispatch
     if args.mode == "backtest":
         if not args.start_date or not args.end_date:
             print("Error: --start-date and --end-date required for backtest mode")
             sys.exit(1)
-
-        notifier = None if args.no_notify else TradeNotifier()
 
         run_backtest(
             symbols=symbols,
@@ -556,13 +696,13 @@ if __name__ == "__main__":
             max_hold_days=args.max_hold_days,
             output_trades=args.output_trades,
             output_symbols=args.output_symbols,
+            output_signals=args.output_signals,
             filters_applied=filters_applied,
             ranks_applied=ranks_applied,
             notifier=notifier,
         )
 
     elif args.mode == "daily":
-        notifier = None if args.no_notify else TradeNotifier()
 
         run_daily_report(
             symbols=symbols,
@@ -571,4 +711,15 @@ if __name__ == "__main__":
             notifier=notifier,
             filters_applied=filters_applied,
             ranks_applied=ranks_applied,
+        )
+
+    elif args.mode == "signals":
+        prices_source = args.prices_csv or 'live'
+        run_signal_eval(
+            symbols=symbols,
+            data_path=args.data_path,
+            position_size=args.position_size,
+            output_signals=args.output_signals,
+            prices_source=prices_source,
+            notifier=notifier,
         )

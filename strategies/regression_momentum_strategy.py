@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from order import Order, StockOrder, OrderOperation
 from base_strategy import BaseStrategy
+from signal_writer import SignalWriter
 
 
 # Column name mappings for merged vs individual prediction files
@@ -49,6 +50,8 @@ class RegressionMomentumStrategy(BaseStrategy):
     Avg Return per Trade: +1.64%
     Avg Hold: 5.2 days
     """
+
+    STRATEGY_NAME = "regression_momentum"
 
     # Strategy parameters
     ENTRY_REG_3D_THRESHOLD = 0.01   # 1% predicted return
@@ -295,6 +298,57 @@ class RegressionMomentumStrategy(BaseStrategy):
                         print(f"  ENTRY {symbol}: pred_3d={pred['pred_reg_3d']:.3f}, pred_10d={pred['pred_reg_10d']:.3f}")
 
         return orders
+
+    def run_signals(self, current_prices, trade_date=None, output_path=None):
+        """
+        One-shot signal evaluation for today. Writes signal CSV if any triggers.
+
+        Args:
+            current_prices: DataFrame with [symbol, open] at minimum
+            trade_date: Date to evaluate (defaults to today)
+            output_path: Where to write signal CSV (None = print only)
+
+        Returns:
+            list of signal dicts (may be empty)
+        """
+        trade_date = trade_date or datetime.now()
+        date_str = (trade_date.strftime('%Y-%m-%d')
+                    if hasattr(trade_date, 'strftime') else str(trade_date)[:10])
+
+        writer = SignalWriter(output_path) if output_path else None
+        signals = []
+
+        for symbol in self.symbols:
+            price_row = current_prices[current_prices['symbol'] == symbol]
+            if len(price_row) == 0:
+                continue
+            current_price = float(price_row['open'].iloc[0])
+
+            pred = self.get_prediction(symbol, trade_date)
+
+            if self._check_entry_conditions(pred):
+                reason = (
+                    f"pred_3d={pred['pred_reg_3d']:.3f}, "
+                    f"pred_10d={pred['pred_reg_10d']:.3f}, "
+                    f"adx={pred['adx_signal']:.0f}"
+                )
+                sig = {'action': 'BUY', 'symbol': symbol, 'shares': 0,
+                       'price': current_price, 'reason': reason}
+                signals.append(sig)
+
+                if writer:
+                    writer.add('BUY', symbol, shares=0,
+                               price=current_price,
+                               strategy=self.STRATEGY_NAME, reason=reason)
+
+                print(f"  SIGNAL BUY {symbol} @ ${current_price:.2f}: {reason}")
+
+        if writer and signals:
+            writer.save()
+        elif not signals:
+            print(f"[{self.STRATEGY_NAME}] {date_str}: No signals (hold/do nothing)")
+
+        return signals
 
     def get_open_positions(self):
         """Return current open positions."""
