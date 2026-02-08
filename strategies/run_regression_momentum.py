@@ -165,20 +165,22 @@ Backtest Setup:
     if output_symbols:
         write_symbols(symbols, output_symbols)
 
-    # Write pending signals for the last day's orders (for live execution bridge)
-    if output_signals and strategy.trade_log:
-        writer = SignalWriter(output_signals)
-        last_date = max(t['entry_date'] for t in strategy.trade_log)
-        for t in strategy.trade_log:
-            if t['entry_date'] == last_date:
+    # Write pending signals for open positions at backtest end (for live execution bridge)
+    if output_signals:
+        open_positions = strategy.get_open_positions()
+        if open_positions:
+            writer = SignalWriter(output_signals)
+            for symbol, pos in open_positions.items():
+                entry_str = pos['entry_date'].strftime('%Y-%m-%d') if hasattr(pos['entry_date'], 'strftime') else str(pos['entry_date'])[:10]
                 writer.add(
                     action='BUY',
-                    symbol=t['symbol'],
-                    price=t['entry_price'],
+                    symbol=symbol,
+                    price=pos['entry_price'],
                     strategy='regression_momentum',
-                    reason=f"pred backtest entry {last_date}",
+                    reason=f"open position from {entry_str}",
                 )
-        writer.save()
+            writer.save()
+            print(f"  Wrote {len(open_positions)} pending signals to {output_signals}")
 
     # Email backtest results
     if notifier:
