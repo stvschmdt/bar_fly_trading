@@ -105,7 +105,6 @@ class RiskManager:
             # Check if we already have a position in this symbol
             if signal.symbol in self._positions and not self._positions[signal.symbol].is_flat:
                 messages.append(f"Already have position in {signal.symbol}")
-                # Could reject or allow adding to position - rejecting for now
                 return ValidationResult(
                     status=ValidationStatus.REJECTED,
                     signal=signal,

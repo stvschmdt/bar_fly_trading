@@ -44,6 +44,7 @@ DEFAULT_SHARES=""      # --default-shares N: fixed share count (0 or empty = aut
 NO_NOTIFY=""           # --no-notify: suppress email notifications
 MARKET_ORDERS=""       # --market-orders: use market orders instead of limit
 BUY_ONLY=""            # --buy-only: skip SELL signals for symbols we don't hold
+OPTIONS=""             # --options: execute as options (call for BUY, put for SELL)
 
 # Data sources
 PREDICTIONS="${PREDICTIONS:-merged_predictions.csv}"
@@ -74,6 +75,7 @@ while [[ $# -gt 0 ]]; do
         --no-notify)     NO_NOTIFY="--no-notify"; shift ;;
         --market-orders) MARKET_ORDERS="--market-orders"; shift ;;
         --buy-only)      BUY_ONLY="--buy-only"; shift ;;
+        --options)       OPTIONS="--options"; shift ;;
         --live)          LIVE_FLAG="--live"; shift ;;
         --client-id)     CLIENT_ID="$2"; shift 2 ;;
         *)               echo "Unknown arg: $1"; exit 1 ;;
@@ -286,6 +288,7 @@ run_scan() {
                 $DEFAULT_SHARES \
                 $MARKET_ORDERS \
                 $BUY_ONLY \
+                $OPTIONS \
                 >> "$LOG_FILE" 2>&1
 
             local exec_code=$?
@@ -320,6 +323,7 @@ log "  Output:      ${SIGNAL_FILE}"
 log "  Log:         ${LOG_FILE}"
 log "  Dry run:     ${DRY_RUN}"
 log "  Buy only:    ${BUY_ONLY:-off}"
+log "  Options:     ${OPTIONS:-off}"
 log "  One-shot:    ${ONCE}"
 log "============================================"
 

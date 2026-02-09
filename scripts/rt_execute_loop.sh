@@ -45,6 +45,7 @@ GATEWAY_FLAG="--gateway"
 DEFAULT_SHARES=""      # --default-shares N: fixed share count for testing
 MARKET_ORDERS=""       # --market-orders: use market orders instead of limit
 BUY_ONLY=""            # --buy-only: skip SELL signals for symbols we don't hold
+OPTIONS=""             # --options: execute as options (call for BUY, put for SELL)
 
 # Market hours in ET (24h format) — only execute during market hours
 MARKET_OPEN_H=9
@@ -62,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         --default-shares) DEFAULT_SHARES="--default-shares $2"; shift 2 ;;
         --market-orders) MARKET_ORDERS="--market-orders"; shift ;;
         --buy-only)    BUY_ONLY="--buy-only"; shift ;;
+        --options)     OPTIONS="--options"; shift ;;
         --client-id)   CLIENT_ID="$2"; shift 2 ;;
         *)             echo "Unknown arg: $1"; exit 1 ;;
     esac
@@ -149,6 +151,7 @@ execute_signals() {
         $DEFAULT_SHARES \
         $MARKET_ORDERS \
         $BUY_ONLY \
+        $OPTIONS \
         >> "$LOG_FILE" 2>&1
 
     local exit_code=$?
@@ -177,6 +180,7 @@ log "  Mode:          ${LIVE_FLAG:-paper}"
 log "  Gateway:       ${GATEWAY_FLAG:-direct}"
 log "  Client ID:     ${CLIENT_ID}"
 log "  Dry run:       ${DRY_RUN}"
+log "  Options:       ${OPTIONS:-off}"
 log "  One-shot:      ${ONCE}"
 log "============================================"
 

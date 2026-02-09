@@ -89,8 +89,8 @@ class TradingConfig:
         order_timeout: Seconds to wait for order fill before canceling
     """
     symbols: set[str] = field(default_factory=set)
-    position_size: float = 0.10  # 10% of portfolio per position
-    max_positions: int = 10
+    position_size: float = 0.02  # 2% of portfolio per position
+    max_positions: int = 20
     max_position_value: float = 50000.0  # Max $50k per position
     max_daily_trades: int = 20
     max_daily_loss: float = 5000.0  # Max $5k daily loss
@@ -102,7 +102,7 @@ class TradingConfig:
     # Buy-side safety
     fee_buffer_pct: float = 0.005    # 0.5% cash buffer for fees + slippage
     min_order_value: float = 2.0     # Minimum $2 per order
-    max_symbol_exposure_pct: float = 0.15  # Max 15% of portfolio in one symbol
+    max_symbol_exposure_pct: float = 0.05  # Max 5% of portfolio in one symbol
     max_spread_pct: float = 0.01     # Reject if bid-ask spread > 1%
 
     # Strategy-specific parameters (from RegressionMomentumStrategy)

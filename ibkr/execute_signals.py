@@ -46,6 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ibkr.config import IBKRConfig, TradingConfig
 from ibkr.trade_executor import TradeExecutor
 from ibkr.models import OrderAction
+from ibkr.options_executor import execute_option_signal
 
 # Use signal_writer's reader
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'strategies'))
@@ -182,7 +183,7 @@ def format_account_state_text(executor, label=""):
 
 
 def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
-                        buy_only=False):
+                        buy_only=False, options_mode=False):
     """
     Read and execute all signals in a CSV file.
 
@@ -192,6 +193,7 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
         dry_run: If True, print signals but don't execute
         default_shares: Override shares=0 with this fixed count
         buy_only: If True, skip SELL signals for symbols we don't hold
+        options_mode: If True, execute as options (call for BUY, put for SELL)
 
     Returns:
         list of result dicts for the execution log
@@ -206,7 +208,8 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
         for sig in signals:
             if int(sig.get('shares', 0)) == 0:
                 sig['shares'] = default_shares
-        logger.info(f"Applied default shares={default_shares} to signals with shares=0")
+        unit = "contracts" if options_mode else "shares"
+        logger.info(f"Applied default {unit}={default_shares} to signals with {unit}=0")
 
     # De-duplicate: if multiple strategies signal the same (symbol, action),
     # keep only the first one to prevent double-buying
@@ -284,7 +287,7 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
         if reason:
             label += f" ({reason})"
 
-        if dry_run:
+        if dry_run and not options_mode:
             logger.info(f"[DRY RUN] {label}")
             results.append({
                 **sig,
@@ -294,6 +297,29 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
                 'error': '',
                 'executed_at': datetime.now().isoformat(timespec='seconds'),
             })
+            continue
+
+        # Options mode: route through options_executor
+        if options_mode:
+            logger.info("-" * 50)
+            opt_label = f"[OPTIONS{'|DRY' if dry_run else ''}] {label}"
+            logger.info(f"Executing: {opt_label}")
+            use_mkt = executor.trading_config.use_market_orders if executor else False
+            opt_result = execute_option_signal(
+                executor, sig, dry_run=dry_run, use_market_orders=use_mkt
+            )
+            results.append(opt_result)
+
+            # Track rejections for email
+            if opt_result.get('status') == 'failed':
+                reason_type = 'options'
+                is_new = _is_new_rejection(symbol, reason_type)
+                opt_result['is_new'] = is_new
+                rejections.append({
+                    **opt_result,
+                    'rejection_reason': opt_result.get('error', 'unknown'),
+                    'is_new': is_new,
+                })
             continue
 
         logger.info("-" * 50)
@@ -395,7 +421,8 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
         if filled:
             logger.info(f"  Fills:")
             for r in filled:
-                logger.info(f"    {r['action']} {r['symbol']}: {r['filled_shares']} shares @ ${r['fill_price']:.2f} "
+                unit = "contracts" if r.get('contract_type') else "shares"
+                logger.info(f"    {r['action']} {r['symbol']}: {r['filled_shares']} {unit} @ ${r['fill_price']:.2f} "
                            f"= ${r['filled_shares'] * r['fill_price']:,.2f}")
         if failed:
             logger.info(f"  Failures:")
@@ -451,9 +478,14 @@ def _send_execution_summary_email(executor, results, pre_account, post_account,
         body_lines.append("FILLS")
         body_lines.append("-" * 50)
         for r in filled:
+            unit = "contracts" if r.get('contract_type') else "shares"
+            detail = ""
+            if r.get('contract_type'):
+                detail = f"  {r.get('expiration', '')} {r.get('strike', '')} {r['contract_type'].upper()}"
             body_lines.append(
-                f"  {r['action']:4s} {r['symbol']:6s}  {r['filled_shares']:>4} shares "
-                f"@ ${r['fill_price']:>8.2f}  = ${r['filled_shares'] * r['fill_price']:>10,.2f}"
+                f"  {r['action']:4s} {r['symbol']:6s}  {r['filled_shares']:>4} {unit}"
+                f"{detail}"
+                f"  @ ${r['fill_price']:>8.2f}  = ${r['filled_shares'] * r['fill_price']:>10,.2f}"
             )
         body_lines.append("")
 
@@ -538,7 +570,7 @@ def archive_signal_file(filepath, results, archive_dir):
 
 def watch_directory(signals_dir, executor, archive_dir, interval_seconds=30,
                     dry_run=False, pattern="pending_orders*.csv", default_shares=None,
-                    buy_only=False):
+                    buy_only=False, options_mode=False):
     """
     Poll a directory for new signal files and execute them.
 
@@ -550,11 +582,14 @@ def watch_directory(signals_dir, executor, archive_dir, interval_seconds=30,
         dry_run: If True, print but don't execute
         pattern: Glob pattern for signal files
         buy_only: If True, skip SELL signals for symbols we don't hold
+        options_mode: If True, execute as options
     """
     import glob
 
     logger.info(f"Watching {signals_dir} for signal files (every {interval_seconds}s)...")
     logger.info(f"Pattern: {pattern}")
+    if options_mode:
+        logger.info("OPTIONS MODE active")
     logger.info("Press Ctrl+C to stop.\n")
 
     try:
@@ -565,7 +600,8 @@ def watch_directory(signals_dir, executor, archive_dir, interval_seconds=30,
                 logger.info(f"\nFound signal file: {filepath}")
                 results = execute_signal_file(filepath, executor, dry_run=dry_run,
                                               default_shares=default_shares,
-                                              buy_only=buy_only)
+                                              buy_only=buy_only,
+                                              options_mode=options_mode)
                 archive_signal_file(filepath, results, archive_dir)
 
             if not matches:
@@ -620,10 +656,10 @@ Examples:
                         help="IBKR client ID (default: 10)")
 
     # Trading config
-    parser.add_argument("--position-size", type=float, default=0.10,
-                        help="Position size as fraction of portfolio (default: 0.10)")
-    parser.add_argument("--max-positions", type=int, default=10,
-                        help="Maximum concurrent positions (default: 10)")
+    parser.add_argument("--position-size", type=float, default=0.02,
+                        help="Position size as fraction of portfolio (default: 0.02)")
+    parser.add_argument("--max-positions", type=int, default=20,
+                        help="Maximum concurrent positions (default: 20)")
     parser.add_argument("--max-daily-loss", type=float, default=5000,
                         help="Maximum daily loss in dollars (default: 5000)")
     parser.add_argument("--default-shares", type=int, default=None,
@@ -632,6 +668,8 @@ Examples:
                         help="Use market orders instead of limit orders")
     parser.add_argument("--buy-only", action="store_true",
                         help="Skip SELL signals for symbols we don't hold (still sell owned positions)")
+    parser.add_argument("--options", action="store_true",
+                        help="Execute as options: BUY signal -> buy call OTM, SELL signal -> buy put OTM")
     parser.add_argument("--require-market-hours", action="store_true",
                         help="Only execute during US market hours (9:30-16:00 ET, Mon-Fri)")
 
@@ -651,18 +689,21 @@ Examples:
         sys.exit(0)
 
     # Dry run: no broker connection needed (buy_only filter needs executor, so skipped in dry-run)
+    # Options dry-run also works without IBKR (fetches chain from AlphaVantage only)
     if args.dry_run:
         if args.signals:
             results = execute_signal_file(args.signals, executor=None, dry_run=True,
                                           default_shares=args.default_shares,
-                                          buy_only=args.buy_only)
+                                          buy_only=args.buy_only,
+                                          options_mode=args.options)
             if results:
                 print(f"\n{len(results)} signal(s) would be executed.")
         elif args.watch:
             watch_directory(args.signals_dir, executor=None, archive_dir=archive_dir,
                             interval_seconds=args.interval, dry_run=True,
                             default_shares=args.default_shares,
-                            buy_only=args.buy_only)
+                            buy_only=args.buy_only,
+                            options_mode=args.options)
         return
 
     # Configure IBKR connection
@@ -691,20 +732,25 @@ Examples:
         use_market_orders=args.market_orders,
     )
 
+    if args.options:
+        logger.info("OPTIONS MODE: signals will be executed as option contracts")
+
     # Execute
     with TradeExecutor(ibkr_config, trading_config) as executor:
         if args.signals:
             # One-shot mode
             results = execute_signal_file(args.signals, executor,
                                           default_shares=args.default_shares,
-                                          buy_only=args.buy_only)
+                                          buy_only=args.buy_only,
+                                          options_mode=args.options)
             archive_signal_file(args.signals, results, archive_dir)
         elif args.watch:
             # Watch mode
             watch_directory(args.signals_dir, executor, archive_dir,
                             interval_seconds=args.interval,
                             default_shares=args.default_shares,
-                            buy_only=args.buy_only)
+                            buy_only=args.buy_only,
+                            options_mode=args.options)
 
 
 if __name__ == "__main__":
