@@ -220,6 +220,41 @@ class IBKRConnection:
             logger.error(f"Failed to get price for {symbol}: {e}")
             return None
 
+    def get_bid_ask(self, symbol: str) -> Optional[tuple[float, float, float]]:
+        """
+        Get current bid, ask, and last price for a symbol.
+
+        Args:
+            symbol: Stock ticker symbol
+
+        Returns:
+            Tuple of (bid, ask, last) or None if unavailable
+        """
+        if not self.is_connected:
+            return None
+
+        try:
+            contract = Stock(symbol, "SMART", "USD")
+            self.ib.qualifyContracts(contract)
+
+            ticker = self.ib.reqMktData(contract, snapshot=True)
+            self.ib.sleep(1)
+
+            bid = ticker.bid if not util.isNan(ticker.bid) else None
+            ask = ticker.ask if not util.isNan(ticker.ask) else None
+            last = ticker.last if not util.isNan(ticker.last) else None
+
+            self.ib.cancelMktData(contract)
+
+            if bid is None or ask is None:
+                return None
+
+            return (bid, ask, last or (bid + ask) / 2)
+
+        except Exception as e:
+            logger.error(f"Failed to get bid/ask for {symbol}: {e}")
+            return None
+
     def get_current_prices(self, symbols: set[str]) -> dict[str, float]:
         """
         Get current prices for multiple symbols.

@@ -59,12 +59,22 @@ class BaseStrategy(ABC):
     MIN_HOLD_DAYS = 1
     MAX_POSITIONS = 10
 
+    # ── Exit safety defaults (override in subclass) ──────────────────
+    STOP_LOSS_PCT = -0.08       # -8% hard stop (backstop)
+    TAKE_PROFIT_PCT = 0.15      # +15% take profit (backstop)
+    TRAILING_STOP_PCT = None    # None = disabled; e.g. -0.08 for -8%
+
+    # ── Re-entry cooldown (override in subclass) ──────────────────
+    REENTRY_COOLDOWN_DAYS = 1   # 1 = no same-day re-entry; 0 = allow immediate
+
     def __init__(self, account: Account, symbols: set[str]):
         self.account = account
         self.symbols = symbols
         self.positions = {}     # {symbol: {shares, entry_date, entry_price}}
         self.trade_log = []     # completed trades
         self.overnight_data = None  # DataFrame from CSV
+        self._trailing_highs = {}  # {symbol: highest price since entry}
+        self._recent_exits = {}    # {symbol: exit_date} for cooldown tracking
 
     # ------------------------------------------------------------------ #
     #  OVERNIGHT DATA LOADING
@@ -315,6 +325,8 @@ class BaseStrategy(ABC):
 
         Base implementation provides max_hold check.
         Override in subclass for strategy-specific exit logic.
+        After the subclass check, check_exit_safety() is always called
+        as a backstop for stop-loss and take-profit.
 
         Args:
             row: pandas Series with indicator values (may be None)
@@ -330,6 +342,87 @@ class BaseStrategy(ABC):
             return True, f"max hold {self.MAX_HOLD_DAYS}d"
         return False, ""
 
+    def check_exit_safety(self, symbol, current_price, entry_price):
+        """
+        Non-overridable safety backstop for stop-loss, take-profit,
+        and trailing stop.  Called AFTER strategy-specific check_exit().
+
+        Args:
+            symbol: Ticker symbol (for trailing stop tracking)
+            current_price: Current market price
+            entry_price: Entry price of the position
+
+        Returns:
+            (should_exit: bool, reason: str)
+        """
+        if entry_price is None or entry_price <= 0 or current_price <= 0:
+            return False, ""
+
+        pct_change = (current_price - entry_price) / entry_price
+
+        # Hard stop loss
+        if self.STOP_LOSS_PCT is not None and pct_change <= self.STOP_LOSS_PCT:
+            return True, f"stop_loss ({pct_change:+.1%} <= {self.STOP_LOSS_PCT:.0%})"
+
+        # Take profit
+        if self.TAKE_PROFIT_PCT is not None and pct_change >= self.TAKE_PROFIT_PCT:
+            return True, f"take_profit ({pct_change:+.1%} >= {self.TAKE_PROFIT_PCT:+.0%})"
+
+        # Trailing stop
+        if self.TRAILING_STOP_PCT is not None:
+            high = self._trailing_highs.get(symbol, entry_price)
+            if current_price > high:
+                high = current_price
+                self._trailing_highs[symbol] = high
+            drawdown = (current_price - high) / high
+            if drawdown <= self.TRAILING_STOP_PCT:
+                return True, f"trailing_stop ({drawdown:+.1%} from high ${high:.2f})"
+
+        return False, ""
+
+    def record_entry(self, symbol):
+        """Initialize trailing stop tracking for a new position."""
+        if symbol in self.positions:
+            self._trailing_highs[symbol] = self.positions[symbol]['entry_price']
+
+    def record_exit(self, symbol, exit_date=None):
+        """Clean up trailing stop tracking and record exit for cooldown."""
+        self._trailing_highs.pop(symbol, None)
+        self._recent_exits[symbol] = exit_date or datetime.now()
+
+    def is_reentry_allowed(self, symbol, current_date=None):
+        """
+        Check if re-entry is allowed for a symbol based on cooldown period.
+
+        Args:
+            symbol: Ticker symbol
+            current_date: Current date (datetime or date object)
+
+        Returns:
+            (allowed: bool, reason: str)
+        """
+        if self.REENTRY_COOLDOWN_DAYS <= 0:
+            return True, ""
+
+        if symbol not in self._recent_exits:
+            return True, ""
+
+        exit_date = self._recent_exits[symbol]
+        current = current_date or datetime.now()
+
+        # Normalize to date objects for comparison
+        if hasattr(exit_date, 'date'):
+            exit_date = exit_date.date()
+        if hasattr(current, 'date'):
+            current = current.date()
+
+        days_since = (current - exit_date).days
+        if days_since < self.REENTRY_COOLDOWN_DAYS:
+            return False, (f"cooldown ({days_since}d since exit, "
+                           f"need {self.REENTRY_COOLDOWN_DAYS}d)")
+
+        return True, ""
+
     def entry_reason(self, row):
         """
         Generate human-readable entry reason from a data row.
@@ -338,7 +431,7 @@ class BaseStrategy(ABC):
         """
         return f"{self.STRATEGY_NAME} entry"
 
-    def find_signals(self, data=None, lookback_days=2):
+    def find_signals(self, data=None, lookback_days=2, require_today=False):
         """
         Scan data for entry signals.
 
@@ -348,6 +441,7 @@ class BaseStrategy(ABC):
         Args:
             data: DataFrame to scan (defaults to self.overnight_data)
             lookback_days: Number of trading days to scan
+            require_today: If True, only emit signals from rows dated today
 
         Returns:
             list of signal dicts: {action, symbol, price, reason, date}
@@ -357,15 +451,34 @@ class BaseStrategy(ABC):
             print(f"[{self.STRATEGY_NAME}] No data to scan")
             return []
 
+        today_str = pd.Timestamp.now().strftime('%Y-%m-%d')
+
         signals = []
+        skipped_stale = 0
         for symbol in self.symbols:
             sym_data = df[df['symbol'] == symbol].sort_values('date')
             if sym_data.empty:
                 continue
 
+            # Re-entry cooldown check
+            allowed, cooldown_reason = self.is_reentry_allowed(symbol)
+            if not allowed:
+                continue
+
+            # Skip if already holding
+            if symbol in self.positions and self.positions[symbol].get('shares', 0) > 0:
+                continue
+
             # Get recent rows within lookback window
             recent = sym_data.tail(lookback_days)
             for _, row in recent.iterrows():
+                row_date = str(row.get('date', ''))[:10]
+
+                # Guard: only trade on today's data
+                if require_today and row_date != today_str:
+                    skipped_stale += 1
+                    continue
+
                 if self.check_entry(row):
                     price = row.get('adjusted_close', 0)
                     reason = self.entry_reason(row)
@@ -374,8 +487,11 @@ class BaseStrategy(ABC):
                         'symbol': symbol,
                         'price': float(price),
                         'reason': reason,
-                        'date': str(row.get('date', ''))[:10],
+                        'date': row_date,
                     })
+
+        if require_today and skipped_stale > 0:
+            print(f"  [{self.STRATEGY_NAME}] Skipped {skipped_stale} stale rows (not dated {today_str})")
 
         return signals
 

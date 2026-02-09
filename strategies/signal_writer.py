@@ -69,8 +69,13 @@ class SignalWriter:
             'timestamp': datetime.now().isoformat(timespec='seconds'),
         })
 
-    def save(self, filepath=None):
-        """Write signals to CSV.  Creates parent directories if needed."""
+    def save(self, filepath=None, append=False):
+        """Write signals to CSV atomically.  Creates parent dirs if needed.
+
+        Args:
+            filepath: Output path (uses self.filepath if None)
+            append: If True and file exists, append to existing signals
+        """
         path = filepath or self.filepath
         if not path:
             raise ValueError("No filepath specified")
@@ -80,8 +85,22 @@ class SignalWriter:
 
         os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
         df = pd.DataFrame(self.signals, columns=SIGNAL_COLUMNS)
-        df.to_csv(path, index=False)
-        print(f"Wrote {len(self.signals)} signal(s) to {path}")
+
+        # Append: read existing file and concatenate
+        if append and os.path.exists(path):
+            try:
+                existing = pd.read_csv(path)
+                df = pd.concat([existing, df], ignore_index=True)
+                print(f"Appending {len(self.signals)} signal(s) to {len(existing)} existing")
+            except Exception as e:
+                print(f"Warning: could not read existing {path}: {e}, overwriting")
+
+        # Atomic write: write to temp file then rename to prevent
+        # partial reads when execute_signals is in watch mode
+        tmp_path = path + '.tmp'
+        df.to_csv(tmp_path, index=False)
+        os.replace(tmp_path, path)
+        print(f"Wrote {len(df)} signal(s) to {path}")
 
     def clear(self):
         self.signals = []

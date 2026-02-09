@@ -324,6 +324,13 @@ def infer(cfg):
 
         print(f"Data loading time: {load_timer}")
 
+        # Auto-compute quantile bucket edges if requested (same as training)
+        if cfg["label_mode"] == "buckets" and cfg.get("bucket_edges") == "auto":
+            from .dataset import compute_quantile_edges
+            n_buckets = cfg.get("n_buckets", 4)
+            cfg["bucket_edges"] = compute_quantile_edges(df, target_col, n_buckets=n_buckets)
+            print(f"Auto bucket edges ({n_buckets} buckets): {cfg['bucket_edges']}")
+
         # Get feature columns based on model type
         model_type = cfg.get("model_type", "encoder")
         output_mode = cfg.get("output_mode", "all")

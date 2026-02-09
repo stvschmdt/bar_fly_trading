@@ -1,12 +1,12 @@
 """
 Merge all 9 prediction CSVs into a single merged_predictions.csv.
 
-Reads from: output/predictions_*.csv (9 files)
+Reads from: stockformer/output/predictions/pred_*.csv (9 files)
 Writes to:  merged_predictions.csv (main directory)
 
 Usage:
     python -m stockformer.merge_predictions
-    python -m stockformer.merge_predictions --input-dir output --output merged_predictions.csv
+    python -m stockformer.merge_predictions --input-dir stockformer/output/predictions --output merged_predictions.csv
 """
 
 import argparse
@@ -24,12 +24,18 @@ def merge_predictions(input_dir: str = "output", output_path: str = "merged_pred
         input_dir: Directory containing prediction CSVs
         output_path: Path for merged output file
     """
-    # Find all prediction files
-    pattern = os.path.join(input_dir, "predictions_*.csv")
+    # Find all prediction files (supports both pred_*.csv and predictions_*.csv)
+    pattern = os.path.join(input_dir, "pred_*.csv")
     pred_files = sorted(glob(pattern))
 
     if not pred_files:
-        print(f"No prediction files found matching: {pattern}")
+        # Fallback: try predictions_*.csv naming convention
+        pattern = os.path.join(input_dir, "predictions_*.csv")
+        pred_files = sorted(glob(pattern))
+
+    if not pred_files:
+        print(f"No prediction files found in: {input_dir}")
+        print(f"  Tried: pred_*.csv and predictions_*.csv")
         return
 
     print(f"Found {len(pred_files)} prediction files:")
@@ -44,10 +50,10 @@ def merge_predictions(input_dir: str = "output", output_path: str = "merged_pred
     merged = None
 
     for pred_file in pred_files:
-        # Parse filename to get suffix (e.g., "bin_3d" from "predictions_bin_3d.csv")
+        # Parse filename to get suffix (e.g., "bin_3d" from "pred_bin_3d.csv")
         basename = os.path.basename(pred_file)
-        # Extract suffix: predictions_bin_3d.csv -> bin_3d
-        suffix = basename.replace("predictions_", "").replace(".csv", "")
+        # Extract suffix: pred_bin_3d.csv -> bin_3d, predictions_bin_3d.csv -> bin_3d
+        suffix = basename.replace("predictions_", "").replace("pred_", "").replace(".csv", "")
 
         print(f"\nProcessing {basename} (suffix: {suffix})...")
         df = pd.read_csv(pred_file)
@@ -107,8 +113,8 @@ def main():
     parser.add_argument(
         "--input-dir",
         type=str,
-        default="output",
-        help="Directory containing prediction CSVs (default: output)",
+        default="stockformer/output/predictions",
+        help="Directory containing prediction CSVs (default: stockformer/output/predictions)",
     )
     parser.add_argument(
         "--output",

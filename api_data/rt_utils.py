@@ -55,16 +55,19 @@ def get_realtime_quotes_bulk(symbols: list[str]) -> pd.DataFrame:
     Fetch real-time quotes for up to 100 symbols in a single API call.
 
     Uses the REALTIME_BULK_QUOTES endpoint (premium).
-    Returns price, volume, and timestamp per symbol.
+    Returns full OHLCV per symbol: open, high, low, price (close), volume.
 
     Args:
         symbols: List of ticker symbols (max 100 per call;
                  larger lists are chunked automatically)
 
     Returns:
-        DataFrame with columns: symbol, price, volume, timestamp
+        DataFrame with columns: symbol, open, high, low, price, volume, timestamp
     """
     all_rows = []
+    n_calls = (len(symbols) + 99) // 100
+    is_sample = False
+
     # Chunk into batches of 100
     for i in range(0, len(symbols), 100):
         chunk = symbols[i:i + 100]
@@ -72,12 +75,21 @@ def get_realtime_quotes_bulk(symbols: list[str]) -> pd.DataFrame:
         response = alpha_client.fetch(
             function='REALTIME_BULK_QUOTES', symbol=symbol_str)
 
-        # Parse response
+        # Check for premium/sample data warning
+        if 'message' in response and 'premium' in response.get('message', '').lower():
+            is_sample = True
+
+        # Parse response — API returns 'close' not 'price'
         if 'data' in response:
             for row in response['data']:
+                # Use 'close' field (actual API), fall back to 'price' (legacy)
+                price = float(row.get('close', 0) or row.get('price', 0))
                 all_rows.append({
                     'symbol': row.get('symbol', ''),
-                    'price': float(row.get('price', 0)),
+                    'open': float(row.get('open', 0)),
+                    'high': float(row.get('high', 0)),
+                    'low': float(row.get('low', 0)),
+                    'price': price,
                     'volume': int(row.get('volume', 0)),
                     'timestamp': row.get('timestamp', ''),
                 })
@@ -89,9 +101,11 @@ def get_realtime_quotes_bulk(symbols: list[str]) -> pd.DataFrame:
     if not all_rows:
         return pd.DataFrame()
 
+    if is_sample:
+        print(f"  WARNING: Bulk endpoint returned SAMPLE data (premium key required)")
+
     df = pd.DataFrame(all_rows)
-    print(f"  Bulk quotes: {len(df)} symbols fetched "
-          f"in {len(range(0, len(symbols), 100))} API call(s)")
+    print(f"  Bulk quotes: {len(df)} symbols fetched in {n_calls} API call(s)")
     return df
 
 

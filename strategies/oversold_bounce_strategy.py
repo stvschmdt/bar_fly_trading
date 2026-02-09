@@ -51,6 +51,10 @@ class OversoldBounceStrategy(BaseStrategy):
     RSI_EXIT_THRESHOLD = 55
     MAX_POSITIONS = 10
 
+    # Exit safety overrides (tighter than base for short-term bounces)
+    STOP_LOSS_PCT = -0.05       # -5%
+    TAKE_PROFIT_PCT = 0.08      # +8%
+
     def __init__(self, account, symbols, data=None, data_path=None,
                  position_size=0.1, max_hold_days=3):
         super().__init__(account, symbols)
@@ -147,12 +151,16 @@ class OversoldBounceStrategy(BaseStrategy):
 
             if has_position:
                 entry_date = self.positions[symbol]['entry_date']
+                entry_price = self.positions[symbol]['entry_price']
                 hold_days = (current_date - entry_date).days
 
-                should_exit, exit_reason = self.check_exit(indicators, hold_days)
+                should_exit, exit_reason = self.check_exit(indicators, hold_days, entry_price)
+                # Safety backstop: stop-loss, take-profit, trailing stop
+                if not should_exit:
+                    should_exit, exit_reason = self.check_exit_safety(
+                        symbol, current_price, entry_price)
                 if should_exit:
                     shares = self.positions[symbol]['shares']
-                    entry_price = self.positions[symbol]['entry_price']
                     pct_return = (current_price - entry_price) / entry_price * 100
 
                     orders.append(StockOrder(symbol, OrderOperation.SELL, shares,
@@ -172,10 +180,14 @@ class OversoldBounceStrategy(BaseStrategy):
                     })
 
                     print(f"  EXIT {symbol}: held {hold_days}d, return: {pct_return:+.2f}% ({exit_reason})")
+                    self.record_exit(symbol, current_date)
                     del self.positions[symbol]
 
             else:
                 if len(self.positions) >= self.MAX_POSITIONS:
+                    continue
+                allowed, _ = self.is_reentry_allowed(symbol, current_date)
+                if not allowed:
                     continue
 
                 if self.check_entry(indicators) if indicators is not None else False:
@@ -192,6 +204,7 @@ class OversoldBounceStrategy(BaseStrategy):
                             'entry_date': current_date,
                             'entry_price': current_price,
                         }
+                        self.record_entry(symbol)
 
                         rsi_val = indicators.get('rsi_14', None)
                         rsi_str = f", RSI={rsi_val:.1f}" if pd.notna(rsi_val) else ""

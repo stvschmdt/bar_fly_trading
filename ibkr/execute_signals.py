@@ -36,6 +36,7 @@ import shutil
 import sys
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -58,6 +59,37 @@ logger = logging.getLogger(__name__)
 
 # Location of trading mode lock file
 TRADING_MODE_CONF = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'trading_mode.conf')
+
+# Daily rejection de-dup: only notify once per (symbol, reason_type) per day.
+# Prevents spamming when RT loop runs every 15 minutes and a symbol stays
+# in the same rejected state all day.
+_rejections_notified: dict[str, set[tuple[str, str]]] = {}  # {date_str: set((symbol, reason))}
+
+
+def _is_new_rejection(symbol: str, reason_type: str) -> bool:
+    """Check if this rejection is new today (not yet notified)."""
+    today = datetime.now().strftime('%Y-%m-%d')
+    # Reset on new day
+    if today not in _rejections_notified:
+        _rejections_notified.clear()
+        _rejections_notified[today] = set()
+    key = (symbol.upper(), reason_type)
+    if key in _rejections_notified[today]:
+        return False
+    _rejections_notified[today].add(key)
+    return True
+
+
+def is_market_open() -> bool:
+    """Check if US stock market is currently open (9:30-16:00 ET, Mon-Fri)."""
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    # Weekend
+    if now_et.weekday() >= 5:
+        return False
+    # Before open or after close
+    market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+    return market_open <= now_et < market_close
 
 
 def check_live_trading_allowed():
@@ -149,7 +181,8 @@ def format_account_state_text(executor, label=""):
     return "\n".join(lines)
 
 
-def execute_signal_file(filepath, executor, dry_run=False):
+def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
+                        buy_only=False):
     """
     Read and execute all signals in a CSV file.
 
@@ -157,6 +190,8 @@ def execute_signal_file(filepath, executor, dry_run=False):
         filepath: Path to signal CSV
         executor: TradeExecutor instance (None if dry_run)
         dry_run: If True, print signals but don't execute
+        default_shares: Override shares=0 with this fixed count
+        buy_only: If True, skip SELL signals for symbols we don't hold
 
     Returns:
         list of result dicts for the execution log
@@ -165,6 +200,64 @@ def execute_signal_file(filepath, executor, dry_run=False):
     if not signals:
         logger.info(f"No signals in {filepath}")
         return []
+
+    # Apply default shares override (e.g. --default-shares 1 for testing)
+    if default_shares is not None and default_shares > 0:
+        for sig in signals:
+            if int(sig.get('shares', 0)) == 0:
+                sig['shares'] = default_shares
+        logger.info(f"Applied default shares={default_shares} to signals with shares=0")
+
+    # De-duplicate: if multiple strategies signal the same (symbol, action),
+    # keep only the first one to prevent double-buying
+    seen = set()
+    deduped = []
+    rejections = []  # Track all rejections for email
+    for sig in signals:
+        key = (sig['symbol'].upper(), sig['action'].upper())
+        if key in seen:
+            reason = f"duplicate signal (strategy={sig.get('strategy', 'unknown')})"
+            is_new = _is_new_rejection(sig['symbol'], 'duplicate')
+            if is_new:
+                logger.warning(f"REJECTED {sig['action']} {sig['symbol']}: {reason}")
+            else:
+                logger.debug(f"De-dup (already notified): {sig['action']} {sig['symbol']}")
+            rejections.append({
+                **sig,
+                'status': 'rejected',
+                'rejection_reason': reason,
+                'is_new': is_new,
+                'executed_at': datetime.now().isoformat(timespec='seconds'),
+            })
+            continue
+        seen.add(key)
+        deduped.append(sig)
+
+    if len(deduped) < len(signals):
+        logger.info(f"De-duplicated {len(signals)} signals down to {len(deduped)}")
+    signals = deduped
+
+    # Buy-only filter: skip SELL signals for symbols we don't actually hold
+    if buy_only and not dry_run and executor:
+        held_symbols = set()
+        try:
+            pos_summary = executor.get_position_summary()
+            held_symbols = set(pos_summary.get('positions', {}).keys())
+        except Exception as e:
+            logger.warning(f"Could not fetch positions for buy-only filter: {e}")
+
+        filtered = []
+        sell_skipped = 0
+        for sig in signals:
+            if sig['action'].upper() == 'SELL' and sig['symbol'].upper() not in held_symbols:
+                sell_skipped += 1
+                continue
+            filtered.append(sig)
+
+        if sell_skipped > 0:
+            logger.info(f"Buy-only filter: skipped {sell_skipped} SELL signals (no position held), "
+                        f"kept {len(filtered)} signals")
+        signals = filtered
 
     logger.info(f"Processing {len(signals)} signal(s) from {filepath}")
 
@@ -234,7 +327,32 @@ def execute_signal_file(filepath, executor, dry_run=False):
                 logger.info(f"  FILLED: {symbol} {filled_shares} shares @ ${fill_price:.2f} "
                            f"(total: ${filled_shares * fill_price:,.2f})")
             else:
-                logger.warning(f"  FAILED: {symbol} - {error}")
+                # Classify rejection reason for daily de-dup
+                reason_type = 'failed'
+                if 'spread' in error.lower():
+                    reason_type = 'spread'
+                elif 'position' in error.lower() or 'already' in error.lower():
+                    reason_type = 'position'
+                elif 'exposure' in error.lower():
+                    reason_type = 'exposure'
+                elif 'funds' in error.lower():
+                    reason_type = 'funds'
+                elif 'daily' in error.lower():
+                    reason_type = 'daily_limit'
+
+                is_new = _is_new_rejection(symbol, reason_type)
+                if is_new:
+                    logger.warning(f"  REJECTED: {symbol} - {error}")
+                else:
+                    logger.debug(f"  REJECTED (already notified): {symbol} - {error}")
+
+                rejections.append({
+                    **sig,
+                    'status': 'rejected',
+                    'rejection_reason': error,
+                    'is_new': is_new,
+                    'executed_at': datetime.now().isoformat(timespec='seconds'),
+                })
 
             results.append({
                 **sig,
@@ -293,24 +411,29 @@ def execute_signal_file(filepath, executor, dry_run=False):
         import time
         time.sleep(2)
 
-        # Send batch execution summary email
-        _send_execution_summary_email(executor, results, pre_account, post_account)
+        # Send batch execution summary email (include new rejections only)
+        new_rejections = [r for r in rejections if r.get('is_new')]
+        _send_execution_summary_email(executor, results, pre_account, post_account,
+                                      rejections=new_rejections)
 
     return results
 
 
-def _send_execution_summary_email(executor, results, pre_account, post_account):
+def _send_execution_summary_email(executor, results, pre_account, post_account,
+                                   rejections=None):
     """Send a comprehensive execution summary email."""
     if not executor.notifier:
         return
 
+    rejections = rejections or []
     filled = [r for r in results if r['status'] == 'filled']
     failed = [r for r in results if r['status'] == 'failed']
     errors = [r for r in results if r['status'] == 'error']
     total_cost = sum(r['fill_price'] * r['filled_shares'] for r in filled)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    subject = f"[EXECUTION] {len(filled)}/{len(results)} filled | ${total_cost:,.2f} deployed"
+    rej_tag = f" | {len(rejections)} rejected" if rejections else ""
+    subject = f"[EXECUTION] {len(filled)}/{len(results)} filled | ${total_cost:,.2f} deployed{rej_tag}"
 
     body_lines = [
         "TRADE EXECUTION REPORT",
@@ -346,6 +469,16 @@ def _send_execution_summary_email(executor, results, pre_account, post_account):
         body_lines.append("-" * 50)
         for r in errors:
             body_lines.append(f"  {r['action']:4s} {r['symbol']:6s}  {r.get('error', 'unknown')}")
+        body_lines.append("")
+
+    if rejections:
+        body_lines.append(f"REJECTIONS ({len(rejections)} new today)")
+        body_lines.append("-" * 50)
+        for r in rejections:
+            body_lines.append(
+                f"  {r.get('action', '?'):4s} {r.get('symbol', '?'):6s}  "
+                f"{r.get('rejection_reason', 'unknown')}"
+            )
         body_lines.append("")
 
     # Pre-execution account state
@@ -404,7 +537,8 @@ def archive_signal_file(filepath, results, archive_dir):
 
 
 def watch_directory(signals_dir, executor, archive_dir, interval_seconds=30,
-                    dry_run=False, pattern="pending_orders*.csv"):
+                    dry_run=False, pattern="pending_orders*.csv", default_shares=None,
+                    buy_only=False):
     """
     Poll a directory for new signal files and execute them.
 
@@ -415,6 +549,7 @@ def watch_directory(signals_dir, executor, archive_dir, interval_seconds=30,
         interval_seconds: Seconds between polls
         dry_run: If True, print but don't execute
         pattern: Glob pattern for signal files
+        buy_only: If True, skip SELL signals for symbols we don't hold
     """
     import glob
 
@@ -428,7 +563,9 @@ def watch_directory(signals_dir, executor, archive_dir, interval_seconds=30,
 
             for filepath in matches:
                 logger.info(f"\nFound signal file: {filepath}")
-                results = execute_signal_file(filepath, executor, dry_run=dry_run)
+                results = execute_signal_file(filepath, executor, dry_run=dry_run,
+                                              default_shares=default_shares,
+                                              buy_only=buy_only)
                 archive_signal_file(filepath, results, archive_dir)
 
             if not matches:
@@ -489,6 +626,14 @@ Examples:
                         help="Maximum concurrent positions (default: 10)")
     parser.add_argument("--max-daily-loss", type=float, default=5000,
                         help="Maximum daily loss in dollars (default: 5000)")
+    parser.add_argument("--default-shares", type=int, default=None,
+                        help="Override shares=0 signals with this fixed share count (e.g. 1 for testing)")
+    parser.add_argument("--market-orders", action="store_true",
+                        help="Use market orders instead of limit orders")
+    parser.add_argument("--buy-only", action="store_true",
+                        help="Skip SELL signals for symbols we don't hold (still sell owned positions)")
+    parser.add_argument("--require-market-hours", action="store_true",
+                        help="Only execute during US market hours (9:30-16:00 ET, Mon-Fri)")
 
     args = parser.parse_args()
 
@@ -498,15 +643,26 @@ Examples:
 
     archive_dir = args.archive_dir or os.path.join(args.signals_dir, "executed")
 
-    # Dry run: no broker connection needed
+    # Market hours check
+    if args.require_market_hours and not is_market_open():
+        now_et = datetime.now(ZoneInfo("America/New_York"))
+        logger.warning(f"Market is CLOSED (ET: {now_et.strftime('%A %H:%M')}). "
+                       f"Use without --require-market-hours to execute anyway.")
+        sys.exit(0)
+
+    # Dry run: no broker connection needed (buy_only filter needs executor, so skipped in dry-run)
     if args.dry_run:
         if args.signals:
-            results = execute_signal_file(args.signals, executor=None, dry_run=True)
+            results = execute_signal_file(args.signals, executor=None, dry_run=True,
+                                          default_shares=args.default_shares,
+                                          buy_only=args.buy_only)
             if results:
                 print(f"\n{len(results)} signal(s) would be executed.")
         elif args.watch:
             watch_directory(args.signals_dir, executor=None, archive_dir=archive_dir,
-                            interval_seconds=args.interval, dry_run=True)
+                            interval_seconds=args.interval, dry_run=True,
+                            default_shares=args.default_shares,
+                            buy_only=args.buy_only)
         return
 
     # Configure IBKR connection
@@ -532,18 +688,23 @@ Examples:
         position_size=args.position_size,
         max_positions=args.max_positions,
         max_daily_loss=args.max_daily_loss,
+        use_market_orders=args.market_orders,
     )
 
     # Execute
     with TradeExecutor(ibkr_config, trading_config) as executor:
         if args.signals:
             # One-shot mode
-            results = execute_signal_file(args.signals, executor)
+            results = execute_signal_file(args.signals, executor,
+                                          default_shares=args.default_shares,
+                                          buy_only=args.buy_only)
             archive_signal_file(args.signals, results, archive_dir)
         elif args.watch:
             # Watch mode
             watch_directory(args.signals_dir, executor, archive_dir,
-                            interval_seconds=args.interval)
+                            interval_seconds=args.interval,
+                            default_shares=args.default_shares,
+                            buy_only=args.buy_only)
 
 
 if __name__ == "__main__":

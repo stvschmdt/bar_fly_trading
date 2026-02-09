@@ -472,6 +472,15 @@ class BaseRunner:
             overnight_data = portfolio_load_data(data_path)
             print(f"  Loaded overnight data: {len(overnight_data):,} rows")
 
+            # Warn if overnight data is stale (> 3 calendar days old)
+            if 'date' in overnight_data.columns:
+                latest_date = pd.to_datetime(overnight_data['date']).max()
+                days_old = (pd.Timestamp.now() - latest_date).days
+                if days_old > 3:
+                    print(f"  WARNING: Overnight data is {days_old} days old "
+                          f"(latest: {latest_date.strftime('%Y-%m-%d')}). "
+                          f"Run cron.py or pull_api_data.py to refresh.")
+
         strategy = self.create_strategy(account, symbols, args, overnight_data)
 
         print(f"\n{'=' * 60}")
@@ -480,8 +489,12 @@ class BaseRunner:
         print(f"{'=' * 60}\n")
 
         # Fetch bulk realtime prices (1 API call per 100 symbols)
-        from api_data.rt_utils import get_realtime_quotes_bulk
-        bulk_prices = get_realtime_quotes_bulk(list(symbols))
+        bulk_prices = pd.DataFrame()
+        if not getattr(args, 'skip_live', False):
+            from api_data.rt_utils import get_realtime_quotes_bulk
+            bulk_prices = get_realtime_quotes_bulk(list(symbols))
+        else:
+            print("  --skip-live: skipping bulk quote fetch (using overnight data only)")
 
         # Merge: overnight data (technicals) + bulk prices (realtime)
         if strategy.overnight_data is not None and not bulk_prices.empty:
@@ -495,9 +508,10 @@ class BaseRunner:
             print("  No data available (no overnight data, no bulk prices).")
             scan_data = None
 
-        # Find signals on merged data
+        # Find signals on merged data (require_today=True: only trade on today's data)
         signals = strategy.find_signals(data=scan_data,
-                                        lookback_days=args.lookback_days)
+                                        lookback_days=args.lookback_days,
+                                        require_today=True)
 
         # Generate summary
         summary = strategy.generate_signal_summary(
@@ -508,6 +522,8 @@ class BaseRunner:
         print(summary)
 
         # Write signal CSV (default: signals/pending_orders.csv)
+        # Uses append=True so multiple strategies can accumulate signals
+        # in the same file during RT loop (executor de-dups before execution)
         output_signals = (args.output_signals or
                           os.path.join(parent_dir, "signals", "pending_orders.csv"))
         if signals:
@@ -518,7 +534,7 @@ class BaseRunner:
                     price=sig['price'], strategy=self.STRATEGY_NAME,
                     reason=sig.get('reason', ''),
                 )
-            writer.save()
+            writer.save(append=True)
             print(f"\nSignal CSV written: {output_signals}")
             print(f"  {len(signals)} signal(s) ready for execution")
             print(f"\nTo execute (paper):  python -m ibkr.execute_signals "

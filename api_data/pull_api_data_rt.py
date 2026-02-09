@@ -184,10 +184,392 @@ def update_csv_file(csv_path, rt_data, dry_run=False):
             price = data.get('ohlcv', {}).get('adjusted_close', '?')
             print(f"  [DRY RUN] {symbol}: price={price}")
 
+    # Drop temp column before saving
+    df.drop(columns=['_parsed_date'], inplace=True, errors='ignore')
+
+    if not dry_run and updated > 0:
+        df.to_csv(csv_path, index=False)
+
+    return updated
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bulk RT update (REALTIME_BULK_QUOTES — 1 API call per 100 symbols)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _detect_columns(df):
+    """Detect symbol and close column names for a DataFrame."""
+    sym_col = 'ticker' if 'ticker' in df.columns else 'symbol'
+    close_col = 'close' if ('close' in df.columns and
+                            'adjusted_close' not in df.columns) else 'adjusted_close'
+    return sym_col, close_col
+
+
+def update_derived_columns_generic(df, idx, sym_col='symbol', close_col='adjusted_close'):
+    """
+    Recompute derived columns for a specific row after RT update.
+
+    Works with both all_data_*.csv (symbol/adjusted_close) and
+    merged_predictions.csv (ticker/close) column conventions.
+
+    Args:
+        df: Full DataFrame (modified in place)
+        idx: Row index to update
+        sym_col: Name of the symbol column
+        close_col: Name of the close price column
+    """
+    # Use .at[] for scalar access (safe even with duplicate indices)
+    try:
+        price = df.at[idx, close_col]
+    except Exception:
+        return
+    if pd.isna(price) or price == 0:
+        return
+
+    # SMA distance percentages
+    for period in [20, 50, 200]:
+        sma_col = f'sma_{period}'
+        pct_col = f'sma_{period}_pct'
+        if sma_col in df.columns and pct_col in df.columns:
+            sma_val = df.at[idx, sma_col]
+            if pd.notna(sma_val) and sma_val != 0:
+                df.at[idx, pct_col] = round((price - sma_val) / sma_val * 100, 2)
+
+    # 52-week high/low pct
+    for metric in ['52_week_high', '52_week_low']:
+        pct_col = f'{metric}_pct'
+        if metric in df.columns and pct_col in df.columns:
+            val = df.at[idx, metric]
+            if pd.notna(val) and val != 0:
+                df.at[idx, pct_col] = round((price - val) / val * 100, 2)
+
+    # PE ratio
+    if 'ttm_eps' in df.columns and 'pe_ratio' in df.columns:
+        ttm = df.at[idx, 'ttm_eps']
+        if pd.notna(ttm) and ttm != 0:
+            df.at[idx, 'pe_ratio'] = price / ttm
+
+    # Pct change vs previous row for same symbol
+    symbol = df.at[idx, sym_col]
+    if symbol is not None:
+        sym_mask = df[sym_col] == symbol
+        sym_indices = df.loc[sym_mask].index
+        pos = sym_indices.get_loc(idx)
+        if pos > 0:
+            prev_idx = sym_indices[pos - 1]
+            prev_close = df.at[prev_idx, close_col]
+            if 'adjusted_close_pct' in df.columns and pd.notna(prev_close) and prev_close != 0:
+                df.at[idx, 'adjusted_close_pct'] = (price - prev_close) / prev_close
+
+            prev_vol = df.at[prev_idx, 'volume']
+            if 'volume_pct' in df.columns and pd.notna(prev_vol) and prev_vol != 0:
+                vol = df.at[idx, 'volume']
+                df.at[idx, 'volume_pct'] = (vol - prev_vol) / prev_vol
+
+
+def update_csv_from_bulk(csv_path, bulk_df, dry_run=False):
+    """
+    Update (or create) today's row per symbol in a CSV using bulk quote data.
+
+    Handles both all_data_*.csv (symbol/adjusted_close) and
+    merged_predictions.csv (ticker/close) column conventions.
+
+    If a symbol's latest row is already today, updates it in place.
+    Otherwise, clones the latest row, sets date=today, updates OHLCV,
+    and appends — so strategies always see a fresh row dated today.
+
+    Args:
+        csv_path: Path to CSV file
+        bulk_df: DataFrame with columns: symbol, price, volume
+        dry_run: If True, print changes but don't write
+
+    Returns:
+        Number of symbols updated
+    """
+    if bulk_df.empty:
+        return 0
+
+    df = pd.read_csv(csv_path)
+    # Drop unnamed index columns, use clean integer index to avoid dupes
+    unnamed_cols = [c for c in df.columns if c.startswith('Unnamed')]
+    if unnamed_cols:
+        df.drop(columns=unnamed_cols, inplace=True)
+    df.reset_index(drop=True, inplace=True)
+
+    sym_col, close_col = _detect_columns(df)
+
+    # Parse dates for latest-row detection
+    has_date = 'date' in df.columns
+    if has_date:
+        df['_parsed_date'] = pd.to_datetime(df['date'], errors='coerce')
+    else:
+        df['_parsed_date'] = pd.NaT
+
+    today = pd.Timestamp.now().normalize()  # midnight today
+    today_str = today.strftime('%Y-%m-%d')
+
+    # Build lookup from bulk quotes
+    quotes = {}
+    for _, row in bulk_df.iterrows():
+        sym = row['symbol']
+        quotes[sym] = {
+            'price': row['price'],
+            'volume': row.get('volume', 0),
+            'open': row.get('open', 0),
+            'high': row.get('high', 0),
+            'low': row.get('low', 0),
+        }
+
+    new_rows = []
+    updated = 0
+    for symbol, qdata in quotes.items():
+        price = qdata['price']
+        volume = qdata['volume']
+
+        if price <= 0:
+            continue
+
+        sym_mask = df[sym_col] == symbol
+        if not sym_mask.any():
+            continue
+
+        # Find latest row by date
+        sym_rows = df.loc[sym_mask]
+        if sym_rows['_parsed_date'].notna().any():
+            latest_idx = sym_rows['_parsed_date'].idxmax()
+        else:
+            latest_idx = sym_rows.index[-1]
+
+        latest_date = df.at[latest_idx, '_parsed_date']
+
+        # If latest row is NOT today, clone it and append as today
+        if has_date and pd.notna(latest_date) and latest_date.normalize() < today:
+            new_row = df.loc[latest_idx].copy()
+            new_row['date'] = today_str
+            new_row['_parsed_date'] = today
+            # Set OHLCV on the new row
+            new_row[close_col] = price
+            if qdata['open'] > 0:
+                new_row['open'] = qdata['open']
+            else:
+                new_row['open'] = price  # First RT quote of the day = open
+            if qdata['high'] > 0:
+                new_row['high'] = qdata['high']
+            else:
+                new_row['high'] = price
+            if qdata['low'] > 0:
+                new_row['low'] = qdata['low']
+            else:
+                new_row['low'] = price
+            if volume > 0:
+                new_row['volume'] = volume
+
+            new_rows.append(new_row)
+            updated += 1
+            if dry_run:
+                print(f"  [DRY RUN] {symbol}: NEW row date={today_str}, "
+                      f"{close_col}=${price:.2f}")
+        else:
+            # Today's row already exists — update in place
+            df.at[latest_idx, close_col] = price
+
+            if 'open' in df.columns and qdata['open'] > 0:
+                df.at[latest_idx, 'open'] = qdata['open']
+
+            if 'high' in df.columns:
+                if qdata['high'] > 0:
+                    df.at[latest_idx, 'high'] = qdata['high']
+                else:
+                    existing_high = df.at[latest_idx, 'high']
+                    if pd.notna(existing_high):
+                        df.at[latest_idx, 'high'] = max(existing_high, price)
+                    else:
+                        df.at[latest_idx, 'high'] = price
+
+            if 'low' in df.columns:
+                if qdata['low'] > 0:
+                    df.at[latest_idx, 'low'] = qdata['low']
+                else:
+                    existing_low = df.at[latest_idx, 'low']
+                    if pd.notna(existing_low):
+                        df.at[latest_idx, 'low'] = min(existing_low, price)
+                    else:
+                        df.at[latest_idx, 'low'] = price
+
+            if volume > 0 and 'volume' in df.columns:
+                df.at[latest_idx, 'volume'] = volume
+
+            # Recompute derived columns
+            update_derived_columns_generic(df, latest_idx, sym_col, close_col)
+
+            updated += 1
+            if dry_run:
+                print(f"  [DRY RUN] {symbol}: UPDATE date={today_str}, "
+                      f"{close_col}=${price:.2f}")
+
+    # Append new today rows
+    if new_rows:
+        new_df = pd.DataFrame(new_rows)
+        df = pd.concat([df, new_df], ignore_index=True)
+        # Recompute derived columns for the newly appended rows
+        for i in range(len(df) - len(new_rows), len(df)):
+            update_derived_columns_generic(df, i, sym_col, close_col)
+
     if not dry_run and updated > 0:
         df.to_csv(csv_path)
 
     return updated
+
+
+def _fetch_individual_quotes(symbols_list):
+    """
+    Fallback: fetch quotes one-by-one via GLOBAL_QUOTE.
+
+    Returns DataFrame with columns: symbol, price, volume (same shape as bulk).
+    Also returns full OHLCV in an rt_data dict for update_csv_file().
+    """
+    from api_data.collector import alpha_client
+
+    rows = []
+    rt_data = {}
+    total = len(symbols_list)
+    failed = 0
+    start = time.time()
+
+    for i, symbol in enumerate(symbols_list, 1):
+        elapsed = time.time() - start
+        rate = elapsed / i if i > 1 else 0
+        eta = rate * (total - i)
+        print(f"  [{i}/{total}] {symbol} "
+              f"(elapsed: {elapsed:.0f}s, eta: {eta:.0f}s) ...", end='', flush=True)
+
+        data = fetch_symbol_rt_data(alpha_client, symbol)
+        if data and data['ohlcv'].get('adjusted_close', 0) > 0:
+            ohlcv = data['ohlcv']
+            rows.append({
+                'symbol': symbol,
+                'open': ohlcv.get('open', 0),
+                'high': ohlcv.get('high', 0),
+                'low': ohlcv.get('low', 0),
+                'price': ohlcv['adjusted_close'],
+                'volume': ohlcv.get('volume', 0),
+            })
+            rt_data[symbol] = data
+            print(f" ${ohlcv['adjusted_close']:.2f}")
+        else:
+            failed += 1
+            print(" FAILED")
+
+    print(f"  Fetched {len(rows)}/{total} quotes ({failed} failed)")
+    bulk_df = pd.DataFrame(rows) if rows else pd.DataFrame()
+    return bulk_df, rt_data
+
+
+def run_bulk_rt_update(data_dir, predictions_path=None, symbols_filter=None,
+                       dry_run=False):
+    """
+    Fetch RT quotes and update CSV files on disk.
+
+    Tries REALTIME_BULK_QUOTES first (1 API call per 100 symbols).
+    Falls back to individual GLOBAL_QUOTE if bulk returns zeros (no premium key).
+
+    Call this BEFORE running strategies so they see fresh prices.
+
+    Args:
+        data_dir: Directory containing all_data_*.csv files
+        predictions_path: Optional path to merged_predictions.csv
+        symbols_filter: Optional set to restrict symbols
+        dry_run: If True, don't write changes
+
+    Returns:
+        Dict with stats: total_symbols, quotes_received, updated, elapsed_seconds
+    """
+    start = time.time()
+
+    # Collect all symbols from CSVs
+    all_symbols = set()
+    csv_files = find_csv_files(data_dir)
+    for csv_path in csv_files:
+        all_symbols.update(get_symbols_from_csv(csv_path))
+
+    # Also collect from predictions if provided
+    if predictions_path and os.path.exists(predictions_path):
+        pred_headers = pd.read_csv(predictions_path, index_col=0, nrows=0)
+        ticker_col = 'ticker' if 'ticker' in pred_headers.columns else 'symbol'
+        # Read only the symbol/ticker column
+        col_idx = list(pred_headers.columns).index(ticker_col) + 1  # +1 for index col
+        pred_df = pd.read_csv(predictions_path, index_col=0, usecols=[0, col_idx])
+        all_symbols.update(pred_df[ticker_col].unique())
+
+    if symbols_filter:
+        all_symbols = all_symbols & set(symbols_filter)
+
+    symbols_list = sorted(all_symbols)
+    n_calls = (len(symbols_list) + 99) // 100
+    print(f"Bulk RT update: {len(symbols_list)} symbols, {n_calls} API call(s)...")
+
+    # Try bulk endpoint first
+    from api_data.rt_utils import get_realtime_quotes_bulk
+    bulk_df = get_realtime_quotes_bulk(symbols_list)
+
+    # Check if bulk returned real data (not sample/demo)
+    # Sample data has valid prices but wrong symbols — must detect and fall back
+    rt_data = None
+    is_sample = False
+    if not bulk_df.empty:
+        # Check if symbols match what we requested (sample returns fixed demo symbols)
+        returned_syms = set(bulk_df['symbol'].unique())
+        requested_syms = set(symbols_list)
+        unrequested = returned_syms - requested_syms
+        is_sample = len(unrequested) > 0  # Any unrequested symbol = sample data
+
+        valid_prices = bulk_df[bulk_df['price'] > 0]
+        if len(valid_prices) > 0 and not is_sample:
+            print(f"  Bulk quotes: {len(valid_prices)} valid prices")
+            bulk_df = valid_prices
+        elif is_sample:
+            print(f"  Bulk returned sample/demo data — falling back to individual GLOBAL_QUOTE")
+            bulk_df, rt_data = _fetch_individual_quotes(symbols_list)
+        else:
+            print(f"  Bulk quotes returned all zeros — falling back to individual GLOBAL_QUOTE")
+            bulk_df, rt_data = _fetch_individual_quotes(symbols_list)
+    else:
+        print(f"  Bulk endpoint returned empty — falling back to individual GLOBAL_QUOTE")
+        bulk_df, rt_data = _fetch_individual_quotes(symbols_list)
+
+    if bulk_df.empty:
+        print("  No quotes received")
+        return {'total_symbols': len(symbols_list), 'quotes_received': 0,
+                'updated': 0, 'elapsed_seconds': time.time() - start}
+
+    print(f"  Got quotes for {len(bulk_df)} symbols")
+
+    # Update all_data_*.csv files using update_csv_from_bulk (handles today-row creation)
+    total_updated = 0
+    for csv_path in csv_files:
+        n = update_csv_from_bulk(csv_path, bulk_df, dry_run=dry_run)
+        if n > 0:
+            print(f"  Updated {os.path.basename(csv_path)}: {n} symbols")
+            total_updated += n
+
+    # Update predictions file if provided
+    if predictions_path and os.path.exists(predictions_path):
+        n = update_csv_from_bulk(predictions_path, bulk_df, dry_run=dry_run)
+        if n > 0:
+            print(f"  Updated {os.path.basename(predictions_path)}: {n} symbols")
+            total_updated += n
+
+    elapsed = time.time() - start
+    file_count = len(csv_files) + (1 if predictions_path else 0)
+    print(f"Bulk RT update done: {total_updated} symbols across "
+          f"{file_count} files in {elapsed:.1f}s")
+
+    return {
+        'total_symbols': len(symbols_list),
+        'quotes_received': len(bulk_df),
+        'updated': total_updated,
+        'elapsed_seconds': elapsed,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -368,17 +750,22 @@ def main():
         '--dry-run', action='store_true',
         help='Fetch data but do not write changes',
     )
+    parser.add_argument(
+        '--bulk', action='store_true',
+        help='Use REALTIME_BULK_QUOTES (1 call per 100 symbols, faster)',
+    )
+    parser.add_argument(
+        '--predictions', type=str, default=None,
+        help='Also update merged_predictions.csv with RT prices',
+    )
     args = parser.parse_args()
 
-    # Import here to avoid requiring API key for tests/imports
-    from api_data.collector import alpha_client
-
-    # Resolve symbol list — same logic as pull_api_data.py
+    # Resolve symbol filter
+    symbols_filter = None
     use_all = False
     if args.symbols:
         symbols_filter = set(s.upper() for s in args.symbols)
     elif args.watchlist == 'all':
-        symbols_filter = None
         use_all = True
     else:
         wl = pd.read_csv(args.watchlist)
@@ -386,21 +773,34 @@ def main():
 
     print("=" * 60)
     print(f"RT Data Update — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    mode_str = "BULK" if args.bulk else "INDIVIDUAL"
     if use_all:
-        print("Symbol universe: SP500 + watchlist")
+        print(f"Symbol universe: SP500 + watchlist ({mode_str})")
     elif args.symbols:
-        print(f"Symbols: {', '.join(sorted(symbols_filter))}")
+        print(f"Symbols: {', '.join(sorted(symbols_filter))} ({mode_str})")
     else:
-        print(f"Watchlist: {args.watchlist} ({len(symbols_filter)} symbols)")
+        print(f"Watchlist: {args.watchlist} ({len(symbols_filter)} symbols, {mode_str})")
+    if args.predictions:
+        print(f"Predictions: {args.predictions}")
     print("=" * 60)
 
-    stats = run_rt_update(
-        api_client=alpha_client,
-        data_dir=args.data_dir,
-        symbols_filter=symbols_filter,
-        dry_run=args.dry_run,
-        use_all_symbols=use_all,
-    )
+    if args.bulk:
+        stats = run_bulk_rt_update(
+            data_dir=args.data_dir,
+            predictions_path=args.predictions,
+            symbols_filter=symbols_filter,
+            dry_run=args.dry_run,
+        )
+    else:
+        # Import here to avoid requiring API key for tests/imports
+        from api_data.collector import alpha_client
+        stats = run_rt_update(
+            api_client=alpha_client,
+            data_dir=args.data_dir,
+            symbols_filter=symbols_filter,
+            dry_run=args.dry_run,
+            use_all_symbols=use_all,
+        )
 
     print(f"\nStats: {stats}")
 

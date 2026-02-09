@@ -41,6 +41,8 @@ class StockSequenceDataset(Dataset):
         bucket_edges: List of edges for bucket mode (in percent, e.g. [-2, 0, 2])
         group_col: Column to group by (default: "ticker")
         date_col: Column for dates (default: "date")
+        market_feature_cols: Optional list of market/sector feature columns
+            for cross-attention or other multi-input model types
     """
 
     def __init__(
@@ -53,6 +55,7 @@ class StockSequenceDataset(Dataset):
         bucket_edges: Optional[List[float]] = None,
         group_col: str = "ticker",
         date_col: str = "date",
+        market_feature_cols: Optional[List[str]] = None,
     ):
         self.df = df.sort_values([group_col, date_col]).reset_index(drop=True)
         self.lookback = lookback
@@ -62,15 +65,20 @@ class StockSequenceDataset(Dataset):
         self.bucket_edges = bucket_edges
         self.group_col = group_col
         self.date_col = date_col
+        self.market_feature_cols = market_feature_cols
 
         # Clean feature columns: forward-fill within each ticker, then zero-fill
-        self.df[self.feature_cols] = (
-            self.df.groupby(group_col)[self.feature_cols]
+        all_feat_cols = list(self.feature_cols)
+        if self.market_feature_cols:
+            all_feat_cols += self.market_feature_cols
+
+        self.df[all_feat_cols] = (
+            self.df.groupby(group_col)[all_feat_cols]
             .ffill()
             .fillna(0.0)
         )
-        self.df[self.feature_cols] = (
-            self.df[self.feature_cols]
+        self.df[all_feat_cols] = (
+            self.df[all_feat_cols]
             .replace([np.inf, -np.inf], np.nan)
             .fillna(0.0)
         )
@@ -156,6 +164,12 @@ class StockSequenceDataset(Dataset):
             label = self._get_bucket_label(target_val)
         else:
             raise ValueError(f"Unknown label_mode: {self.label_mode}")
+
+        # For cross-attention models, return market features as third element
+        if self.market_feature_cols:
+            market_seq = seq_df[self.market_feature_cols].to_numpy(dtype="float32")
+            market_tensor = torch.from_numpy(market_seq)
+            return seq_tensor, label, market_tensor
 
         return seq_tensor, label
 

@@ -219,7 +219,7 @@ class StockTransformer(nn.Module):
 # Model Creation Helper
 # =============================================================================
 
-def create_model(feature_dim, label_mode, bucket_edges, cfg):
+def create_model(feature_dim, label_mode, bucket_edges, cfg, model_type="encoder"):
     """
     Create a StockTransformer model with the appropriate output configuration.
 
@@ -228,6 +228,7 @@ def create_model(feature_dim, label_mode, bucket_edges, cfg):
         label_mode: "regression", "binary", or "buckets"
         bucket_edges: List of bucket edges (only used for "buckets" mode)
         cfg: Config dict with model hyperparameters
+        model_type: Model architecture type ("encoder", "cross_attention", etc.)
 
     Returns:
         StockTransformer model

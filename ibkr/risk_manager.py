@@ -114,6 +114,9 @@ class RiskManager:
 
             # Check position value limit
             if account:
+                # Use buffered price: price * (1 + fee_buffer) for cash calculations
+                # This reserves headroom for commissions, slippage, and ask spread
+                buffered_price = signal.signal_price * (1 + self.config.fee_buffer_pct)
                 position_value = signal.shares * signal.signal_price
 
                 # Check against max position value
@@ -136,13 +139,51 @@ class RiskManager:
                         f"adjusted to {adjusted_shares} shares"
                     )
 
-                # Check available funds
-                required_funds = adjusted_shares * signal.signal_price
+                # Check available funds (with fee + slippage buffer)
+                required_funds = adjusted_shares * buffered_price
                 if required_funds > account.available_funds:
-                    max_by_funds = int(account.available_funds / signal.signal_price)
+                    max_by_funds = int(account.available_funds / buffered_price)
                     adjusted_shares = min(adjusted_shares, max_by_funds)
                     messages.append(
-                        f"Insufficient funds (${account.available_funds:.2f}), "
+                        f"Insufficient funds after {self.config.fee_buffer_pct*100:.1f}% buffer "
+                        f"(need ${required_funds:.2f}, have ${account.available_funds:.2f}), "
+                        f"adjusted to {adjusted_shares} shares"
+                    )
+
+                # Check minimum order value
+                order_value = adjusted_shares * signal.signal_price
+                if adjusted_shares > 0 and order_value < self.config.min_order_value:
+                    return ValidationResult(
+                        status=ValidationStatus.REJECTED,
+                        signal=signal,
+                        messages=messages + [
+                            f"Order value ${order_value:.2f} below minimum "
+                            f"${self.config.min_order_value:.2f}"
+                        ]
+                    )
+
+                # Check max symbol exposure (existing + new order)
+                existing_value = 0.0
+                if signal.symbol in self._positions:
+                    existing_value = abs(self._positions[signal.symbol].market_value)
+                new_total = existing_value + (adjusted_shares * signal.signal_price)
+                max_exposure = account.net_liquidation * self.config.max_symbol_exposure_pct
+                if new_total > max_exposure:
+                    max_new_shares = int((max_exposure - existing_value) / signal.signal_price)
+                    if max_new_shares <= 0:
+                        return ValidationResult(
+                            status=ValidationStatus.REJECTED,
+                            signal=signal,
+                            messages=messages + [
+                                f"Symbol exposure ${new_total:.2f} would exceed "
+                                f"{self.config.max_symbol_exposure_pct*100:.0f}% limit "
+                                f"(${max_exposure:.2f})"
+                            ]
+                        )
+                    adjusted_shares = min(adjusted_shares, max_new_shares)
+                    messages.append(
+                        f"Symbol exposure capped at "
+                        f"{self.config.max_symbol_exposure_pct*100:.0f}%, "
                         f"adjusted to {adjusted_shares} shares"
                     )
 
@@ -204,9 +245,12 @@ class RiskManager:
         """
         Calculate appropriate position size for a symbol.
 
+        Uses buffered price (price * (1 + fee_buffer)) so that the resulting
+        order leaves headroom for commissions, slippage, and ask spread.
+
         Args:
             symbol: Stock ticker
-            price: Current price
+            price: Current price (last or ask)
             account: Account summary
 
         Returns:
@@ -214,6 +258,8 @@ class RiskManager:
         """
         if price <= 0 or account.net_liquidation <= 0:
             return 0
+
+        buffered_price = price * (1 + self.config.fee_buffer_pct)
 
         # Calculate based on position size %
         target_value = account.net_liquidation * self.config.position_size
@@ -224,7 +270,12 @@ class RiskManager:
         # Cap at available funds
         target_value = min(target_value, account.available_funds)
 
-        shares = int(target_value / price)
+        shares = int(target_value / buffered_price)
+
+        # Enforce minimum order value
+        if shares > 0 and shares * price < self.config.min_order_value:
+            return 0
+
         return max(0, shares)
 
     def record_trade(self, symbol: str, pnl: float, is_win: bool) -> None:
