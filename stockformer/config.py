@@ -120,6 +120,9 @@ BASE_FEATURE_COLUMNS = [
     "close",
     "volume",
     "volume_pct",
+    "adjusted_open",
+    "adjusted_high",
+    "adjusted_low",
     # Momentum / rate of change
     "close_1d_roc",
     "close_3d_roc",
@@ -133,6 +136,7 @@ BASE_FEATURE_COLUMNS = [
     "sma_200",
     "ema_20",
     "ema_50",
+    "ema_200",
     "sma_20_pct",
     "sma_50_pct",
     "sma_200_pct",
@@ -147,6 +151,8 @@ BASE_FEATURE_COLUMNS = [
     "bbands_middle_20",
     "bbands_lower_20",
     # Relative position
+    "52_week_high",
+    "52_week_low",
     "52_week_high_pct",
     "52_week_low_pct",
     "high_pct",
@@ -167,9 +173,37 @@ BASE_FEATURE_COLUMNS = [
     "pe_ratio",
     "forward_pe",
     "beta",
+    "market_capitalization",
+    "book_value",
+    "dividend_yield",
+    "eps",
+    "price_to_book_ratio",
+    "shares_outstanding",
+    # Earnings
+    "reported_eps",
+    "estimated_eps",
+    "ttm_eps",
+    "surprise",
+    "surprise_percentage",
+    # Analyst ratings
+    "analyst_rating_strong_buy",
+    "analyst_rating_buy",
+    "analyst_rating_hold",
+    "analyst_rating_sell",
+    "analyst_rating_strong_sell",
+    # Calendar
+    "day_of_week_num",
+    "month",
+    "day_of_year",
     # Macro
     "treasury_yield_10year",
     "treasury_yield_2year",
+    "ffer",
+    "cpi",
+    "retail_sales",
+    "durables",
+    "unemployment",
+    "nonfarm_payroll",
 ]
 
 
