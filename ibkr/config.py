@@ -101,7 +101,7 @@ class TradingConfig:
 
     # Buy-side safety
     fee_buffer_pct: float = 0.005    # 0.5% cash buffer for fees + slippage
-    min_order_value: float = 5.0     # Minimum $5 per order
+    min_order_value: float = 2.0     # Minimum $2 per order
     max_symbol_exposure_pct: float = 0.15  # Max 15% of portfolio in one symbol
     max_spread_pct: float = 0.01     # Reject if bid-ask spread > 1%
 

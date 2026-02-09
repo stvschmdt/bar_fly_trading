@@ -47,6 +47,9 @@ class PositionManager:
         """
         Refresh positions from IBKR.
 
+        Uses ib.positions() which works across all client sessions, unlike
+        ib.portfolio() which only returns data for the current subscription.
+
         Returns:
             Dict mapping symbol to Position
         """
@@ -55,19 +58,38 @@ class PositionManager:
             return self._positions
 
         try:
-            portfolio = self.ib.portfolio()
+            # Use ib.positions() — works across sessions/client IDs.
+            # ib.portfolio() is session-specific and often returns empty.
+            all_positions = self.ib.positions()
 
-            for item in portfolio:
+            # Filter to target account if configured
+            target_account = self.connection.config.account
+            if not target_account:
+                # Auto-detect: prefer DU sub-accounts (paper) over DFO (FA master)
+                accounts = self.ib.managedAccounts()
+                target_account = next((a for a in accounts if a.startswith('DU')), None)
+                if not target_account:
+                    target_account = next((a for a in accounts if a.startswith('U')), None)
+
+            for item in all_positions:
                 if item.contract.secType != "STK":
                     continue  # Only track stocks
 
+                # Filter by account if we have a target
+                if target_account and item.account != target_account:
+                    continue
+
                 symbol = item.contract.symbol
+                shares = int(item.position)
+                avg_cost = item.avgCost
+                market_value = shares * avg_cost  # Approximate; positions() lacks live mktValue
+
                 position = Position(
                     symbol=symbol,
-                    shares=int(item.position),
-                    avg_cost=item.averageCost,
-                    market_value=item.marketValue,
-                    unrealized_pnl=item.unrealizedPNL,
+                    shares=shares,
+                    avg_cost=avg_cost,
+                    market_value=market_value,
+                    unrealized_pnl=0.0,  # Not available from positions()
                     realized_pnl=self._realized_pnl.get(symbol, 0.0),
                     entry_date=self._entry_dates.get(symbol)
                 )
@@ -85,10 +107,17 @@ class PositionManager:
 
                 self._positions[symbol] = position
 
-            # Remove positions no longer in portfolio
-            portfolio_symbols = {item.contract.symbol for item in portfolio if item.contract.secType == "STK"}
+            # Remove positions no longer held
+            current_symbols = set()
+            for item in all_positions:
+                if item.contract.secType != "STK":
+                    continue
+                if target_account and item.account != target_account:
+                    continue
+                current_symbols.add(item.contract.symbol)
+
             for symbol in list(self._positions.keys()):
-                if symbol not in portfolio_symbols:
+                if symbol not in current_symbols:
                     if symbol in self._entry_dates:
                         del self._entry_dates[symbol]
                     del self._positions[symbol]
