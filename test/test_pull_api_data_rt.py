@@ -12,12 +12,8 @@ import pandas as pd
 import pytest
 
 from api_data.pull_api_data_rt import (
-    ALL_RT_COLUMNS,
     CORE_RT_COLUMNS,
-    TECH_RT_COLUMNS,
     fetch_realtime_quote,
-    fetch_single_indicator,
-    fetch_technicals_for_symbol,
     fetch_symbol_rt_data,
     update_derived_columns,
     update_csv_file,
@@ -68,36 +64,6 @@ def make_quote_response(symbol='AAPL', price=150.0, open_=148.0,
             '10. change percent': f'{(price - 149.0) / 149.0 * 100:.4f}%',
         }
     }
-
-
-def make_indicator_response(function_name, value, date='2026-02-07'):
-    """Build a single technical indicator API response."""
-    if function_name == 'MACD':
-        return {
-            f'Technical Analysis: {function_name}': {
-                date: {
-                    'MACD': str(value),
-                    'MACD_Signal': str(value * 0.9),
-                    'MACD_Hist': str(value * 0.1),
-                }
-            }
-        }
-    elif function_name == 'BBANDS':
-        return {
-            f'Technical Analysis: {function_name}': {
-                date: {
-                    'Real Upper Band': str(value + 5),
-                    'Real Middle Band': str(value),
-                    'Real Lower Band': str(value - 5),
-                }
-            }
-        }
-    else:
-        return {
-            f'Technical Analysis: {function_name}': {
-                date: {function_name: str(value)}
-            }
-        }
 
 
 def make_test_csv(tmpdir, batch_num=0, symbols=None, n_rows_per_symbol=5):
@@ -204,109 +170,14 @@ class TestFetchRealtimeQuote:
         for col in CORE_RT_COLUMNS:
             assert col in result, f"Missing column: {col}"
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Tests: fetch_single_indicator
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestFetchSingleIndicator:
-    def test_sma(self):
+    def test_single_api_call(self):
+        """OHLCV-only mode should make exactly 1 API call per symbol."""
         client = MockApiClient({
-            ('SMA', 'AAPL'): make_indicator_response('SMA', 150.0)
+            ('GLOBAL_QUOTE', 'AAPL'): make_quote_response('AAPL')
         })
-        result = fetch_single_indicator(client, 'AAPL', 'SMA', time_period=20)
-        assert result is not None
-        assert float(result['SMA']) == 150.0
-
-    def test_macd(self):
-        client = MockApiClient({
-            ('MACD', 'AAPL'): make_indicator_response('MACD', 2.5)
-        })
-        result = fetch_single_indicator(client, 'AAPL', 'MACD')
-        assert result is not None
-        assert float(result['MACD']) == 2.5
-
-    def test_bbands(self):
-        client = MockApiClient({
-            ('BBANDS', 'AAPL'): make_indicator_response('BBANDS', 150.0)
-        })
-        result = fetch_single_indicator(client, 'AAPL', 'BBANDS', time_period=20)
-        assert result is not None
-        assert float(result['Real Upper Band']) == 155.0
-        assert float(result['Real Middle Band']) == 150.0
-        assert float(result['Real Lower Band']) == 145.0
-
-    def test_missing_data_returns_none(self):
-        client = MockApiClient({('SMA', 'BAD'): {}})
-        result = fetch_single_indicator(client, 'BAD', 'SMA', time_period=20)
-        assert result is None
-
-    def test_api_call_params(self):
-        client = MockApiClient({
-            ('RSI', 'TSLA'): make_indicator_response('RSI', 65.0)
-        })
-        fetch_single_indicator(client, 'TSLA', 'RSI', time_period=14)
-        call = client.call_log[0]
-        assert call['function'] == 'RSI'
-        assert call['symbol'] == 'TSLA'
-        assert call['interval'] == 'daily'
-        assert call['series_type'] == 'close'
-        assert call['time_period'] == 14
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Tests: fetch_technicals_for_symbol
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestFetchTechnicalsForSymbol:
-    def _build_full_mock(self, symbol='AAPL'):
-        """Build a mock client with responses for all 11 indicator calls + BBANDS."""
-        responses = {}
-        indicators = [
-            ('SMA', 150.0), ('EMA', 151.0), ('MACD', 2.5),
-            ('RSI', 65.0), ('ADX', 28.0), ('ATR', 3.5),
-            ('CCI', 80.0), ('BBANDS', 150.0),
-        ]
-        for func, val in indicators:
-            responses[(func, symbol)] = make_indicator_response(func, val)
-        return MockApiClient(responses)
-
-    def test_returns_all_tech_columns(self):
-        client = self._build_full_mock()
-        result = fetch_technicals_for_symbol(client, 'AAPL')
-
-        for col in TECH_RT_COLUMNS:
-            assert col in result, f"Missing: {col}"
-
-    def test_correct_values(self):
-        client = self._build_full_mock()
-        result = fetch_technicals_for_symbol(client, 'AAPL')
-
-        assert result['rsi_14'] == 65.0
-        assert result['adx_14'] == 28.0
-        assert result['macd'] == 2.5
-        assert result['bbands_upper_20'] == 155.0
-        assert result['bbands_lower_20'] == 145.0
-
-    def test_api_call_count(self):
-        """Should make exactly 12 API calls: 8 single indicators (SMA×3 + EMA×3 + MACD + RSI + ADX + ATR + CCI = 11) + BBANDS = 12."""
-        client = self._build_full_mock()
-        fetch_technicals_for_symbol(client, 'AAPL')
-        # 3 SMA + 3 EMA + 1 MACD + 1 RSI + 1 ADX + 1 ATR + 1 CCI + 1 BBANDS = 12
-        assert len(client.call_log) == 12
-
-    def test_partial_failure_still_returns(self):
-        """If some indicators fail, should still return the ones that succeeded."""
-        responses = {
-            ('SMA', 'AAPL'): make_indicator_response('SMA', 150.0),
-            ('RSI', 'AAPL'): make_indicator_response('RSI', 65.0),
-        }
-        client = MockApiClient(responses)
-        result = fetch_technicals_for_symbol(client, 'AAPL')
-
-        assert 'sma_20' in result
-        assert 'rsi_14' in result
-        assert len(result) >= 2
+        fetch_realtime_quote(client, 'AAPL')
+        assert len(client.call_log) == 1
+        assert client.call_log[0]['function'] == 'GLOBAL_QUOTE'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -317,27 +188,36 @@ class TestFetchSymbolRtData:
     def test_success(self):
         responses = {
             ('GLOBAL_QUOTE', 'AAPL'): make_quote_response('AAPL', price=155.0),
-            ('SMA', 'AAPL'): make_indicator_response('SMA', 150.0),
-            ('EMA', 'AAPL'): make_indicator_response('EMA', 151.0),
-            ('MACD', 'AAPL'): make_indicator_response('MACD', 2.5),
-            ('RSI', 'AAPL'): make_indicator_response('RSI', 65.0),
-            ('ADX', 'AAPL'): make_indicator_response('ADX', 28.0),
-            ('ATR', 'AAPL'): make_indicator_response('ATR', 3.5),
-            ('CCI', 'AAPL'): make_indicator_response('CCI', 80.0),
-            ('BBANDS', 'AAPL'): make_indicator_response('BBANDS', 150.0),
         }
         client = MockApiClient(responses)
         result = fetch_symbol_rt_data(client, 'AAPL')
 
         assert result is not None
         assert 'ohlcv' in result
-        assert 'technicals' in result
         assert result['ohlcv']['adjusted_close'] == 155.0
 
     def test_quote_failure_returns_none(self):
         client = MockApiClient({})
         result = fetch_symbol_rt_data(client, 'BAD')
         assert result is None
+
+    def test_only_one_api_call(self):
+        """fetch_symbol_rt_data should make exactly 1 API call (no technicals)."""
+        responses = {
+            ('GLOBAL_QUOTE', 'AAPL'): make_quote_response('AAPL', price=155.0),
+        }
+        client = MockApiClient(responses)
+        fetch_symbol_rt_data(client, 'AAPL')
+        assert len(client.call_log) == 1
+
+    def test_no_technicals_key(self):
+        """Result should not contain a 'technicals' key."""
+        responses = {
+            ('GLOBAL_QUOTE', 'AAPL'): make_quote_response('AAPL', price=155.0),
+        }
+        client = MockApiClient(responses)
+        result = fetch_symbol_rt_data(client, 'AAPL')
+        assert 'technicals' not in result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -423,10 +303,6 @@ class TestUpdateCsvFile:
                         'open': 200.0, 'high': 210.0, 'low': 195.0,
                         'adjusted_close': 205.0, 'volume': 99999999,
                     },
-                    'technicals': {
-                        'sma_20': 198.0, 'rsi_14': 72.0,
-                        'bbands_upper_20': 215.0,
-                    },
                 },
             }
 
@@ -441,9 +317,35 @@ class TestUpdateCsvFile:
             assert latest['adjusted_close'] == 205.0
             assert latest['open'] == 200.0
             assert latest['volume'] == 99999999
-            assert latest['sma_20'] == 198.0
-            assert latest['rsi_14'] == 72.0
-            assert latest['bbands_upper_20'] == 215.0
+
+    def test_technicals_unchanged(self):
+        """OHLCV-only update should not touch technical indicator columns."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = make_test_csv(tmpdir, symbols=['AAPL'])
+
+            orig = pd.read_csv(csv_path, index_col=0)
+            orig_sma = orig[orig['symbol'] == 'AAPL'].iloc[-1]['sma_20']
+            orig_rsi = orig[orig['symbol'] == 'AAPL'].iloc[-1]['rsi_14']
+            orig_bbands = orig[orig['symbol'] == 'AAPL'].iloc[-1]['bbands_upper_20']
+
+            rt_data = {
+                'AAPL': {
+                    'ohlcv': {
+                        'open': 200.0, 'high': 210.0, 'low': 195.0,
+                        'adjusted_close': 205.0, 'volume': 99999999,
+                    },
+                },
+            }
+
+            update_csv_file(csv_path, rt_data)
+
+            updated = pd.read_csv(csv_path, index_col=0)
+            latest = updated[updated['symbol'] == 'AAPL'].iloc[-1]
+
+            # Technicals should be untouched
+            assert latest['sma_20'] == orig_sma
+            assert latest['rsi_14'] == orig_rsi
+            assert latest['bbands_upper_20'] == orig_bbands
 
     def test_does_not_modify_other_symbols(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -457,7 +359,6 @@ class TestUpdateCsvFile:
                 'AAPL': {
                     'ohlcv': {'adjusted_close': 999.0, 'open': 990.0,
                               'high': 1000.0, 'low': 980.0, 'volume': 1},
-                    'technicals': {},
                 },
             }
 
@@ -481,7 +382,6 @@ class TestUpdateCsvFile:
                 'AAPL': {
                     'ohlcv': {'adjusted_close': 999.0, 'open': 990.0,
                               'high': 1000.0, 'low': 980.0, 'volume': 1},
-                    'technicals': {},
                 },
             }
 
@@ -501,7 +401,6 @@ class TestUpdateCsvFile:
                 'UNKNOWN': {
                     'ohlcv': {'adjusted_close': 50.0, 'open': 49.0,
                               'high': 51.0, 'low': 48.0, 'volume': 100},
-                    'technicals': {},
                 },
             }
 
@@ -517,6 +416,7 @@ class TestUpdateCsvFile:
             assert n == 0
 
     def test_derived_columns_recomputed(self):
+        """sma_*_pct should be recomputed using new price vs existing (nightly) SMA."""
         with tempfile.TemporaryDirectory() as tmpdir:
             csv_path = make_test_csv(tmpdir, symbols=['AAPL'], n_rows_per_symbol=3)
 
@@ -524,7 +424,6 @@ class TestUpdateCsvFile:
                 'AAPL': {
                     'ohlcv': {'adjusted_close': 200.0, 'open': 195.0,
                               'high': 205.0, 'low': 190.0, 'volume': 20000000},
-                    'technicals': {'sma_20': 190.0, 'sma_50': 180.0, 'sma_200': 160.0},
                 },
             }
 
@@ -533,10 +432,12 @@ class TestUpdateCsvFile:
             df = pd.read_csv(csv_path, index_col=0)
             latest = df[df['symbol'] == 'AAPL'].iloc[-1]
 
-            # sma_20_pct = (200 - 190) / 190 * 100 = 5.26
-            assert latest['sma_20_pct'] == pytest.approx(5.26, abs=0.01)
-            # sma_50_pct = (200 - 180) / 180 * 100 = 11.11
-            assert latest['sma_50_pct'] == pytest.approx(11.11, abs=0.01)
+            # sma_20 was set to price * 0.98 in make_test_csv (original price)
+            # After update, sma_20 is UNCHANGED (nightly value), but price is now 200
+            # sma_20_pct = (200 - sma_20) / sma_20 * 100
+            sma_20 = latest['sma_20']
+            expected_pct = round((200 - sma_20) / sma_20 * 100, 2)
+            assert latest['sma_20_pct'] == pytest.approx(expected_pct, abs=0.01)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -572,22 +473,19 @@ class TestFileHelpers:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestConstants:
-    def test_all_rt_columns_is_union(self):
-        assert ALL_RT_COLUMNS == CORE_RT_COLUMNS + TECH_RT_COLUMNS
-
     def test_no_duplicates(self):
-        assert len(ALL_RT_COLUMNS) == len(set(ALL_RT_COLUMNS))
+        assert len(CORE_RT_COLUMNS) == len(set(CORE_RT_COLUMNS))
 
     def test_expected_core_columns(self):
         assert 'adjusted_close' in CORE_RT_COLUMNS
         assert 'volume' in CORE_RT_COLUMNS
         assert 'open' in CORE_RT_COLUMNS
 
-    def test_expected_tech_columns(self):
-        assert 'sma_20' in TECH_RT_COLUMNS
-        assert 'rsi_14' in TECH_RT_COLUMNS
-        assert 'bbands_upper_20' in TECH_RT_COLUMNS
-        assert 'macd' in TECH_RT_COLUMNS
+    def test_ohlcv_only(self):
+        """CORE_RT_COLUMNS should only contain OHLCV — no technicals."""
+        assert len(CORE_RT_COLUMNS) == 5
+        for col in CORE_RT_COLUMNS:
+            assert col in ('open', 'high', 'low', 'adjusted_close', 'volume')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -640,7 +538,6 @@ class TestDateFormat:
                 'AAPL': {
                     'ohlcv': {'adjusted_close': 999.0, 'open': 990.0,
                               'high': 1000.0, 'low': 980.0, 'volume': 1},
-                    'technicals': {'sma_20': 950.0},
                 },
             }
             update_csv_file(csv_path, rt_data)
@@ -684,7 +581,6 @@ class TestCsvRoundTrip:
                 'AAPL': {
                     'ohlcv': {'adjusted_close': 999.0, 'open': 990.0,
                               'high': 1000.0, 'low': 980.0, 'volume': 1},
-                    'technicals': {'sma_20': 950.0, 'rsi_14': 80.0},
                 },
             }
             update_csv_file(csv_path, rt_data)
@@ -705,12 +601,10 @@ class TestCsvRoundTrip:
                 'AAPL': {
                     'ohlcv': {'adjusted_close': 999.0, 'open': 990.0,
                               'high': 1000.0, 'low': 980.0, 'volume': 1},
-                    'technicals': {},
                 },
                 'NVDA': {
                     'ohlcv': {'adjusted_close': 888.0, 'open': 880.0,
                               'high': 890.0, 'low': 870.0, 'volume': 2},
-                    'technicals': {},
                 },
             }
             update_csv_file(csv_path, rt_data)
@@ -730,7 +624,6 @@ class TestCsvRoundTrip:
                 'AAPL': {
                     'ohlcv': {'adjusted_close': 999.0, 'open': 990.0,
                               'high': 1000.0, 'low': 980.0, 'volume': 1},
-                    'technicals': {'sma_20': 950.0},
                 },
             }
             update_csv_file(csv_path, rt_data)
@@ -751,7 +644,6 @@ class TestCsvRoundTrip:
                 'AAPL': {
                     'ohlcv': {'adjusted_close': 999.0, 'open': 990.0,
                               'high': 1000.0, 'low': 980.0, 'volume': 1},
-                    'technicals': {'sma_20': 950.0, 'rsi_14': 99.0},
                 },
             }
             update_csv_file(csv_path, rt_data)
@@ -778,12 +670,10 @@ class TestIntegration:
                 'AAPL': {
                     'ohlcv': {'adjusted_close': 200.0, 'open': 195.0,
                               'high': 205.0, 'low': 190.0, 'volume': 1},
-                    'technicals': {'rsi_14': 80.0},
                 },
                 'TSLA': {
                     'ohlcv': {'adjusted_close': 300.0, 'open': 295.0,
                               'high': 305.0, 'low': 290.0, 'volume': 2},
-                    'technicals': {'rsi_14': 30.0},
                 },
             }
 
@@ -803,9 +693,7 @@ class TestIntegration:
             df0 = pd.read_csv(csv0, index_col=0)
             aapl = df0[df0['symbol'] == 'AAPL'].iloc[-1]
             assert aapl['adjusted_close'] == 200.0
-            assert aapl['rsi_14'] == 80.0
 
             df1 = pd.read_csv(csv1, index_col=0)
             tsla = df1[df1['symbol'] == 'TSLA'].iloc[-1]
             assert tsla['adjusted_close'] == 300.0
-            assert tsla['rsi_14'] == 30.0

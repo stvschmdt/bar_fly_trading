@@ -1,26 +1,27 @@
 #!/bin/bash
 # Intraday realtime pipeline.
 #
-# Fetches fresh OHLCV + technicals from AlphaVantage, updates all_data CSVs
+# Fetches fresh OHLCV from AlphaVantage GLOBAL_QUOTE, updates all_data CSVs
 # in place, optionally runs ML inference, then runs strategies in daily mode.
+# Technical indicators are kept from the nightly pull (1 API call/symbol).
 #
 # Usage:
 #   ./run_intraday.sh                    # Full pipeline (fetch + inference + strategies)
-#   ./run_intraday.sh --skip-inference   # Skip ML inference (faster: ~50 min vs ~55 min)
+#   ./run_intraday.sh --skip-inference   # Skip ML inference (~4 min fetch only)
 #   ./run_intraday.sh --dry-run          # Fetch data but don't write or run strategies
 #   ./run_intraday.sh --symbols AAPL NVDA TSLA  # Only update specific symbols
-#   ./run_intraday.sh --watchlist api_data/watchlist.csv  # Only watchlist (68 symbols, ~7 min)
+#   ./run_intraday.sh --watchlist api_data/watchlist.csv  # Only watchlist (68 symbols, ~30 sec)
 #
-# Default: SP500 + watchlist (~543 symbols, ~50 min fetch).
-# Designed to run hourly during market hours via cron:
+# Default: SP500 + watchlist (~543 symbols, ~4 min fetch at 140 req/min).
+# Can run every 15 minutes during market hours via cron:
 #
-#   # Crontab (all times ET — adjust for your timezone):
+#   # Crontab — every 15 min, 9:31 to 3:46 ET (adjust for your timezone):
+#   31,46 9 * * 1-5   /home/stvschmdt/proj/bar_fly_trading/run_intraday.sh --skip-inference >> /tmp/intraday.log 2>&1
+#   1,16,31,46 10-14 * * 1-5 /home/stvschmdt/proj/bar_fly_trading/run_intraday.sh --skip-inference >> /tmp/intraday.log 2>&1
+#   1,16,31 15 * * 1-5 /home/stvschmdt/proj/bar_fly_trading/run_intraday.sh --skip-inference >> /tmp/intraday.log 2>&1
+#
+#   # Or hourly at :31 past the hour:
 #   31 9-15 * * 1-5  /home/stvschmdt/proj/bar_fly_trading/run_intraday.sh --skip-inference >> /tmp/intraday.log 2>&1
-#
-#   # Or with inference on first/last run:
-#   31 9    * * 1-5  /home/stvschmdt/proj/bar_fly_trading/run_intraday.sh >> /tmp/intraday.log 2>&1
-#   31 10-14 * * 1-5 /home/stvschmdt/proj/bar_fly_trading/run_intraday.sh --skip-inference >> /tmp/intraday.log 2>&1
-#   31 15   * * 1-5  /home/stvschmdt/proj/bar_fly_trading/run_intraday.sh >> /tmp/intraday.log 2>&1
 
 set -euo pipefail
 

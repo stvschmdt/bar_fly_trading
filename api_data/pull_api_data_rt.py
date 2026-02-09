@@ -1,9 +1,10 @@
 """
 Realtime intraday data updater.
 
-Updates all_data_*.csv files in place with fresh OHLCV + technical indicators
-from AlphaVantage API. Static columns (fundamentals, economics, options) are
-left unchanged.
+Updates all_data_*.csv files in place with fresh OHLCV from AlphaVantage
+GLOBAL_QUOTE API. Technical indicators are kept from the nightly pull (they
+don't change intraday). Derived columns (sma_*_pct, pe_ratio, etc.) are
+recomputed against the new price.
 
 Usage:
     python -m api_data.pull_api_data_rt                          # Watchlist symbols only
@@ -33,34 +34,9 @@ logger = logging.getLogger(__name__)
 
 CORE_RT_COLUMNS = ['open', 'high', 'low', 'adjusted_close', 'volume']
 
-TECH_RT_COLUMNS = [
-    'sma_20', 'sma_50', 'sma_200',
-    'ema_20', 'ema_50', 'ema_200',
-    'macd',
-    'rsi_14', 'adx_14', 'atr_14', 'cci_14',
-    'bbands_upper_20', 'bbands_middle_20', 'bbands_lower_20',
-]
-
-# All columns that get overwritten by RT data
-ALL_RT_COLUMNS = CORE_RT_COLUMNS + TECH_RT_COLUMNS
-
-# Technical indicators and their time periods (mirrors technical_indicator.py)
-INDICATOR_CONFIGS = [
-    ('SMA', 20), ('SMA', 50), ('SMA', 200),
-    ('EMA', 20), ('EMA', 50), ('EMA', 200),
-    ('MACD', None),
-    ('RSI', 14),
-    ('ADX', 14),
-    ('ATR', 14),
-    ('CCI', 14),
-    # BBANDS handled separately (3 output columns)
-]
-
-BBANDS_PERIOD = 20
-
 
 # ─────────────────────────────────────────────────────────────────────────────
-# API fetchers (no DB dependency)
+# API fetcher (no DB dependency)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_realtime_quote(api_client, symbol):
@@ -89,99 +65,16 @@ def fetch_realtime_quote(api_client, symbol):
     }
 
 
-def fetch_single_indicator(api_client, symbol, function_name, time_period=None):
-    """
-    Fetch a single technical indicator from AlphaVantage.
-
-    Args:
-        api_client: AlphaVantageClient instance
-        symbol: Stock ticker
-        function_name: AV function (e.g., 'SMA', 'RSI', 'MACD')
-        time_period: Period parameter (None for MACD)
-
-    Returns:
-        Latest value as float, or None on error
-    """
-    params = {
-        'function': function_name,
-        'symbol': symbol,
-        'interval': 'daily',
-        'series_type': 'close',
-    }
-    if time_period is not None:
-        params['time_period'] = time_period
-
-    response = api_client.fetch(**params)
-
-    key = f'Technical Analysis: {function_name}'
-    if key not in response:
-        logger.warning(f"No {function_name} data for {symbol}")
-        return None
-
-    ta = response[key]
-    if not ta:
-        return None
-
-    # Get most recent date's data
-    latest_date = sorted(ta.keys())[-1]
-    return ta[latest_date]
-
-
-def fetch_technicals_for_symbol(api_client, symbol):
-    """
-    Fetch all technical indicators for a symbol.
-
-    Makes 11 API calls: SMA(20,50,200), EMA(20,50,200), MACD, RSI, ADX, ATR,
-    CCI, BBANDS(20).
-
-    Args:
-        api_client: AlphaVantageClient instance
-        symbol: Stock ticker
-
-    Returns:
-        Dict mapping column names to latest values
-    """
-    result = {}
-
-    for func_name, period in INDICATOR_CONFIGS:
-        try:
-            data = fetch_single_indicator(api_client, symbol, func_name, period)
-            if data is None:
-                continue
-
-            if func_name == 'MACD':
-                # MACD returns multiple values, we want MACD line
-                result['macd'] = float(data.get('MACD', 0))
-            else:
-                col_name = f'{func_name.lower()}_{period}'
-                result[col_name] = float(data.get(func_name, 0))
-
-        except Exception as e:
-            logger.warning(f"Failed to fetch {func_name}({period}) for {symbol}: {e}")
-
-    # BBANDS (3 output columns)
-    try:
-        data = fetch_single_indicator(api_client, symbol, 'BBANDS', BBANDS_PERIOD)
-        if data:
-            result['bbands_upper_20'] = float(data.get('Real Upper Band', 0))
-            result['bbands_middle_20'] = float(data.get('Real Middle Band', 0))
-            result['bbands_lower_20'] = float(data.get('Real Lower Band', 0))
-    except Exception as e:
-        logger.warning(f"Failed to fetch BBANDS for {symbol}: {e}")
-
-    return result
-
-
 def fetch_symbol_rt_data(api_client, symbol):
     """
-    Fetch all realtime data for a symbol (quote + technicals).
+    Fetch realtime OHLCV for a symbol (1 API call).
 
     Args:
         api_client: AlphaVantageClient instance
         symbol: Stock ticker
 
     Returns:
-        Dict with 'ohlcv' and 'technicals' sub-dicts, or None on failure
+        Dict with 'ohlcv' sub-dict, or None on failure
     """
     try:
         ohlcv = fetch_realtime_quote(api_client, symbol)
@@ -189,9 +82,7 @@ def fetch_symbol_rt_data(api_client, symbol):
         logger.warning(f"Quote failed for {symbol}: {e}")
         return None
 
-    technicals = fetch_technicals_for_symbol(api_client, symbol)
-
-    return {'ohlcv': ohlcv, 'technicals': technicals}
+    return {'ohlcv': ohlcv}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -203,7 +94,7 @@ def update_derived_columns(df, idx):
     Recompute derived columns for a specific row after RT update.
 
     Updates: sma_*_pct, 52_week_*_pct, pe_ratio, adjusted_close_pct,
-    volume_pct, macd_9_ema.
+    volume_pct using the new price against existing (nightly) technicals.
 
     Args:
         df: Full DataFrame (modified in place)
@@ -256,11 +147,11 @@ def update_derived_columns(df, idx):
 
 def update_csv_file(csv_path, rt_data, dry_run=False):
     """
-    Update the latest row per symbol in a CSV with realtime data.
+    Update the latest row per symbol in a CSV with realtime OHLCV data.
 
     Args:
         csv_path: Path to all_data_X.csv
-        rt_data: Dict of {symbol: {'ohlcv': {...}, 'technicals': {...}}}
+        rt_data: Dict of {symbol: {'ohlcv': {...}}}
         dry_run: If True, print changes but don't write
 
     Returns:
@@ -285,12 +176,7 @@ def update_csv_file(csv_path, rt_data, dry_run=False):
             if col in df.columns:
                 df.loc[latest_idx, col] = val
 
-        # Update technical indicator columns
-        for col, val in data.get('technicals', {}).items():
-            if col in df.columns:
-                df.loc[latest_idx, col] = val
-
-        # Recompute derived columns
+        # Recompute derived columns against existing technicals
         update_derived_columns(df, latest_idx)
 
         updated += 1
@@ -348,7 +234,7 @@ def get_symbols_from_csv(csv_path):
 def run_rt_update(api_client, data_dir, symbols_filter=None, dry_run=False,
                   use_all_symbols=False):
     """
-    Main orchestrator: fetch RT data and update all CSV files.
+    Main orchestrator: fetch RT OHLCV and update all CSV files.
 
     Args:
         api_client: AlphaVantageClient instance
@@ -396,7 +282,8 @@ def run_rt_update(api_client, data_dir, symbols_filter=None, dry_run=False,
             fetchable = fetchable & set(symbols_filter)
 
     all_symbols = sorted(fetchable)
-    print(f"Updating {len(all_symbols)} symbols: {', '.join(all_symbols[:10])}"
+    print(f"Updating {len(all_symbols)} symbols (OHLCV only, 1 API call each): "
+          f"{', '.join(all_symbols[:10])}"
           f"{'...' if len(all_symbols) > 10 else ''}")
 
     # Fetch RT data for all symbols
@@ -416,8 +303,7 @@ def run_rt_update(api_client, data_dir, symbols_filter=None, dry_run=False,
         if data:
             rt_data[symbol] = data
             price = data['ohlcv']['adjusted_close']
-            n_tech = len(data['technicals'])
-            print(f" ${price:.2f} ({n_tech} indicators)")
+            print(f" ${price:.2f}")
         else:
             failed += 1
             print(" FAILED")
@@ -459,7 +345,7 @@ def run_rt_update(api_client, data_dir, symbols_filter=None, dry_run=False,
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Update all_data CSVs with realtime OHLCV + technical indicators'
+        description='Update all_data CSVs with realtime OHLCV from GLOBAL_QUOTE'
     )
     parser.add_argument(
         '--data-dir', type=str,
