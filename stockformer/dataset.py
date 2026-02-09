@@ -191,6 +191,55 @@ def apply_normalization(
     dataset._norm_stds = stds
 
 
+def apply_per_ticker_normalization(
+    dataset: "StockSequenceDataset",
+    train_dates_cutoff: str,
+) -> None:
+    """
+    Per-ticker z-score normalization using each ticker's own training-period stats.
+
+    This handles scale differences between tickers ($5 biotech vs $500 mega-cap)
+    and keeps features stationary across time for each ticker.
+
+    Args:
+        dataset: StockSequenceDataset instance
+        train_dates_cutoff: Date string; stats computed from rows with date < cutoff
+    """
+    df = dataset.df
+    feat_cols = dataset.feature_cols
+    group_col = dataset.group_col
+    date_col = dataset.date_col
+
+    # Cast feature columns to float64 so z-scored values can be written back
+    for col in feat_cols:
+        if df[col].dtype != np.float64:
+            df[col] = df[col].astype(np.float64)
+
+    train_mask = df[date_col] < train_dates_cutoff
+
+    for ticker, group_idx in df.groupby(group_col).groups.items():
+        ticker_mask = df.index.isin(group_idx)
+        ticker_train_mask = ticker_mask & train_mask
+
+        if ticker_train_mask.sum() < 2:
+            # Not enough training data for this ticker — use global fallback
+            continue
+
+        train_feats = df.loc[ticker_train_mask, feat_cols].to_numpy(dtype="float64")
+        means = train_feats.mean(axis=0)
+        stds = train_feats.std(axis=0)
+        stds = np.where(stds < 1e-6, 1.0, stds)
+
+        # Normalize ALL rows for this ticker using training-period stats
+        feats = df.loc[ticker_mask, feat_cols].to_numpy(dtype="float64")
+        feats = (feats - means) / stds
+        df.loc[ticker_mask, feat_cols] = feats
+
+    # Store dummy global stats for compatibility
+    dataset._norm_means = np.zeros(len(feat_cols))
+    dataset._norm_stds = np.ones(len(feat_cols))
+
+
 # =============================================================================
 # Train/Val Split — TEMPORAL (no look-ahead bias)
 # =============================================================================
@@ -232,17 +281,10 @@ def make_temporal_split(
         else:
             val_indices.append(i)
 
-    # Compute normalization stats on TRAINING data only
-    train_row_idxs = [dataset.indices[i] for i in train_indices]
-    train_feats = dataset.df.loc[train_row_idxs, dataset.feature_cols].to_numpy(
-        dtype="float32"
-    )
-    means = train_feats.mean(axis=0)
-    stds = train_feats.std(axis=0)
-    stds = np.where(stds < 1e-6, 1.0, stds)
-
-    # Apply normalization to ENTIRE dataset using training stats
-    apply_normalization(dataset, means, stds)
+    # Per-ticker normalization: each ticker gets z-scored using its own
+    # training-period stats. This handles scale differences across tickers
+    # and keeps features stationary within each ticker's history.
+    apply_per_ticker_normalization(dataset, cutoff_date)
 
     print(
         f"Temporal split: train={len(train_indices)} samples "

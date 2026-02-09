@@ -72,8 +72,6 @@ def get_loss_function(label_mode, loss_name=None, class_weights=None):
     elif key == "ordinal_focal":
         return OrdinalFocalLoss(gamma=2.0, emd_weight=1.0, alpha=class_weights)
 
-    # --- v4 loss functions ---
-
     elif key == "logcosh":
         return LogCoshLoss()
 
@@ -198,7 +196,7 @@ class CombinedRegressionLoss(nn.Module):
     """
     Combined regression loss: Log-Cosh + Directional MSE.
 
-    Default loss for v4 regression mode. Combines outlier robustness
+    Default regression loss. Combines outlier robustness
     (Log-Cosh) with directional accuracy incentive (DMSE).
 
     Args:
