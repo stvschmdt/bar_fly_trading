@@ -68,19 +68,13 @@ DEFAULT_CONFIG = {
     # Training hyperparameters
     # -------------------------------------------------------------------------
     "batch_size": 128,
-    "lr": 5e-4,               # Lowered from 1e-3 to prevent early majority-class collapse
-    "num_epochs": 30,
+    "lr": 5e-4,
+    "num_epochs": 50,
     "val_fraction": 0.2,
     "optimizer": "adamw",     # Options: "adam", "adamw", "sgd"
-
-    # -------------------------------------------------------------------------
-    # Loss function settings (anti-collapse)
-    # -------------------------------------------------------------------------
-    "loss_name": None,        # None = auto from label_mode (focal for cls, huber for reg)
-    "focal_gamma": 2.0,       # Focal loss focusing parameter (higher = more focus on hard examples)
-    "label_smoothing": 0.1,   # Smooth one-hot targets to prevent overconfident predictions
-    "class_weights": "auto",  # "auto" = inverse-frequency from training data, None = uniform
-    "entropy_weight": 0.1,    # Entropy regularization weight (encourages diverse predictions)
+    "weight_decay": 0.01,     # AdamW weight decay (0 = disabled)
+    "patience": 10,           # Early stopping patience
+    "warmup_epochs": 5,       # Linear warmup epochs
 
     # -------------------------------------------------------------------------
     # Model architecture
@@ -89,13 +83,20 @@ DEFAULT_CONFIG = {
     "nhead": 4,               # Number of attention heads
     "num_layers": 3,          # Number of transformer encoder layers
     "dim_feedforward": 256,   # Hidden dimension of feedforward network
-    "dropout": 0.15,          # Increased from 0.1 to reduce overfitting
+    "dropout": 0.2,
+    "layer_drop": 0.1,        # Stochastic depth: probability of skipping a layer (0 = disabled)
 
     # -------------------------------------------------------------------------
     # System / runtime
     # -------------------------------------------------------------------------
     "num_workers": 0,         # DataLoader workers (0 = main process)
     "device": None,           # None = auto-detect (cuda if available, else cpu)
+
+    # -------------------------------------------------------------------------
+    # Anti-collapse / loss settings
+    # -------------------------------------------------------------------------
+    "loss_name": None,            # Override loss: "focal", "label_smoothing", etc. (None = default for label_mode)
+    "entropy_reg_weight": 0.3,    # Entropy regularization weight (>0 penalizes collapsed predictions)
 
     # -------------------------------------------------------------------------
     # Output paths

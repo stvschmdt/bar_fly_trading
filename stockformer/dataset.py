@@ -53,7 +53,6 @@ class StockSequenceDataset(Dataset):
         bucket_edges: Optional[List[float]] = None,
         group_col: str = "ticker",
         date_col: str = "date",
-        market_feature_cols: Optional[List[str]] = None,
     ):
         self.df = df.sort_values([group_col, date_col]).reset_index(drop=True)
         self.lookback = lookback
@@ -63,7 +62,6 @@ class StockSequenceDataset(Dataset):
         self.bucket_edges = bucket_edges
         self.group_col = group_col
         self.date_col = date_col
-        self.market_feature_cols = market_feature_cols
 
         # Clean feature columns: forward-fill within each ticker, then zero-fill
         self.df[self.feature_cols] = (
@@ -239,6 +237,33 @@ def make_temporal_split(
     )
 
     return Subset(dataset, train_indices), Subset(dataset, val_indices)
+
+
+# =============================================================================
+# Quantile Bucket Edges
+# =============================================================================
+
+def compute_quantile_edges(df, target_col, n_buckets=4, group_col="ticker"):
+    """
+    Compute bucket edges from quantiles of the target distribution.
+
+    Ensures roughly equal samples per bucket, eliminating class imbalance.
+
+    Args:
+        df: DataFrame with target column
+        target_col: Column name for the target variable
+        n_buckets: Number of buckets (edges = n_buckets - 1)
+        group_col: Grouping column (unused, kept for API consistency)
+
+    Returns:
+        List of bucket edges (in percent, matching bucket_edges convention)
+    """
+    vals = df[target_col].dropna()
+    quantiles = np.linspace(0, 1, n_buckets + 1)[1:-1]  # e.g. [0.25, 0.5, 0.75] for 4 buckets
+    edges = np.percentile(vals, quantiles * 100)
+    # Convert from decimal to percent (bucket_edges convention)
+    edges_pct = (edges * 100).tolist()
+    return edges_pct
 
 
 # Backward-compatible alias
