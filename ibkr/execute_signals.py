@@ -492,9 +492,18 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
         if filled:
             logger.info(f"  Fills:")
             for r in filled:
-                unit = "contracts" if r.get('contract_type') else "shares"
-                logger.info(f"    {r['action']} {r['symbol']}: {r['filled_shares']} {unit} @ ${r['fill_price']:.2f} "
-                           f"= ${r['filled_shares'] * r['fill_price']:,.2f}")
+                is_option = bool(r.get('contract_type'))
+                unit = "contracts" if is_option else "shares"
+                multiplier = 100 if is_option else 1
+                fill = r['fill_price']
+                qty = r['filled_shares']
+                total = fill * qty * multiplier
+                sl_pct = _parse_exit_param(r.get('stop_loss_pct'), default=-0.08)
+                tp_pct = _parse_exit_param(r.get('take_profit_pct'), default=0.15)
+                tp_dollar = fill * tp_pct * qty * multiplier
+                sl_dollar = fill * sl_pct * qty * multiplier
+                logger.info(f"    {r['action']} {r['symbol']}: {qty} {unit} @ ${fill:.2f} "
+                           f"= ${total:,.2f}  PLR (+${tp_dollar:,.0f}, -${abs(sl_dollar):,.0f})")
         if failed:
             logger.info(f"  Failures:")
             for r in failed:
@@ -549,14 +558,27 @@ def _send_execution_summary_email(executor, results, pre_account, post_account,
         body_lines.append("FILLS")
         body_lines.append("-" * 50)
         for r in filled:
-            unit = "contracts" if r.get('contract_type') else "shares"
+            is_option = bool(r.get('contract_type'))
+            unit = "contracts" if is_option else "shares"
+            multiplier = 100 if is_option else 1
             detail = ""
-            if r.get('contract_type'):
+            if is_option:
                 detail = f"  {r.get('expiration', '')} {r.get('strike', '')} {r['contract_type'].upper()}"
+            fill = r['fill_price']
+            qty = r['filled_shares']
+            total = fill * qty * multiplier
+
+            # PLR: profit/loss range from exit params
+            sl_pct = _parse_exit_param(r.get('stop_loss_pct'), default=-0.08)
+            tp_pct = _parse_exit_param(r.get('take_profit_pct'), default=0.15)
+            tp_dollar = fill * tp_pct * qty * multiplier
+            sl_dollar = fill * sl_pct * qty * multiplier
+            plr = f"PLR (+${tp_dollar:,.0f}, -${abs(sl_dollar):,.0f})"
+
             body_lines.append(
-                f"  {r['action']:4s} {r['symbol']:6s}  {r['filled_shares']:>4} {unit}"
+                f"  {r['action']:4s} {r['symbol']:6s}  {qty:>4} {unit}"
                 f"{detail}"
-                f"  @ ${r['fill_price']:>8.2f}  = ${r['filled_shares'] * r['fill_price']:>10,.2f}"
+                f"  @ ${fill:>8.2f}  = ${total:>10,.2f}  {plr}"
             )
         body_lines.append("")
 
