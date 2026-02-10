@@ -134,6 +134,43 @@ def validate_option(option: dict, symbol: str) -> Optional[str]:
     return None
 
 
+def calculate_option_contracts(executor, mid_price: float) -> int:
+    """
+    Auto-size option contracts using the same position-sizing rules as stocks.
+
+    Uses: target_value = net_liquidation * position_size (default 2%)
+    Cost per contract = mid_price * 100 (each contract = 100 shares)
+
+    Returns number of contracts (minimum 1 if affordable).
+    """
+    if executor is None or mid_price <= 0:
+        return 1
+
+    try:
+        account = executor.get_account_summary()
+        if account is None or account.net_liquidation <= 0:
+            return 1
+
+        config = executor.trading_config
+        contract_cost = mid_price * 100
+
+        # Same formula as risk_manager.calculate_position_size
+        target_value = account.net_liquidation * config.position_size
+        target_value = min(target_value, config.max_position_value)
+        target_value = min(target_value, account.available_funds)
+
+        contracts = int(target_value / contract_cost)
+
+        # Enforce minimum order value
+        if contracts > 0 and contracts * contract_cost < config.min_order_value:
+            return 0
+
+        return max(1, contracts)
+    except Exception as e:
+        logger.warning(f"Options auto-size failed ({e}), defaulting to 1 contract")
+        return 1
+
+
 def execute_option_signal(executor, sig: dict, dry_run: bool = False,
                           use_market_orders: bool = False) -> dict:
     """
@@ -150,7 +187,7 @@ def execute_option_signal(executor, sig: dict, dry_run: bool = False,
     """
     action = sig['action'].upper()
     symbol = sig['symbol'].upper()
-    contracts = int(sig.get('shares', 1)) or 1  # shares -> number of contracts
+    raw_shares = int(sig.get('shares', 0))
     signal_price = float(sig.get('price', 0))
     option_type = 'call' if action == 'BUY' else 'put'
     timestamp = datetime.now().isoformat(timespec='seconds')
@@ -188,8 +225,17 @@ def execute_option_signal(executor, sig: dict, dry_run: bool = False,
     base_result['expiration'] = expiration
     base_result['premium'] = mid
 
+    # Auto-size contracts if shares=0 (same position-sizing as stocks)
+    if raw_shares == 0:
+        contracts = calculate_option_contracts(executor, mid)
+        logger.info(f"  Auto-sized: {contracts} contract(s) "
+                     f"(${mid:.2f} x 100 = ${mid * 100:.2f}/contract)")
+    else:
+        contracts = raw_shares
+
     logger.info(f"  Selected: {symbol} {expiration} {strike} {option_type.upper()}")
     logger.info(f"  Bid={bid:.2f} Ask={ask:.2f} Mid={mid:.2f} OI={oi} Vol={vol} IV={iv:.2f} Delta={delta:.3f}")
+    logger.info(f"  Contracts={contracts} (total ~${contracts * mid * 100:,.2f})")
 
     # 2. Validate guardrails
     rejection = validate_option(option, symbol)
