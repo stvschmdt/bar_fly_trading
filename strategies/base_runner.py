@@ -514,14 +514,17 @@ class BaseRunner:
             overnight_data = portfolio_load_data(data_path)
             print(f"  Loaded overnight data: {len(overnight_data):,} rows")
 
-            # Warn if overnight data is stale (> 3 calendar days old)
+            # HARD CHECK: live mode requires today's data — refuse stale CSV
             if 'date' in overnight_data.columns:
                 latest_date = pd.to_datetime(overnight_data['date']).max()
-                days_old = (pd.Timestamp.now() - latest_date).days
-                if days_old > 3:
-                    print(f"  WARNING: Overnight data is {days_old} days old "
-                          f"(latest: {latest_date.strftime('%Y-%m-%d')}). "
-                          f"Run cron.py or pull_api_data.py to refresh.")
+                today = pd.Timestamp.now().normalize()
+                days_old = (today - latest_date).days
+                if days_old > 0:
+                    print(f"  STALE DATA: latest date is {latest_date.strftime('%Y-%m-%d')} "
+                          f"({days_old}d old). Live mode requires today's data.")
+                    print(f"  Run: python -m api_data.pull_api_data_rt --bulk "
+                          f"to refresh before scanning.")
+                    return []
 
         strategy = self.create_strategy(account, symbols, args, overnight_data)
 

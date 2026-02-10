@@ -227,9 +227,9 @@ run_scan() {
     # EXIT MONITOR: check open positions for trailing stop adjustments,
     # max-hold exits, and bracket sync before scanning for new signals.
     log "  Running exit monitor..."
-    if $PYTHON -m ibkr.exit_monitor \
+    if python -m ibkr.exit_monitor \
         --client-id 21 \
-        ${LIVE:+--live} \
+        $LIVE_FLAG \
         >> "$LOG_FILE" 2>&1; then
         log "  Exit monitor complete"
     else
@@ -239,6 +239,8 @@ run_scan() {
     # STEP 0: Update data files with bulk RT quotes (1 API call per 100 symbols)
     # This persists fresh prices to all_data_*.csv AND merged_predictions.csv
     # so all strategies see the latest adjusted_close, high, low, volume.
+    # HARD REQUIREMENT: live mode must ALWAYS use fresh API data.
+    # If this step fails, the entire scan is aborted — never run on stale data.
     log "  Updating data files with bulk RT quotes..."
     if python -m api_data.pull_api_data_rt \
         --bulk \
@@ -247,7 +249,8 @@ run_scan() {
         >> "$LOG_FILE" 2>&1; then
         log "  Bulk RT update complete"
     else
-        log "  WARNING: Bulk RT update failed (strategies will use stale data)"
+        log "  ABORT: Bulk RT update FAILED — refusing to scan with stale data"
+        return 1
     fi
 
     # Run each strategy, writing signals to per-strategy files
