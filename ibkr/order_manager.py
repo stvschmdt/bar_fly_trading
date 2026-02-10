@@ -171,6 +171,129 @@ class OrderManager:
 
         return order
 
+    def submit_bracket_order(
+        self,
+        symbol: str,
+        shares: int,
+        entry_price: float,
+        stop_loss_pct: float,
+        take_profit_pct: float,
+    ) -> Optional[tuple['OrderResult', 'OrderResult']]:
+        """
+        Submit stop-loss and take-profit orders linked via OCA group.
+
+        Called after a BUY has already been filled. Creates two GTC orders:
+          - StopOrder(SELL) at entry_price * (1 + stop_loss_pct)
+          - LimitOrder(SELL) at entry_price * (1 + take_profit_pct)
+        Linked via OCA so filling one cancels the other.
+
+        Returns:
+            Tuple of (stop_result, profit_result) or None on failure.
+        """
+        if not self.connection.is_connected:
+            logger.error("Cannot submit bracket: not connected to IBKR")
+            return None
+
+        stop_price = round(entry_price * (1 + stop_loss_pct), 2)
+        profit_price = round(entry_price * (1 + take_profit_pct), 2)
+        oca_group = f"EXIT_{symbol}_{int(time.time())}"
+        acct = self.target_account
+
+        contract = Stock(symbol, "SMART", "USD")
+        try:
+            self.ib.qualifyContracts(contract)
+        except Exception as e:
+            logger.error(f"Failed to qualify contract for {symbol}: {e}")
+            return None
+
+        # Stop-loss order
+        stop_order = StopOrder("SELL", shares, stop_price)
+        stop_order.tif = "GTC"
+        stop_order.ocaGroup = oca_group
+        stop_order.ocaType = 1  # Cancel other on fill
+        if acct:
+            stop_order.account = acct
+
+        # Take-profit order
+        profit_order = LimitOrder("SELL", shares, profit_price)
+        profit_order.tif = "GTC"
+        profit_order.ocaGroup = oca_group
+        profit_order.ocaType = 1
+        if acct:
+            profit_order.account = acct
+
+        try:
+            stop_trade = self.ib.placeOrder(contract, stop_order)
+            profit_trade = self.ib.placeOrder(contract, profit_order)
+            self.ib.sleep(0.5)  # Let order IDs settle
+
+            stop_result = OrderResult(
+                order_id=stop_trade.order.orderId,
+                symbol=symbol,
+                action=OrderAction.SELL,
+                shares=shares,
+                order_type=OrderType.STOP,
+                status=OrderStatus.SUBMITTED,
+                submitted_time=datetime.now(),
+            )
+            profit_result = OrderResult(
+                order_id=profit_trade.order.orderId,
+                symbol=symbol,
+                action=OrderAction.SELL,
+                shares=shares,
+                order_type=OrderType.LIMIT,
+                status=OrderStatus.SUBMITTED,
+                submitted_time=datetime.now(),
+            )
+
+            self._pending_orders[stop_result.order_id] = stop_result
+            self._pending_orders[profit_result.order_id] = profit_result
+
+            logger.info(
+                f"Bracket placed for {symbol}: "
+                f"stop={stop_result.order_id} @ ${stop_price}, "
+                f"profit={profit_result.order_id} @ ${profit_price} "
+                f"(OCA={oca_group})"
+            )
+            return stop_result, profit_result
+
+        except Exception as e:
+            logger.error(f"Failed to submit bracket for {symbol}: {e}")
+            return None
+
+    def modify_stop_price(self, order_id: int, new_stop_price: float) -> bool:
+        """
+        Modify an existing stop order's trigger price (for trailing stop).
+
+        Returns True if modification submitted successfully.
+        """
+        if not self.connection.is_connected:
+            logger.error("Cannot modify order: not connected")
+            return False
+
+        new_stop_price = round(new_stop_price, 2)
+        try:
+            for trade in self.ib.openTrades():
+                if trade.order.orderId == order_id:
+                    trade.order.auxPrice = new_stop_price
+                    self.ib.placeOrder(trade.contract, trade.order)
+                    logger.info(f"Modified stop order {order_id} → ${new_stop_price}")
+                    return True
+            logger.warning(f"Stop order {order_id} not found in open trades")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to modify stop order {order_id}: {e}")
+            return False
+
+    def cancel_bracket_orders(self, stop_order_id: int, profit_order_id: int) -> bool:
+        """Cancel both legs of a bracket order."""
+        ok = True
+        if not self.cancel_order(stop_order_id):
+            ok = False
+        if not self.cancel_order(profit_order_id):
+            ok = False
+        return ok
+
     def submit_order(
         self,
         signal: TradeSignal,

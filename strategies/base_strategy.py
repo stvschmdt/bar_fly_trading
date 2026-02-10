@@ -533,6 +533,10 @@ class BaseStrategy(ABC):
                     price=sig['price'],
                     strategy=self.STRATEGY_NAME,
                     reason=sig['reason'],
+                    stop_loss_pct=self.STOP_LOSS_PCT,
+                    take_profit_pct=self.TAKE_PROFIT_PCT,
+                    trailing_stop_pct=self.TRAILING_STOP_PCT,
+                    max_hold_days=self.MAX_HOLD_DAYS,
                 )
             writer.save()
 

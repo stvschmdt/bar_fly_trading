@@ -224,6 +224,18 @@ run_scan() {
         return 0
     fi
 
+    # EXIT MONITOR: check open positions for trailing stop adjustments,
+    # max-hold exits, and bracket sync before scanning for new signals.
+    log "  Running exit monitor..."
+    if $PYTHON -m ibkr.exit_monitor \
+        --client-id 21 \
+        ${LIVE:+--live} \
+        >> "$LOG_FILE" 2>&1; then
+        log "  Exit monitor complete"
+    else
+        log "  WARNING: Exit monitor failed (continuing with scan)"
+    fi
+
     # STEP 0: Update data files with bulk RT quotes (1 API call per 100 symbols)
     # This persists fresh prices to all_data_*.csv AND merged_predictions.csv
     # so all strategies see the latest adjusted_close, high, low, volume.

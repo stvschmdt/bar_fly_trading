@@ -404,6 +404,10 @@ class BaseRunner:
                         price=pos['entry_price'],
                         strategy=self.STRATEGY_NAME,
                         reason=f"open position from {entry_str}",
+                        stop_loss_pct=strategy.STOP_LOSS_PCT,
+                        take_profit_pct=strategy.TAKE_PROFIT_PCT,
+                        trailing_stop_pct=strategy.TRAILING_STOP_PCT,
+                        max_hold_days=strategy.MAX_HOLD_DAYS,
                     )
                 writer.save()
                 print(f"  Wrote {len(open_positions)} pending signals to {output_signals}")
@@ -461,6 +465,10 @@ class BaseRunner:
                     action=sig['action'], symbol=sig['symbol'],
                     price=sig['price'], strategy=self.STRATEGY_NAME,
                     reason=sig.get('reason', ''),
+                    stop_loss_pct=strategy.STOP_LOSS_PCT,
+                    take_profit_pct=strategy.TAKE_PROFIT_PCT,
+                    trailing_stop_pct=strategy.TRAILING_STOP_PCT,
+                    max_hold_days=strategy.MAX_HOLD_DAYS,
                 )
             writer.save()
 
@@ -567,6 +575,10 @@ class BaseRunner:
                     action=sig['action'], symbol=sig['symbol'],
                     price=sig['price'], strategy=self.STRATEGY_NAME,
                     reason=sig.get('reason', ''),
+                    stop_loss_pct=strategy.STOP_LOSS_PCT,
+                    take_profit_pct=strategy.TAKE_PROFIT_PCT,
+                    trailing_stop_pct=strategy.TRAILING_STOP_PCT,
+                    max_hold_days=strategy.MAX_HOLD_DAYS,
                 )
             writer.save(append=True)
             print(f"\nSignal CSV written: {output_signals}")

@@ -47,6 +47,7 @@ from ibkr.config import IBKRConfig, TradingConfig
 from ibkr.trade_executor import TradeExecutor
 from ibkr.models import OrderAction
 from ibkr.options_executor import execute_option_signal
+from ibkr.position_ledger import PositionLedger
 
 # Use signal_writer's reader
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'strategies'))
@@ -79,6 +80,34 @@ def _is_new_rejection(symbol: str, reason_type: str) -> bool:
         return False
     _rejections_notified[today].add(key)
     return True
+
+
+def _parse_exit_param(value, default=None, as_int=False):
+    """Parse an exit param from signal CSV (may be empty, NaN, or numeric)."""
+    if value is None or value == '' or (isinstance(value, float) and pd.isna(value)):
+        return default
+    try:
+        return int(float(value)) if as_int else float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _submit_exit_brackets(executor, symbol, shares, fill_price, sl_pct, tp_pct):
+    """Submit stop-loss and take-profit bracket orders after a BUY fill."""
+    try:
+        result = executor.order_manager.submit_bracket_order(
+            symbol=symbol,
+            shares=shares,
+            entry_price=fill_price,
+            stop_loss_pct=sl_pct,
+            take_profit_pct=tp_pct,
+        )
+        if result:
+            stop_result, profit_result = result
+            return stop_result, profit_result
+    except Exception as e:
+        logger.error(f"Failed to submit bracket orders for {symbol}: {e}")
+    return None
 
 
 def is_market_open() -> bool:
@@ -352,6 +381,48 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
             if result.success:
                 logger.info(f"  FILLED: {symbol} {filled_shares} shares @ ${fill_price:.2f} "
                            f"(total: ${filled_shares * fill_price:,.2f})")
+
+                # Place bracket orders (stop-loss + take-profit) after BUY fill
+                if action == 'BUY' and fill_price > 0 and filled_shares > 0:
+                    sl_pct = _parse_exit_param(sig.get('stop_loss_pct'), default=-0.08)
+                    tp_pct = _parse_exit_param(sig.get('take_profit_pct'), default=0.15)
+                    ts_pct = _parse_exit_param(sig.get('trailing_stop_pct'), default=None)
+                    max_hold = _parse_exit_param(sig.get('max_hold_days'), default=20, as_int=True)
+
+                    bracket = _submit_exit_brackets(
+                        executor, symbol, filled_shares, fill_price, sl_pct, tp_pct)
+
+                    if bracket:
+                        stop_res, profit_res = bracket
+                        # Record to position ledger
+                        try:
+                            ledger = PositionLedger()
+                            ledger.load()
+                            ledger.add_position(
+                                symbol=symbol,
+                                entry_price=fill_price,
+                                entry_date=datetime.now().strftime('%Y-%m-%d'),
+                                shares=filled_shares,
+                                strategy=sig.get('strategy', ''),
+                                stop_loss_pct=sl_pct,
+                                take_profit_pct=tp_pct,
+                                trailing_stop_pct=ts_pct,
+                                max_hold_days=max_hold,
+                                stop_order_id=stop_res.order_id,
+                                profit_order_id=profit_res.order_id,
+                                parent_order_id=result.order.order_id if result.order else -1,
+                            )
+                            ledger.save()
+                            logger.info(
+                                f"  BRACKETS: {symbol} stop={stop_res.order_id} "
+                                f"@ ${round(fill_price * (1 + sl_pct), 2)}, "
+                                f"profit={profit_res.order_id} "
+                                f"@ ${round(fill_price * (1 + tp_pct), 2)}")
+                        except Exception as e:
+                            logger.error(f"  Failed to save position ledger for {symbol}: {e}")
+                    else:
+                        logger.warning(f"  WARNING: No bracket orders placed for {symbol} "
+                                      f"— position has no automated exit protection!")
             else:
                 # Classify rejection reason for daily de-dup
                 reason_type = 'failed'
