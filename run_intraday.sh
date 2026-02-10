@@ -182,8 +182,9 @@ eval $PYTHON strategies/run_low_bounce.py $COMMON_ARGS 2>&1 | tail -5
 echo "  Running oversold reversal..."
 eval $PYTHON strategies/run_oversold_reversal.py $COMMON_ARGS --predictions "$PRED_PATH" 2>&1 | tail -5
 
-echo "  Running regression momentum..."
-eval $PYTHON strategies/run_regression_momentum.py $COMMON_ARGS --predictions "$PRED_PATH" 2>&1 | tail -5
+# regression_momentum disabled — missing 10d model, produces 0 trades
+# echo "  Running regression momentum..."
+# eval $PYTHON strategies/run_regression_momentum.py $COMMON_ARGS --predictions "$PRED_PATH" 2>&1 | tail -5
 
 echo ""
 echo "========================================"

@@ -28,7 +28,8 @@ cd ~/proj/bar_fly_trading
 
 # Defaults (override via env vars or edit here)
 PREDICTIONS="${PREDICTIONS:-merged_predictions.csv}"
-STRATEGY="${STRATEGY:-regression_momentum}"
+# regression_momentum disabled — missing 10d model, produces 0 trades
+STRATEGY="${STRATEGY:-bollinger}"
 PORTFOLIO_DATA="${PORTFOLIO_DATA:-all_data_0.csv}"
 START_DATE="${START_DATE:-2024-07-01}"
 END_DATE="${END_DATE:-2024-12-31}"

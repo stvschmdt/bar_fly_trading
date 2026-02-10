@@ -51,8 +51,9 @@ PREDICTIONS="${PREDICTIONS:-merged_predictions.csv}"
 DATA_DIR="${DATA_DIR:-/home/stvschmdt/data}"
 DATA_PATH="$DATA_DIR/all_data_*.csv"
 
-# Default: all 5 strategies
-ALL_STRATEGIES="bollinger oversold_bounce oversold_reversal low_bounce regression_momentum"
+# Default: 4 active strategies (regression_momentum disabled — missing 10d model, 0 trades)
+ALL_STRATEGIES="bollinger oversold_bounce oversold_reversal low_bounce"
+# ALL_STRATEGIES="bollinger oversold_bounce oversold_reversal low_bounce regression_momentum"
 STRATEGIES="$ALL_STRATEGIES"
 
 # Market hours in ET (24h format)
