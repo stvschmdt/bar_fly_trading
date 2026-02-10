@@ -5,11 +5,11 @@ Queries all open positions and submits market sell orders to flatten them.
 Supports filtering by asset type (shares, options, or all).
 
 Usage:
-    python -m ibkr.close_positions --all                    # Close everything
+    python -m ibkr.close_positions --all                    # Close everything (gateway default)
     python -m ibkr.close_positions --shares                 # Close only stock positions
     python -m ibkr.close_positions --options                # Close only option contracts
     python -m ibkr.close_positions --all --dry-run          # Preview without executing
-    python -m ibkr.close_positions --all --live --gateway   # Live trading via gateway
+    python -m ibkr.close_positions --all --live             # Live trading via gateway
 """
 
 import argparse
@@ -284,11 +284,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python -m ibkr.close_positions --all                    # Close everything
+  python -m ibkr.close_positions --all                    # Close everything (gateway default)
   python -m ibkr.close_positions --shares                 # Only stock positions
   python -m ibkr.close_positions --options                # Only option contracts
   python -m ibkr.close_positions --all --dry-run          # Preview only
-  python -m ibkr.close_positions --shares --live --gateway # Live via gateway
+  python -m ibkr.close_positions --shares --live          # Live via gateway
         """)
 
     # Position filter (mutually exclusive, required)
@@ -303,8 +303,10 @@ Examples:
     # Connection
     parser.add_argument("--live", action="store_true",
                         help="Use live trading account (requires trading_mode.conf)")
-    parser.add_argument("--gateway", action="store_true",
-                        help="Connect via IB Gateway instead of TWS")
+    parser.add_argument("--gateway", action="store_true", default=True,
+                        help="Connect via IB Gateway (default: True)")
+    parser.add_argument("--tws", action="store_true",
+                        help="Connect via TWS instead of IB Gateway")
     parser.add_argument("--client-id", type=int, default=20,
                         help="IBKR client ID (default: 20)")
 
@@ -335,15 +337,16 @@ Examples:
             print("  Set TRADING_MODE=live to enable.")
             sys.exit(1)
 
-    # Select connection config
+    # Select connection config (default: gateway; --tws overrides)
+    use_gateway = not args.tws
     if args.live:
-        if args.gateway:
+        if use_gateway:
             config = IBKRConfig.live_gateway(client_id=args.client_id)
         else:
             config = IBKRConfig.live_tws(client_id=args.client_id)
         print(f"LIVE account — port {config.port}")
     else:
-        if args.gateway:
+        if use_gateway:
             config = IBKRConfig.paper_gateway(client_id=args.client_id)
         else:
             config = IBKRConfig.paper_tws(client_id=args.client_id)
