@@ -670,10 +670,13 @@ def archive_signal_file(filepath, results, archive_dir):
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     base = os.path.splitext(os.path.basename(filepath))[0]
 
-    # Archive the original signal file
+    # Archive the original signal file (may already be removed by scan loop)
     archive_path = os.path.join(archive_dir, f"{base}_{ts}.csv")
-    shutil.move(filepath, archive_path)
-    logger.info(f"Archived signal file to {archive_path}")
+    if os.path.exists(filepath):
+        shutil.move(filepath, archive_path)
+        logger.info(f"Archived signal file to {archive_path}")
+    else:
+        logger.debug(f"Signal file already removed (archived by scan loop): {filepath}")
 
     # Write execution results alongside
     if results:
