@@ -101,6 +101,9 @@ class BaseRunner:
                             help="Send summary email only")
         parser.add_argument("--skip-live", action="store_true",
                             help="Skip IBKR Gateway connection (for testing)")
+        parser.add_argument("--instrument-type", type=str, default=None,
+                            choices=["stock", "option"],
+                            help="Override instrument type for signals (default: strategy class constant)")
 
         # --- Portfolio filters ---
         parser.add_argument("--watchlist", type=str, default=None,
@@ -327,6 +330,12 @@ class BaseRunner:
         """
         raise NotImplementedError("Subclass must implement create_strategy()")
 
+    @staticmethod
+    def _apply_cli_overrides(strategy, args):
+        """Apply CLI flag overrides to strategy instance."""
+        if getattr(args, 'instrument_type', None):
+            strategy.INSTRUMENT_TYPE = args.instrument_type
+
     # ================================================================== #
     #  MODE 1: BACKTEST
     # ================================================================== #
@@ -349,6 +358,7 @@ class BaseRunner:
 
         # Create strategy with data
         strategy = self.create_strategy(account, symbols, args, data)
+        self._apply_cli_overrides(strategy, args)
 
         # Print header
         print("\n" + "=" * 70)
@@ -408,6 +418,7 @@ class BaseRunner:
                         take_profit_pct=strategy.TAKE_PROFIT_PCT,
                         trailing_stop_pct=strategy.TRAILING_STOP_PCT,
                         max_hold_days=strategy.MAX_HOLD_DAYS,
+                        instrument_type=strategy.INSTRUMENT_TYPE,
                     )
                 writer.save()
                 print(f"  Wrote {len(open_positions)} pending signals to {output_signals}")
@@ -444,6 +455,7 @@ class BaseRunner:
         )
 
         strategy = self.create_strategy(account, symbols, args, data)
+        self._apply_cli_overrides(strategy, args)
 
         # Find signals
         signals = strategy.find_signals(lookback_days=args.lookback_days)
@@ -469,6 +481,7 @@ class BaseRunner:
                     take_profit_pct=strategy.TAKE_PROFIT_PCT,
                     trailing_stop_pct=strategy.TRAILING_STOP_PCT,
                     max_hold_days=strategy.MAX_HOLD_DAYS,
+                    instrument_type=strategy.INSTRUMENT_TYPE,
                 )
             writer.save()
 
@@ -527,6 +540,7 @@ class BaseRunner:
                     return []
 
         strategy = self.create_strategy(account, symbols, args, overnight_data)
+        self._apply_cli_overrides(strategy, args)
 
         print(f"\n{'=' * 60}")
         print(f"  {self.STRATEGY_NAME.upper()} - LIVE MODE")
@@ -582,6 +596,7 @@ class BaseRunner:
                     take_profit_pct=strategy.TAKE_PROFIT_PCT,
                     trailing_stop_pct=strategy.TRAILING_STOP_PCT,
                     max_hold_days=strategy.MAX_HOLD_DAYS,
+                    instrument_type=strategy.INSTRUMENT_TYPE,
                 )
             writer.save(append=True)
             print(f"\nSignal CSV written: {output_signals}")

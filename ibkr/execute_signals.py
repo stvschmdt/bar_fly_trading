@@ -458,37 +458,44 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
                     bracket = _submit_exit_brackets(
                         executor, symbol, filled_shares, fill_price, sl_pct, tp_pct)
 
+                    stop_oid = -1
+                    profit_oid = -1
                     if bracket:
                         stop_res, profit_res = bracket
-                        # Record to position ledger
-                        try:
-                            ledger = PositionLedger()
-                            ledger.load()
-                            ledger.add_position(
-                                symbol=symbol,
-                                entry_price=fill_price,
-                                entry_date=datetime.now().strftime('%Y-%m-%d'),
-                                shares=filled_shares,
-                                strategy=sig.get('strategy', ''),
-                                stop_loss_pct=sl_pct,
-                                take_profit_pct=tp_pct,
-                                trailing_stop_pct=ts_pct,
-                                max_hold_days=max_hold,
-                                stop_order_id=stop_res.order_id,
-                                profit_order_id=profit_res.order_id,
-                                parent_order_id=result.order.order_id if result.order else -1,
-                            )
-                            ledger.save()
-                            logger.info(
-                                f"  BRACKETS: {symbol} stop={stop_res.order_id} "
-                                f"@ ${round(fill_price * (1 + sl_pct), 2)}, "
-                                f"profit={profit_res.order_id} "
-                                f"@ ${round(fill_price * (1 + tp_pct), 2)}")
-                        except Exception as e:
-                            logger.error(f"  Failed to save position ledger for {symbol}: {e}")
+                        stop_oid = stop_res.order_id
+                        profit_oid = profit_res.order_id
+                        logger.info(
+                            f"  BRACKETS: {symbol} stop={stop_oid} "
+                            f"@ ${round(fill_price * (1 + sl_pct), 2)}, "
+                            f"profit={profit_oid} "
+                            f"@ ${round(fill_price * (1 + tp_pct), 2)}")
                     else:
-                        logger.warning(f"  WARNING: No bracket orders placed for {symbol} "
-                                      f"— position has no automated exit protection!")
+                        logger.warning(f"  WARNING: No bracket orders for {symbol} "
+                                      f"— exit monitor will handle SL/TP")
+
+                    # Always record to position ledger (exit monitor handles
+                    # SL/TP via software polling if brackets failed)
+                    try:
+                        ledger = PositionLedger()
+                        ledger.load()
+                        ledger.add_position(
+                            symbol=symbol,
+                            entry_price=fill_price,
+                            entry_date=datetime.now().strftime('%Y-%m-%d'),
+                            shares=filled_shares,
+                            strategy=sig.get('strategy', ''),
+                            stop_loss_pct=sl_pct,
+                            take_profit_pct=tp_pct,
+                            trailing_stop_pct=ts_pct,
+                            max_hold_days=max_hold,
+                            stop_order_id=stop_oid,
+                            profit_order_id=profit_oid,
+                            parent_order_id=result.order.order_id if result.order else -1,
+                        )
+                        ledger.save()
+                        logger.info(f"  LEDGER: Stock position recorded for {symbol}")
+                    except Exception as e:
+                        logger.error(f"  Failed to save position ledger for {symbol}: {e}")
             else:
                 # Classify rejection reason for daily de-dup
                 reason_type = 'failed'

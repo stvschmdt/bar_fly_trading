@@ -64,6 +64,9 @@ class BaseStrategy(ABC):
     TAKE_PROFIT_PCT = 0.15      # +15% take profit (backstop)
     TRAILING_STOP_PCT = None    # None = disabled; e.g. -0.08 for -8%
 
+    # ── Instrument type (override in subclass or via runner flag) ──
+    INSTRUMENT_TYPE = 'stock'   # 'stock' or 'option'
+
     # ── Re-entry cooldown (override in subclass) ──────────────────
     REENTRY_COOLDOWN_DAYS = 1   # 1 = no same-day re-entry; 0 = allow immediate
 
@@ -537,6 +540,7 @@ class BaseStrategy(ABC):
                     take_profit_pct=self.TAKE_PROFIT_PCT,
                     trailing_stop_pct=self.TRAILING_STOP_PCT,
                     max_hold_days=self.MAX_HOLD_DAYS,
+                    instrument_type=self.INSTRUMENT_TYPE,
                 )
             writer.save()
 
