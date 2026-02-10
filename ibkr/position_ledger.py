@@ -139,6 +139,10 @@ class PositionLedger:
         if key in self._positions:
             logger.warning(f"Overwriting existing ledger entry for {key}")
 
+        # Compute absolute exit price levels for easy monitoring
+        stop_price = round(entry_price * (1 + stop_loss_pct), 4) if stop_loss_pct else None
+        take_profit_price = round(entry_price * (1 + take_profit_pct), 4) if take_profit_pct else None
+
         self._positions[key] = {
             'symbol': symbol,
             'entry_price': entry_price,
@@ -149,6 +153,8 @@ class PositionLedger:
             'take_profit_pct': take_profit_pct,
             'trailing_stop_pct': trailing_stop_pct,
             'max_hold_days': max_hold_days,
+            'stop_price': stop_price,
+            'take_profit_price': take_profit_price,
             'stop_order_id': stop_order_id,
             'profit_order_id': profit_order_id,
             'high_water_mark': entry_price,

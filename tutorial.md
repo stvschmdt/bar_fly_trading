@@ -880,6 +880,90 @@ Executor options:
 Logs: `logs/rt_scan.log` and `logs/rt_execute.log`
 Executed signals archived to: `signals/executed/orders_YYYYMMDD_HHMMSS.csv`
 
+#### Stock vs Options Mode
+
+Each strategy can independently route signals as stock or options orders via the `--instrument-type` flag. The scan loop (`rt_scan_loop.sh`) passes this per strategy runner — the executor reads the `instrument_type` column from `pending_orders.csv` and routes each signal accordingly.
+
+**Current default configuration** (in `rt_scan_loop.sh`):
+| Strategy | Instrument Type | Why |
+|---|---|---|
+| bollinger | stock | Tight spreads, reliable fills |
+| oversold_bounce | option | Short hold, leveraged upside |
+| oversold_reversal | stock | Tight spreads, reliable fills |
+| low_bounce | stock | Longer holds, stock works well |
+
+Override from CLI (any strategy runner):
+```bash
+# Run bollinger in options mode
+python strategies/run_bollinger.py \
+    --data-path 'all_data_*.csv' --mode live --skip-live \
+    --instrument-type option --output-signals signals/pending_orders.csv
+
+# Run oversold_bounce in stock mode (override scan loop default)
+python strategies/run_oversold_bounce.py \
+    --data-path 'all_data_*.csv' --mode live --skip-live \
+    --instrument-type stock --output-signals signals/pending_orders.csv
+```
+
+The resulting `pending_orders.csv` contains mixed rows:
+```
+action,symbol,shares,price,strategy,reason,...,instrument_type
+BUY,AAPL,0,227.50,bollinger,lower BB cross,...,stock
+BUY,CRWD,0,410.20,oversold_bounce,RSI bounce,...,option
+```
+
+The executor routes each row independently — stock signals go through the standard order flow (with bracket orders for SL/TP), option signals go through the options executor (smart strike selection, repricing).
+
+#### Monitoring the Position Ledger
+
+Active positions are tracked in `signals/positions.json`. Both stock and option fills are recorded here with computed exit price levels.
+
+View current holdings:
+```bash
+python -c "
+import json
+with open('signals/positions.json') as f:
+    data = json.load(f)
+for key, pos in data.get('positions', {}).items():
+    itype = pos.get('instrument_type', 'stock')
+    print(f\"  {key:<30} {itype:<7} {pos['shares']:>4} @ \${pos['entry_price']:.2f}  \"
+          f\"SL=\${pos.get('stop_price', 'N/A')}  TP=\${pos.get('take_profit_price', 'N/A')}  \"
+          f\"strategy={pos['strategy']}  entry={pos['entry_date']}\")
+print(f\"  Total: {len(data.get('positions', {}))} open position(s)\")
+"
+```
+
+Each position entry includes:
+- `entry_price` — fill price
+- `stop_price` — computed stop-loss price (entry * (1 + stop_loss_pct))
+- `take_profit_price` — computed take-profit price (entry * (1 + take_profit_pct))
+- `stop_loss_pct`, `take_profit_pct`, `trailing_stop_pct` — percentage params
+- `max_hold_days` — auto-exit after N days
+- `instrument_type` — `stock` or `option`
+- `contract_type`, `strike`, `expiration` — options-specific fields
+- `stop_order_id`, `profit_order_id` — IBKR bracket order IDs (-1 if software-managed)
+
+The exit monitor (`ibkr/exit_monitor.py`) polls positions every scan cycle:
+- **Stocks with brackets**: IBKR bracket orders handle SL/TP; exit monitor handles max hold and trailing stops
+- **Stocks without brackets** (stop_order_id=-1): Exit monitor polls price and sells when SL/TP breached
+- **Options**: Always software-managed (no bracket orders); exit monitor polls option premium
+
+#### Closing Positions
+
+```bash
+# Close all positions (stocks + options)
+python -m ibkr.close_positions --all --gateway --client-id 10
+
+# Close only stock positions
+python -m ibkr.close_positions --shares --gateway --client-id 10
+
+# Close only option positions
+python -m ibkr.close_positions --options --gateway --client-id 10
+
+# Dry run (preview)
+python -m ibkr.close_positions --all --gateway --client-id 10 --dry-run
+```
+
 #### Going Live
 
 ```bash

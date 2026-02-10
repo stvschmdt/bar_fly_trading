@@ -188,6 +188,9 @@ def close_positions(ib: IB, positions, dry_run=False):
             })
             continue
 
+        # Force SMART routing to avoid exchange-specific restrictions
+        contract.exchange = 'SMART'
+
         # Qualify the contract before submitting
         try:
             qualified = ib.qualifyContracts(contract)
