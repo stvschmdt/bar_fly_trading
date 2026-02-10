@@ -5,6 +5,12 @@ Persists position state to a JSON file on disk so that:
   - Bracket order IDs (stop-loss + take-profit) survive restarts
   - Trailing stop high-water marks are maintained across sessions
   - The exit monitor can enforce max hold days
+  - Closed positions are archived (never deleted) for audit trail
+
+The ledger file is NEVER deleted — even with zero open positions, the
+skeleton JSON persists.  Only the executor and exit monitor should write
+to this file.  Closing a position archives it to ``closed_positions``
+rather than discarding it.
 
 File location: signals/positions.json (same dir as pending_orders.csv)
 """
@@ -29,17 +35,24 @@ class PositionLedger:
     """
     Persist live position state (entry info, exit params, bracket order IDs)
     to a JSON file on disk.  File-lock safe for concurrent access.
+
+    Invariants:
+      - The file is never deleted; ``save()`` always writes, even if empty.
+      - ``remove_position()`` archives to ``closed_positions`` (never discards).
+      - The open ``positions`` dict should always mirror actual IBKR holdings.
     """
 
     def __init__(self, filepath: str = DEFAULT_LEDGER_PATH):
         self.filepath = filepath
         self._positions: dict[str, dict] = {}
+        self._closed: list[dict] = []
         self._version: int = 1
 
     def load(self) -> dict[str, dict]:
         """Load positions from JSON file. Returns empty dict if missing."""
         if not os.path.exists(self.filepath):
             self._positions = {}
+            self._closed = []
             return self._positions
 
         try:
@@ -50,6 +63,7 @@ class PositionLedger:
 
             self._version = data.get('version', 1)
             self._positions = data.get('positions', {})
+            self._closed = data.get('closed_positions', [])
         except json.JSONDecodeError as e:
             logger.error(f"Corrupt ledger file {self.filepath}: {e}")
             # Back up the corrupt file
@@ -57,20 +71,27 @@ class PositionLedger:
             shutil.copy2(self.filepath, backup)
             logger.error(f"Backed up corrupt file to {backup}")
             self._positions = {}
+            self._closed = []
         except Exception as e:
             logger.error(f"Failed to load ledger: {e}")
             self._positions = {}
+            self._closed = []
 
         return self._positions
 
     def save(self) -> None:
-        """Atomically write positions to JSON file with file lock."""
+        """Atomically write positions to JSON file with file lock.
+
+        Always writes the file, even when ``positions`` is empty, so the
+        ledger skeleton is never lost.
+        """
         os.makedirs(os.path.dirname(self.filepath) or '.', exist_ok=True)
 
         data = {
             'version': self._version,
             'updated_at': datetime.now().isoformat(timespec='seconds'),
             'positions': self._positions,
+            'closed_positions': self._closed,
         }
 
         tmp_path = self.filepath + '.tmp'
@@ -106,9 +127,34 @@ class PositionLedger:
             'parent_order_id': parent_order_id,
         }
 
-    def remove_position(self, symbol: str) -> Optional[dict]:
-        """Remove position from ledger, return removed entry or None."""
-        return self._positions.pop(symbol, None)
+    def remove_position(self, symbol: str, reason: str = 'unknown',
+                        exit_price: Optional[float] = None) -> Optional[dict]:
+        """Archive a position to closed_positions and remove from active.
+
+        The entry is NEVER discarded — it moves to the ``closed_positions``
+        list with exit metadata so the ledger maintains a full audit trail.
+
+        Args:
+            symbol: Ticker to close.
+            reason: Why the position was closed (e.g. 'bracket_filled',
+                    'max_hold', 'manual_close', 'trailing_stop').
+            exit_price: Fill price on the exit (if known).
+
+        Returns:
+            The archived position dict, or None if symbol wasn't in the ledger.
+        """
+        entry = self._positions.pop(symbol, None)
+        if entry is None:
+            return None
+
+        entry['exit_date'] = datetime.now().strftime('%Y-%m-%d')
+        entry['exit_time'] = datetime.now().isoformat(timespec='seconds')
+        entry['exit_reason'] = reason
+        if exit_price is not None:
+            entry['exit_price'] = exit_price
+
+        self._closed.append(entry)
+        return entry
 
     def get_position(self, symbol: str) -> Optional[dict]:
         """Get a single position entry."""
@@ -149,6 +195,22 @@ class PositionLedger:
             if pos.get('trailing_stop_pct') is not None
         ]
 
+    def get_closed_positions(self) -> list[dict]:
+        """Return full history of closed positions (oldest first)."""
+        return list(self._closed)
+
+    def prune_closed_before(self, cutoff_date: str) -> int:
+        """Remove closed position records older than *cutoff_date* (YYYY-MM-DD).
+
+        Returns the number of records pruned.
+        """
+        before = len(self._closed)
+        self._closed = [
+            c for c in self._closed
+            if c.get('exit_date', '9999-99-99') >= cutoff_date
+        ]
+        return before - len(self._closed)
+
     def __len__(self) -> int:
         return len(self._positions)
 
@@ -156,4 +218,5 @@ class PositionLedger:
         return symbol in self._positions
 
     def __repr__(self) -> str:
-        return f"PositionLedger({len(self._positions)} positions)"
+        return (f"PositionLedger({len(self._positions)} open, "
+                f"{len(self._closed)} closed)")

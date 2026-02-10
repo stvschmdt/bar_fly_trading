@@ -90,7 +90,7 @@ class ExitMonitor:
                 pos = self.ledger.get_position(symbol)
                 logger.info(f"  SYNC: {symbol} no longer in IBKR positions — "
                            f"bracket likely filled, removing from ledger")
-                self.ledger.remove_position(symbol)
+                self.ledger.remove_position(symbol, reason='bracket_filled')
                 self.actions.append({
                     'action': 'sync_remove',
                     'symbol': symbol,
@@ -143,7 +143,7 @@ class ExitMonitor:
             except Exception as e:
                 logger.error(f"  Failed to submit sell for {symbol}: {e}")
 
-            self.ledger.remove_position(symbol)
+            self.ledger.remove_position(symbol, reason='max_hold')
             self.actions.append({
                 'action': 'max_hold_exit',
                 'symbol': symbol,

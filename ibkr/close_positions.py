@@ -22,6 +22,7 @@ from ib_insync import IB, MarketOrder, Stock, Option, Contract
 
 from .config import IBKRConfig
 from .connection import IBKRConnection
+from .position_ledger import PositionLedger
 
 logger = logging.getLogger(__name__)
 
@@ -389,6 +390,31 @@ Examples:
             results = close_positions(conn.ib, filtered, dry_run=False)
 
         print_summary(results)
+
+        # Update position ledger: archive closed positions so ledger stays
+        # in sync with IBKR account.  Only touches STK positions (options
+        # are not tracked in the ledger).
+        closed_symbols = [
+            r['symbol'] for r in results
+            if r['status'] == 'filled' and r.get('sec_type') == 'STK'
+        ]
+        if closed_symbols:
+            try:
+                ledger = PositionLedger()
+                ledger.load()
+                archived = 0
+                for sym in closed_symbols:
+                    fill = next((r['fill_price'] for r in results
+                                 if r['symbol'] == sym and r['status'] == 'filled'), None)
+                    if ledger.get_position(sym):
+                        ledger.remove_position(sym, reason='manual_close',
+                                               exit_price=fill)
+                        archived += 1
+                ledger.save()
+                if archived:
+                    print(f"\nLedger: archived {archived} position(s) to closed history")
+            except Exception as e:
+                print(f"\nWARNING: Failed to update position ledger: {e}")
 
     finally:
         conn.disconnect()
