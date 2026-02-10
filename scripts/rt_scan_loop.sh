@@ -212,6 +212,9 @@ run_scan() {
 
     log "SCAN START — strategies=[${STRATEGIES}], interval=${INTERVAL_MIN}min"
 
+    # Clean up stale signal file from previous interrupted runs
+    rm -f "$SIGNAL_FILE"
+
     if [[ "$DRY_RUN" == true ]]; then
         log "DRY RUN — would execute:"
         log "  python -m api_data.pull_api_data_rt --bulk --predictions $PREDICTIONS --data-dir $DATA_DIR"
@@ -358,6 +361,11 @@ while true; do
         log "Sleeping ${INTERVAL_MIN} min until next scan..."
         sleep "$INTERVAL_SEC"
     else
+        # Market closed — clean up any leftover signal file
+        if [[ -f "$SIGNAL_FILE" ]]; then
+            log "Market closed. Removing stale pending_orders.csv"
+            rm -f "$SIGNAL_FILE"
+        fi
         log "Market closed. Shutting down scan loop."
         exit 0
     fi

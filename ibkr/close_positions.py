@@ -462,7 +462,7 @@ Examples:
                         archived += 1
                 ledger.save()
                 if archived:
-                    print(f"\nLedger: archived {archived} position(s) to closed history")
+                    print(f"\nLedger: removed {archived} position(s), appended to daily closed CSV")
             except Exception as e:
                 print(f"\nWARNING: Failed to update position ledger: {e}")
 
