@@ -34,6 +34,7 @@ import pandas as pd
 SIGNAL_COLUMNS = [
     'action', 'symbol', 'shares', 'price', 'strategy', 'reason', 'timestamp',
     'stop_loss_pct', 'take_profit_pct', 'trailing_stop_pct', 'max_hold_days',
+    'instrument_type',
 ]
 
 
@@ -50,7 +51,7 @@ class SignalWriter:
 
     def add(self, action, symbol, shares=0, price=0.0, strategy="", reason="",
             stop_loss_pct=None, take_profit_pct=None, trailing_stop_pct=None,
-            max_hold_days=None):
+            max_hold_days=None, instrument_type='stock'):
         """
         Add a trade signal.
 
@@ -65,6 +66,7 @@ class SignalWriter:
             take_profit_pct: Take profit as decimal (e.g. 0.12 for +12%)
             trailing_stop_pct: Trailing stop as decimal (e.g. -0.08 for -8%)
             max_hold_days: Maximum hold period in trading days
+            instrument_type: 'stock' or 'option' — controls execution routing
         """
         self.signals.append({
             'action': action.upper(),
@@ -78,6 +80,7 @@ class SignalWriter:
             'take_profit_pct': take_profit_pct if take_profit_pct is not None else '',
             'trailing_stop_pct': trailing_stop_pct if trailing_stop_pct is not None else '',
             'max_hold_days': max_hold_days if max_hold_days is not None else '',
+            'instrument_type': instrument_type,
         })
 
     def save(self, filepath=None, append=False):
@@ -153,5 +156,10 @@ def read_signals(filepath):
 
     # Pandas reads empty CSV cells as NaN — convert back to '' for exit params
     df[exit_cols] = df[exit_cols].fillna('')
+
+    # Instrument type column (backward compatible with old CSVs)
+    if 'instrument_type' not in df.columns:
+        df['instrument_type'] = 'stock'
+    df['instrument_type'] = df['instrument_type'].fillna('stock').replace('', 'stock')
 
     return df[SIGNAL_COLUMNS].to_dict('records')

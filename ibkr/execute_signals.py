@@ -222,7 +222,7 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
         dry_run: If True, print signals but don't execute
         default_shares: Override shares=0 with this fixed count
         buy_only: If True, skip SELL signals for symbols we don't hold
-        options_mode: If True, execute as options (call for BUY, put for SELL)
+        options_mode: If True, default instrument_type for signals missing the field
 
     Returns:
         list of result dicts for the execution log
@@ -316,7 +316,13 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
         if reason:
             label += f" ({reason})"
 
-        if dry_run and not options_mode:
+        # Determine instrument type: per-signal field overrides global flag
+        instrument_type = sig.get('instrument_type', 'stock')
+        if instrument_type in ('', 'stock') and options_mode:
+            instrument_type = 'option'
+        is_option = (instrument_type == 'option')
+
+        if dry_run and not is_option:
             logger.info(f"[DRY RUN] {label}")
             results.append({
                 **sig,
@@ -328,8 +334,8 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
             })
             continue
 
-        # Options mode: route through options_executor
-        if options_mode:
+        # Options: route through options_executor
+        if is_option:
             logger.info("-" * 50)
             opt_label = f"[OPTIONS{'|DRY' if dry_run else ''}] {label}"
             logger.info(f"Executing: {opt_label}")
@@ -359,6 +365,45 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
                     f"Reason:     {sig.get('reason', '')}\n"
                     f"Time:       {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                 )
+
+            # Record options fill to position ledger (same as stocks)
+            if opt_result.get('status') == 'filled' and action == 'BUY':
+                opt_fill = opt_result.get('fill_price', 0)
+                opt_qty = opt_result.get('filled_shares', 0)
+                opt_strike_val = opt_result.get('strike', 0)
+                opt_exp_val = opt_result.get('expiration', '')
+                opt_ctype_val = opt_result.get('contract_type', '')
+
+                sl_pct = _parse_exit_param(sig.get('stop_loss_pct'), default=-0.08)
+                tp_pct = _parse_exit_param(sig.get('take_profit_pct'), default=0.15)
+                ts_pct = _parse_exit_param(sig.get('trailing_stop_pct'), default=None)
+                max_hold = _parse_exit_param(sig.get('max_hold_days'), default=20, as_int=True)
+
+                try:
+                    ledger = PositionLedger()
+                    ledger.load()
+                    ledger_key = ledger.add_position(
+                        symbol=symbol,
+                        entry_price=opt_fill,
+                        entry_date=datetime.now().strftime('%Y-%m-%d'),
+                        shares=opt_qty,
+                        strategy=sig.get('strategy', ''),
+                        stop_loss_pct=sl_pct,
+                        take_profit_pct=tp_pct,
+                        trailing_stop_pct=ts_pct,
+                        max_hold_days=max_hold,
+                        stop_order_id=-1,
+                        profit_order_id=-1,
+                        parent_order_id=-1,
+                        instrument_type='option',
+                        contract_type=opt_ctype_val,
+                        strike=float(opt_strike_val) if opt_strike_val else 0.0,
+                        expiration=str(opt_exp_val),
+                    )
+                    ledger.save()
+                    logger.info(f"  LEDGER: Options position recorded as {ledger_key}")
+                except Exception as e:
+                    logger.error(f"  Failed to save options position to ledger: {e}")
 
             # Track rejections for email
             if opt_result.get('status') == 'failed':

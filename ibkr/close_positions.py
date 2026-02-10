@@ -433,23 +433,28 @@ Examples:
             except Exception as e:
                 print(f"\nWARNING: Failed to send email: {e}")
 
-        # Update position ledger: archive closed positions so ledger stays
-        # in sync with IBKR account.  Only touches STK positions (options
-        # are not tracked in the ledger).
-        closed_symbols = [
-            r['symbol'] for r in results
-            if r['status'] == 'filled' and r.get('sec_type') == 'STK'
-        ]
-        if closed_symbols:
+        # Update position ledger: archive closed positions (stocks + options)
+        closed_keys = []
+        for r in results:
+            if r['status'] != 'filled':
+                continue
+            if r.get('sec_type') == 'STK':
+                closed_keys.append((r['symbol'], r.get('fill_price')))
+            elif r.get('sec_type') == 'OPT':
+                right = (r.get('right', '?')[0].upper()
+                         if r.get('right') else '?')
+                strike = r.get('strike', 0)
+                expiry = r.get('expiry', '')
+                key = f"{r['symbol']}_{right}_{strike}_{expiry}"
+                closed_keys.append((key, r.get('fill_price')))
+        if closed_keys:
             try:
                 ledger = PositionLedger()
                 ledger.load()
                 archived = 0
-                for sym in closed_symbols:
-                    fill = next((r['fill_price'] for r in results
-                                 if r['symbol'] == sym and r['status'] == 'filled'), None)
-                    if ledger.get_position(sym):
-                        ledger.remove_position(sym, reason='manual_close',
+                for key, fill in closed_keys:
+                    if ledger.get_position(key):
+                        ledger.remove_position(key, reason='manual_close',
                                                exit_price=fill)
                         archived += 1
                 ledger.save()

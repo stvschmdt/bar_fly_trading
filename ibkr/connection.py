@@ -220,6 +220,42 @@ class IBKRConnection:
             logger.error(f"Failed to get price for {symbol}: {e}")
             return None
 
+    def get_option_price(self, symbol: str, expiration: str,
+                         strike: float, right: str) -> Optional[float]:
+        """Get current mid price for an option contract.
+
+        Args:
+            symbol: Underlying ticker
+            expiration: YYYYMMDD format
+            strike: Strike price
+            right: 'C' or 'P'
+
+        Returns:
+            Mid price or None if unavailable
+        """
+        if not self.is_connected:
+            return None
+        try:
+            from ib_insync import Option as IBOption
+            contract = IBOption(symbol, expiration, strike, right,
+                                'SMART', currency='USD')
+            self.ib.qualifyContracts(contract)
+            ticker = self.ib.reqMktData(contract, snapshot=True)
+            self.ib.sleep(2)
+
+            bid = ticker.bid if not util.isNan(ticker.bid) else 0
+            ask = ticker.ask if not util.isNan(ticker.ask) else 0
+            self.ib.cancelMktData(contract)
+
+            if bid > 0 and ask > 0:
+                return (bid + ask) / 2
+            last = ticker.last if not util.isNan(ticker.last) else None
+            return last
+        except Exception as e:
+            logger.error(f"Failed to get option price for "
+                        f"{symbol} {expiration} {strike}{right}: {e}")
+            return None
+
     def get_bid_ask(self, symbol: str) -> Optional[tuple[float, float, float]]:
         """
         Get current bid, ask, and last price for a symbol.

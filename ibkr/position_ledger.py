@@ -31,6 +31,21 @@ DEFAULT_LEDGER_PATH = os.path.join(
 )
 
 
+def make_ledger_key(symbol: str, instrument_type: str = 'stock',
+                    contract_type: str = '', strike: float = 0,
+                    expiration: str = '') -> str:
+    """Composite key for the position ledger.
+
+    Stocks:  'AAPL'
+    Options: 'BITO_C_10.0_20260320'
+    """
+    if instrument_type == 'option' and contract_type and strike and expiration:
+        exp_compact = expiration.replace('-', '')
+        right = contract_type[0].upper()  # 'C' or 'P'
+        return f"{symbol}_{right}_{strike}_{exp_compact}"
+    return symbol
+
+
 class PositionLedger:
     """
     Persist live position state (entry info, exit params, bracket order IDs)
@@ -64,6 +79,13 @@ class PositionLedger:
             self._version = data.get('version', 1)
             self._positions = data.get('positions', {})
             self._closed = data.get('closed_positions', [])
+
+            # Backfill options fields for old entries
+            for pos in self._positions.values():
+                pos.setdefault('instrument_type', 'stock')
+                pos.setdefault('contract_type', '')
+                pos.setdefault('strike', 0.0)
+                pos.setdefault('expiration', '')
         except json.JSONDecodeError as e:
             logger.error(f"Corrupt ledger file {self.filepath}: {e}")
             # Back up the corrupt file
@@ -106,12 +128,18 @@ class PositionLedger:
                      stop_loss_pct: Optional[float], take_profit_pct: Optional[float],
                      trailing_stop_pct: Optional[float], max_hold_days: Optional[int],
                      stop_order_id: int, profit_order_id: int,
-                     parent_order_id: int = -1) -> None:
-        """Add a new position to the ledger."""
-        if symbol in self._positions:
-            logger.warning(f"Overwriting existing ledger entry for {symbol}")
+                     parent_order_id: int = -1,
+                     instrument_type: str = 'stock',
+                     contract_type: str = '',
+                     strike: float = 0.0,
+                     expiration: str = '') -> str:
+        """Add a new position to the ledger. Returns the ledger key."""
+        key = make_ledger_key(symbol, instrument_type, contract_type,
+                              strike, expiration)
+        if key in self._positions:
+            logger.warning(f"Overwriting existing ledger entry for {key}")
 
-        self._positions[symbol] = {
+        self._positions[key] = {
             'symbol': symbol,
             'entry_price': entry_price,
             'entry_date': entry_date,
@@ -125,7 +153,12 @@ class PositionLedger:
             'profit_order_id': profit_order_id,
             'high_water_mark': entry_price,
             'parent_order_id': parent_order_id,
+            'instrument_type': instrument_type,
+            'contract_type': contract_type,
+            'strike': strike,
+            'expiration': expiration,
         }
+        return key
 
     def remove_position(self, symbol: str, reason: str = 'unknown',
                         exit_price: Optional[float] = None) -> Optional[dict]:

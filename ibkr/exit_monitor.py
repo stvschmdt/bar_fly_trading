@@ -17,13 +17,14 @@ import logging
 import os
 import sys
 from datetime import date, datetime
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ibkr.config import IBKRConfig, TradingConfig
 from ibkr.connection import IBKRConnection
 from ibkr.order_manager import OrderManager
-from ibkr.position_ledger import PositionLedger
+from ibkr.position_ledger import PositionLedger, make_ledger_key
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,13 +62,16 @@ class ExitMonitor:
 
         logger.info(f"Exit monitor: checking {len(self.ledger)} position(s)")
 
-        # Step 1: Sync with IBKR — detect filled brackets
+        # Step 1: Sync with IBKR — detect filled brackets / closed options
         self._sync_with_ibkr()
 
-        # Step 2: Check max hold day exits
+        # Step 2: Check max hold day exits (stocks + options)
         self._check_max_hold_exits()
 
-        # Step 3: Adjust trailing stops
+        # Step 3: Check SL/TP for options (no IBKR bracket orders)
+        self._check_option_sl_tp_exits()
+
+        # Step 4: Adjust trailing stops (stocks via order modify, options via sell)
         self._adjust_trailing_stops()
 
         # Save any changes
@@ -82,54 +86,81 @@ class ExitMonitor:
         for item in ib.positions():
             sym = item.contract.symbol
             shares = int(item.position)
-            if shares != 0 and item.contract.secType == 'STK':
+            if shares == 0:
+                continue
+            if item.contract.secType == 'STK':
                 ibkr_positions[sym] = shares
+            elif item.contract.secType == 'OPT':
+                right = item.contract.right  # 'C' or 'P'
+                strike = item.contract.strike
+                exp = item.contract.lastTradeDateOrContractMonth
+                key = f"{sym}_{right}_{strike}_{exp}"
+                ibkr_positions[key] = shares
 
-        for symbol in list(self.ledger.get_all_positions().keys()):
-            if symbol not in ibkr_positions:
-                pos = self.ledger.get_position(symbol)
-                logger.info(f"  SYNC: {symbol} no longer in IBKR positions — "
-                           f"bracket likely filled, removing from ledger")
-                self.ledger.remove_position(symbol, reason='bracket_filled')
+        for ledger_key in list(self.ledger.get_all_positions().keys()):
+            if ledger_key not in ibkr_positions:
+                pos = self.ledger.get_position(ledger_key)
+                itype = pos.get('instrument_type', 'stock') if pos else 'stock'
+                reason = 'bracket_filled' if itype == 'stock' else 'option_closed'
+                logger.info(f"  SYNC: {ledger_key} no longer in IBKR — removing")
+                self.ledger.remove_position(ledger_key, reason=reason)
                 self.actions.append({
                     'action': 'sync_remove',
-                    'symbol': symbol,
-                    'reason': 'position closed in IBKR (bracket filled)',
+                    'symbol': ledger_key,
+                    'reason': f'position closed in IBKR ({reason})',
                     'strategy': pos.get('strategy', '') if pos else '',
                 })
+
+    def _build_contract(self, pos: dict):
+        """Build ib_insync contract from ledger position data."""
+        from ib_insync import Stock, Option as IBOption
+        symbol = pos['symbol']
+        if pos.get('instrument_type') == 'option':
+            exp = str(pos.get('expiration', '')).replace('-', '')
+            strike = pos.get('strike', 0)
+            ctype = pos.get('contract_type', '')
+            right = 'C' if ctype.lower().startswith('c') else 'P'
+            return IBOption(symbol, exp, strike, right, 'SMART', currency='USD')
+        return Stock(symbol, "SMART", "USD")
 
     def _check_max_hold_exits(self):
         """Cancel brackets and market sell for positions past max hold."""
         expired = self.ledger.get_expired_positions()
 
         for pos in expired:
-            symbol = pos['symbol']
+            ledger_key = make_ledger_key(
+                pos['symbol'], pos.get('instrument_type', 'stock'),
+                pos.get('contract_type', ''), pos.get('strike', 0),
+                pos.get('expiration', ''))
             hold_days = pos['hold_days']
             max_days = pos.get('max_hold_days', 0)
             shares = pos.get('shares', 0)
+            instrument = pos.get('instrument_type', 'stock')
+            unit = "contracts" if instrument == 'option' else "shares"
 
-            logger.info(f"  MAX HOLD: {symbol} held {hold_days}d (max={max_days}d) — "
-                       f"closing {shares} shares")
+            logger.info(f"  MAX HOLD: {ledger_key} held {hold_days}d (max={max_days}d) — "
+                       f"closing {shares} {unit}")
 
             if self.dry_run:
                 self.actions.append({
                     'action': 'max_hold_exit',
-                    'symbol': symbol,
+                    'symbol': ledger_key,
                     'hold_days': hold_days,
                     'shares': shares,
                     'dry_run': True,
                 })
                 continue
 
-            # Cancel existing bracket orders
-            stop_id = pos.get('stop_order_id', -1)
-            profit_id = pos.get('profit_order_id', -1)
-            if stop_id > 0 or profit_id > 0:
-                self.order_manager.cancel_bracket_orders(stop_id, profit_id)
+            # Cancel existing bracket orders (stock only)
+            if instrument == 'stock':
+                stop_id = pos.get('stop_order_id', -1)
+                profit_id = pos.get('profit_order_id', -1)
+                if stop_id > 0 or profit_id > 0:
+                    self.order_manager.cancel_bracket_orders(stop_id, profit_id)
 
             # Submit market sell
-            from ib_insync import Stock, MarketOrder
-            contract = Stock(symbol, "SMART", "USD")
+            from ib_insync import MarketOrder
+            contract = self._build_contract(pos)
             try:
                 self.connection.ib.qualifyContracts(contract)
                 order = MarketOrder("SELL", shares)
@@ -138,60 +169,136 @@ class ExitMonitor:
                 if acct:
                     order.account = acct
                 trade = self.connection.ib.placeOrder(contract, order)
-                logger.info(f"  Submitted market sell for {symbol}: {shares} shares "
+                logger.info(f"  Submitted market sell for {ledger_key}: {shares} {unit} "
                            f"(order_id={trade.order.orderId})")
             except Exception as e:
-                logger.error(f"  Failed to submit sell for {symbol}: {e}")
+                logger.error(f"  Failed to submit sell for {ledger_key}: {e}")
 
-            self.ledger.remove_position(symbol, reason='max_hold')
+            self.ledger.remove_position(ledger_key, reason='max_hold')
             self.actions.append({
                 'action': 'max_hold_exit',
-                'symbol': symbol,
+                'symbol': ledger_key,
                 'hold_days': hold_days,
                 'shares': shares,
                 'dry_run': False,
             })
+
+    def _get_price(self, pos: dict) -> Optional[float]:
+        """Get current price for a position (stock or option)."""
+        symbol = pos['symbol']
+        if pos.get('instrument_type') == 'option':
+            exp = str(pos.get('expiration', '')).replace('-', '')
+            strike = pos.get('strike', 0)
+            ctype = pos.get('contract_type', '')
+            right = 'C' if ctype.lower().startswith('c') else 'P'
+            return self.connection.get_option_price(symbol, exp, strike, right)
+        return self.connection.get_current_price(symbol)
+
+    def _sell_position(self, pos: dict, ledger_key: str, reason: str,
+                       current_price: float = None):
+        """Submit a market sell for a position and remove from ledger."""
+        from ib_insync import MarketOrder
+        shares = pos.get('shares', 0)
+        contract = self._build_contract(pos)
+        try:
+            self.connection.ib.qualifyContracts(contract)
+            order = MarketOrder("SELL", shares)
+            order.tif = "DAY"
+            acct = self.order_manager.target_account
+            if acct:
+                order.account = acct
+            trade = self.connection.ib.placeOrder(contract, order)
+            logger.info(f"  Submitted SELL for {ledger_key} ({reason})")
+        except Exception as e:
+            logger.error(f"  Failed to sell {ledger_key}: {e}")
+        self.ledger.remove_position(ledger_key, reason=reason,
+                                     exit_price=current_price)
+
+    def _check_option_sl_tp_exits(self):
+        """Check SL/TP for options (no IBKR bracket orders — software polled)."""
+        for ledger_key, pos in list(self.ledger.get_all_positions().items()):
+            if pos.get('instrument_type') != 'option':
+                continue
+            # Skip if somehow has bracket orders
+            if pos.get('stop_order_id', -1) > 0:
+                continue
+
+            entry_price = pos['entry_price']
+            sl_pct = pos.get('stop_loss_pct')
+            tp_pct = pos.get('take_profit_pct')
+
+            current_price = self._get_price(pos)
+            if current_price is None or current_price <= 0 or entry_price <= 0:
+                continue
+
+            pct_change = (current_price - entry_price) / entry_price
+            reason = None
+            if sl_pct is not None and pct_change <= sl_pct:
+                reason = f"stop_loss ({pct_change:+.1%} <= {sl_pct:.0%})"
+            elif tp_pct is not None and pct_change >= tp_pct:
+                reason = f"take_profit ({pct_change:+.1%} >= {tp_pct:+.0%})"
+
+            if reason is None:
+                continue
+
+            logger.info(f"  OPT EXIT: {ledger_key} {reason} "
+                       f"(entry=${entry_price:.2f}, now=${current_price:.2f})")
+
+            if self.dry_run:
+                self.actions.append({'action': 'option_sl_tp_exit',
+                                     'symbol': ledger_key, 'reason': reason,
+                                     'dry_run': True})
+                continue
+
+            self._sell_position(pos, ledger_key, reason, current_price)
+            self.actions.append({'action': 'option_sl_tp_exit',
+                                 'symbol': ledger_key, 'reason': reason,
+                                 'dry_run': False})
 
     def _adjust_trailing_stops(self):
         """Adjust stop order prices upward for trailing stop positions."""
         trailing_positions = self.ledger.get_trailing_stop_positions()
 
         for pos in trailing_positions:
-            symbol = pos['symbol']
+            ledger_key = make_ledger_key(
+                pos['symbol'], pos.get('instrument_type', 'stock'),
+                pos.get('contract_type', ''), pos.get('strike', 0),
+                pos.get('expiration', ''))
             trailing_pct = pos['trailing_stop_pct']
             old_hwm = pos.get('high_water_mark', pos['entry_price'])
             stop_id = pos.get('stop_order_id', -1)
 
-            # Get current price
-            try:
-                current_price = self.connection.get_current_price(symbol)
-            except Exception as e:
-                logger.warning(f"  Could not get price for {symbol}: {e}")
-                continue
-
-            if current_price <= 0:
+            current_price = self._get_price(pos)
+            if current_price is None or current_price <= 0:
                 continue
 
             # Update high-water mark if price is higher
             if current_price > old_hwm:
                 new_hwm = current_price
-                self.ledger.update_high_water_mark(symbol, new_hwm)
+                self.ledger.update_high_water_mark(ledger_key, new_hwm)
 
-                # Calculate new stop price from new HWM
                 new_stop_price = round(new_hwm * (1 + trailing_pct), 2)
                 old_stop_price = round(old_hwm * (1 + trailing_pct), 2)
 
-                if new_stop_price > old_stop_price and stop_id > 0:
+                if new_stop_price > old_stop_price:
                     logger.info(
-                        f"  TRAILING: {symbol} HWM ${old_hwm:.2f} → ${new_hwm:.2f}, "
+                        f"  TRAILING: {ledger_key} HWM ${old_hwm:.2f} → ${new_hwm:.2f}, "
                         f"stop ${old_stop_price:.2f} → ${new_stop_price:.2f}")
 
                     if not self.dry_run:
-                        self.order_manager.modify_stop_price(stop_id, new_stop_price)
+                        if stop_id > 0:
+                            # Stock: modify IBKR stop order
+                            self.order_manager.modify_stop_price(stop_id, new_stop_price)
+                        elif pos.get('instrument_type') == 'option':
+                            # Option: check if trailing stop triggered
+                            if current_price <= new_stop_price:
+                                logger.info(f"  TRAILING STOP triggered for {ledger_key}")
+                                self._sell_position(pos, ledger_key,
+                                                    'trailing_stop', current_price)
 
                     self.actions.append({
                         'action': 'trailing_stop_adjust',
-                        'symbol': symbol,
+                        'symbol': ledger_key,
                         'old_hwm': old_hwm,
                         'new_hwm': new_hwm,
                         'old_stop': old_stop_price,
@@ -210,9 +317,11 @@ class ExitMonitor:
             symbol = a.get('symbol', '?')
             dry = " [DRY RUN]" if a.get('dry_run') else ""
             if action == 'sync_remove':
-                lines.append(f"  SYNC {symbol}: removed (bracket filled)")
+                lines.append(f"  SYNC {symbol}: removed ({a.get('reason', 'closed')})")
             elif action == 'max_hold_exit':
                 lines.append(f"  EXIT {symbol}: max hold {a.get('hold_days')}d{dry}")
+            elif action == 'option_sl_tp_exit':
+                lines.append(f"  OPT EXIT {symbol}: {a.get('reason', 'sl/tp')}{dry}")
             elif action == 'trailing_stop_adjust':
                 lines.append(f"  TRAIL {symbol}: stop ${a.get('old_stop'):.2f} → "
                            f"${a.get('new_stop'):.2f}{dry}")
