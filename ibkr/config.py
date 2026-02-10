@@ -89,7 +89,7 @@ class TradingConfig:
         order_timeout: Seconds to wait for order fill before canceling
     """
     symbols: set[str] = field(default_factory=set)
-    position_size: float = 0.02  # 2% of portfolio per position
+    position_size: float = 0.01  # 1% of portfolio per position
     max_positions: int = 20
     max_position_value: float = 50000.0  # Max $50k per position
     max_daily_trades: int = 20

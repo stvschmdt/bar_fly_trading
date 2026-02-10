@@ -339,6 +339,27 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
             )
             results.append(opt_result)
 
+            # Per-fill email notification for options
+            if opt_result.get('status') == 'filled' and executor and executor.notifier:
+                opt_fill = opt_result.get('fill_price', 0)
+                opt_qty = opt_result.get('filled_shares', 0)
+                opt_total = opt_fill * opt_qty * 100
+                opt_strike = opt_result.get('strike', '')
+                opt_exp = opt_result.get('expiration', '')
+                opt_ctype = opt_result.get('contract_type', '').upper()
+                executor.notifier._send_email(
+                    f"[FILL] BUY {opt_qty} {symbol} {opt_exp} {opt_strike} {opt_ctype} @ ${opt_fill:.2f}",
+                    f"OPTIONS FILL\n{'=' * 40}\n"
+                    f"Symbol:     {symbol}\n"
+                    f"Contract:   {opt_exp} {opt_strike} {opt_ctype}\n"
+                    f"Contracts:  {opt_qty}\n"
+                    f"Premium:    ${opt_fill:.2f} per share\n"
+                    f"Total cost: ${opt_total:,.2f}\n"
+                    f"Strategy:   {sig.get('strategy', '')}\n"
+                    f"Reason:     {sig.get('reason', '')}\n"
+                    f"Time:       {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                )
+
             # Track rejections for email
             if opt_result.get('status') == 'failed':
                 reason_type = 'options'

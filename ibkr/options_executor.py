@@ -33,8 +33,10 @@ MAX_SPREAD_DOLLAR = 0.20    # $0.20 per share -> $20 per 100-lot contract
 MIN_BID = 0.05              # Minimum bid price (filter penny options)
 MIN_OPEN_INTEREST = 10      # Minimum open interest
 MIN_VOLUME = 1              # Minimum daily volume
+MAX_CONTRACTS = 20           # Hard cap on auto-sized contracts per signal
 DEFAULT_MONTHS_OUT = 1      # Next monthly expiration
 NUM_STRIKES = 3             # Strikes above/below ATM to fetch
+REPRICE_SPREAD_PCT = 0.15   # After timeout, bump limit by 15% of spread toward ask
 
 
 def select_option_contract(symbol: str, action: str, stock_price: float,
@@ -165,6 +167,9 @@ def calculate_option_contracts(executor, mid_price: float) -> int:
         if contracts > 0 and contracts * contract_cost < config.min_order_value:
             return 0
 
+        # Hard cap to prevent absurd quantities on cheap options
+        contracts = min(contracts, MAX_CONTRACTS)
+
         return max(1, contracts)
     except Exception as e:
         logger.warning(f"Options auto-size failed ({e}), defaulting to 1 contract")
@@ -287,15 +292,38 @@ def execute_option_signal(executor, sig: dict, dry_run: bool = False,
         logger.info(f"  Order submitted: BUY {contracts} x {symbol} {expiration} "
                      f"{strike}{right} (order_id={order_id})")
 
-        # Wait for fill
+        # Wait for fill with repricing: first wait at mid, then bump toward ask
         executor.order_manager.ib.sleep(2)  # Let IB process
         timeout = executor.order_manager.config.order_timeout
         import time
         start = time.time()
+        repriced = False
+
         while time.time() - start < timeout:
             executor.order_manager.ib.sleep(0.5)
             if trade.isDone():
                 break
+
+        # If not filled after first timeout, reprice closer to ask and wait again
+        if not trade.isDone() and not use_market_orders and ask > bid:
+            spread = ask - bid
+            bump = round(spread * REPRICE_SPREAD_PCT, 2)
+            new_limit = round(mid + bump, 2)
+            logger.info(f"  Repricing: mid=${mid:.2f} + 15% of spread (${spread:.2f}) "
+                        f"= ${new_limit:.2f} (was ${limit_price:.2f})")
+            try:
+                trade.order.lmtPrice = new_limit
+                executor.order_manager.ib.placeOrder(contract, trade.order)
+                repriced = True
+
+                # Wait another timeout period
+                start2 = time.time()
+                while time.time() - start2 < timeout:
+                    executor.order_manager.ib.sleep(0.5)
+                    if trade.isDone():
+                        break
+            except Exception as e:
+                logger.warning(f"  Reprice failed: {e}")
 
         fill_price = trade.orderStatus.avgFillPrice or 0.0
         filled = int(trade.orderStatus.filled or 0)
@@ -303,8 +331,9 @@ def execute_option_signal(executor, sig: dict, dry_run: bool = False,
 
         if status_str == 'Filled':
             total_premium = filled * fill_price * 100
+            reprice_tag = " (after reprice)" if repriced else ""
             logger.info(f"  FILLED: {filled} contracts @ ${fill_price:.2f} "
-                        f"(premium=${total_premium:,.2f})")
+                        f"(premium=${total_premium:,.2f}){reprice_tag}")
             return {**base_result, 'status': 'filled', 'fill_price': fill_price,
                     'filled_shares': filled, 'error': ''}
         else:
