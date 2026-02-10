@@ -72,19 +72,46 @@ def select_option_contract(symbol: str, action: str, stock_price: float,
 
     current_price = quote.get('price', stock_price)
 
-    # Pick 1 strike OTM
+    # Find closest OTM and ITM strikes, pick whichever has tighter spread
     if option_type == 'call':
-        # First strike strictly above current price
         otm = options_df[options_df['strike'] > current_price].sort_values('strike')
+        itm = options_df[options_df['strike'] <= current_price].sort_values('strike', ascending=False)
     else:
-        # First strike strictly below current price
         otm = options_df[options_df['strike'] < current_price].sort_values('strike', ascending=False)
+        itm = options_df[options_df['strike'] >= current_price].sort_values('strike')
 
-    if otm.empty:
-        logger.warning(f"No OTM {option_type} strikes found for {symbol} (price=${current_price:.2f})")
+    otm_row = otm.iloc[0] if not otm.empty else None
+    itm_row = itm.iloc[0] if not itm.empty else None
+
+    if otm_row is None and itm_row is None:
+        logger.warning(f"No {option_type} strikes found for {symbol} (price=${current_price:.2f})")
         return None, quote, options_df
 
-    target = otm.iloc[0]
+    def _spread(row):
+        if row is None:
+            return float('inf')
+        b = row.get('bid', 0) or 0
+        a = row.get('ask', 0) or 0
+        return (a - b) if a > b else float('inf')
+
+    otm_spread = _spread(otm_row)
+    itm_spread = _spread(itm_row)
+
+    if otm_row is not None and itm_row is not None:
+        if itm_spread < otm_spread:
+            target = itm_row
+            tag = "ITM (tighter spread)"
+        else:
+            target = otm_row
+            tag = "OTM"
+        logger.info(f"  Strike selection: {symbol} price=${current_price:.2f} → "
+                    f"OTM ${otm_row['strike']} spread=${otm_spread:.2f}, "
+                    f"ITM ${itm_row['strike']} spread=${itm_spread:.2f} → chose {tag}")
+    else:
+        target = otm_row if otm_row is not None else itm_row
+        tag = "OTM (only)" if otm_row is not None else "ITM (only)"
+        logger.info(f"  Strike selection: {symbol} → {tag} ${target['strike']}")
+
     return target.to_dict(), quote, options_df
 
 
