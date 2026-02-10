@@ -332,6 +332,76 @@ def rank_by_sharpe(df: pd.DataFrame, symbols: list[str] = None,
 
 
 # ---------------------------------------------------------------------------
+# Rank by backtest rankings CSV
+# ---------------------------------------------------------------------------
+
+def rank_by_backtest(symbols: list[str], rankings_path: str,
+                     rank_field: str = 'score', top_k: int = None) -> list[str]:
+    """
+    Filter and rank symbols using a backtest rankings CSV.
+
+    If the file is missing or any error occurs, returns symbols unchanged
+    (pass-through identity behavior).
+
+    Args:
+        symbols: List of symbols to filter/rank
+        rankings_path: Path to backtest_rankings.csv
+        rank_field: Column to sort by (win_rate, avg_return_pct, total_pnl,
+                    score, trades)
+        top_k: Number of top symbols to keep (None = keep all, sorted)
+
+    Returns:
+        List of symbols ranked by rank_field descending, capped at top_k
+    """
+    if not symbols:
+        return symbols
+
+    try:
+        if not os.path.exists(rankings_path):
+            print(f"Warning: Rankings file not found: {rankings_path} (pass-through)")
+            return symbols
+
+        df = pd.read_csv(rankings_path)
+
+        if 'symbol' not in df.columns:
+            print(f"Warning: No 'symbol' column in {rankings_path} (pass-through)")
+            return symbols
+
+        if rank_field not in df.columns:
+            print(f"Warning: Field '{rank_field}' not in rankings. "
+                  f"Available: {', '.join(df.columns.tolist())} (pass-through)")
+            return symbols
+
+        # Filter to only symbols in our universe
+        symbol_set = set(symbols)
+        df = df[df['symbol'].isin(symbol_set)]
+
+        # Sort descending by rank_field (higher is better)
+        df = df.sort_values(rank_field, ascending=False)
+
+        result = df['symbol'].tolist()
+
+        if top_k is not None:
+            result = result[:top_k]
+
+        # Note symbols not in rankings (they get dropped)
+        missing = symbol_set - set(df['symbol'])
+        if missing:
+            print(f"  Note: {len(missing)} symbols not in rankings (dropped): "
+                  f"{', '.join(sorted(missing)[:5])}"
+                  f"{'...' if len(missing) > 5 else ''}")
+
+        label = f"top {top_k}" if top_k else "sorted"
+        print(f"Backtest rank ({rank_field}, {label}): "
+              f"{len(symbols)} -> {len(result)} symbols")
+        return result
+
+    except Exception as e:
+        print(f"Warning: Error reading rankings: {e} (pass-through)")
+        return symbols
+
+
+# ---------------------------------------------------------------------------
 # Pipeline: chain all rankers
 # ---------------------------------------------------------------------------
 
@@ -349,13 +419,17 @@ def run_pipeline(df: pd.DataFrame,
                  filter_top_k: int = None,
                  top_k_sharpe: int = None,
                  sort_sharpe: bool = False,
-                 risk_free_rate: float = 0.0) -> list[str]:
+                 risk_free_rate: float = 0.0,
+                 backtest_rankings: str = None,
+                 rank_by: str = 'score',
+                 rank_top_k: int = None) -> list[str]:
     """
     Run the full filter/rank pipeline. Order:
       1. Watchlist filter/sort
       2. Price rank
       3. Field rank
       4. Sharpe rank
+      5. Backtest ranking
 
     Each step receives the symbol list from the previous step.
 
@@ -368,6 +442,9 @@ def run_pipeline(df: pd.DataFrame,
         filter_field / filter_above / filter_below / filter_ascending / filter_top_k: Field filter params
         top_k_sharpe: Top k by Sharpe (optional)
         risk_free_rate: Risk-free rate for Sharpe
+        backtest_rankings: Path to backtest_rankings.csv (optional)
+        rank_by: Field to rank by from rankings CSV (default: 'score')
+        rank_top_k: Keep top K from backtest rankings (optional)
 
     Returns:
         Final ranked list of symbols
@@ -397,6 +474,11 @@ def run_pipeline(df: pd.DataFrame,
         symbols = rank_by_sharpe(df, symbols, top_k=top_k_sharpe, risk_free_rate=risk_free_rate)
     elif sort_sharpe:
         symbols = rank_by_sharpe(df, symbols, top_k=None, risk_free_rate=risk_free_rate)
+
+    # 5. Backtest ranking
+    if backtest_rankings is not None:
+        symbols = rank_by_backtest(symbols, backtest_rankings,
+                                   rank_field=rank_by, top_k=rank_top_k)
 
     print("=" * 60)
     print(f"Final universe: {len(symbols)} symbols\n")

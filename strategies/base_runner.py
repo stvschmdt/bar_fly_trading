@@ -31,7 +31,7 @@ sys.path.insert(0, parent_dir)
 from account.account_values import AccountValues
 from account.backtest_account import BacktestAccount
 from backtest import backtest
-from backtest_stats import compute_stats, print_stats, write_trade_log, write_symbols, read_symbols
+from backtest_stats import compute_stats, print_stats, write_trade_log, write_symbols, read_symbols, write_rankings
 from signal_writer import SignalWriter
 from ibkr.notifier import TradeNotifier
 from portfolio import (
@@ -125,6 +125,15 @@ class BaseRunner:
         parser.add_argument("--sort-sharpe", action="store_true",
                             help="Sort symbols by Sharpe ratio")
 
+        # --- Backtest rankings (portfolio filter) ---
+        parser.add_argument("--backtest-rankings", type=str, default=None,
+                            help="Path to backtest_rankings.csv for ranking/filtering symbols")
+        parser.add_argument("--rank-by", type=str, default="score",
+                            choices=["win_rate", "avg_return_pct", "total_pnl", "score", "trades"],
+                            help="Field to rank by from rankings CSV (default: score)")
+        parser.add_argument("--rank-top-k", type=int, default=None,
+                            help="Keep top K symbols from backtest rankings")
+
         # --- Output ---
         parser.add_argument("--output-trades", type=str, default=None,
                             help="Path to write trade log CSV")
@@ -132,6 +141,8 @@ class BaseRunner:
                             help="Path to write filtered symbol list CSV")
         parser.add_argument("--output-signals", type=str, default=None,
                             help="Path to write signal CSV (default: signals/pending_orders.csv for live mode)")
+        parser.add_argument("--output-rankings", type=str, default="backtest_rankings.csv",
+                            help="Path to write per-symbol rankings CSV (default: backtest_rankings.csv)")
 
         # Let subclass add strategy-specific args
         cls.add_strategy_args(parser)
@@ -224,6 +235,7 @@ class BaseRunner:
             args.watchlist, args.price_above is not None,
             args.price_below is not None, args.filter_field,
             args.top_k_sharpe is not None, args.sort_sharpe,
+            getattr(args, 'backtest_rankings', None),
         ])
 
         if has_filters:
@@ -244,6 +256,19 @@ class BaseRunner:
                     filter_below=args.filter_below,
                     top_k_sharpe=args.top_k_sharpe,
                     sort_sharpe=args.sort_sharpe,
+                    backtest_rankings=getattr(args, 'backtest_rankings', None),
+                    rank_by=getattr(args, 'rank_by', 'score'),
+                    rank_top_k=getattr(args, 'rank_top_k', None),
+                )
+                symbols = set(symbols_list)
+            elif getattr(args, 'backtest_rankings', None):
+                # Backtest rankings don't need price data — handle standalone
+                from portfolio import rank_by_backtest
+                symbols_list = rank_by_backtest(
+                    list(symbols),
+                    args.backtest_rankings,
+                    rank_field=args.rank_by,
+                    top_k=args.rank_top_k,
                 )
                 symbols = set(symbols_list)
             elif args.watchlist:
@@ -270,6 +295,12 @@ class BaseRunner:
             ranks_applied.append(f"sharpe ratio (top {args.top_k_sharpe})")
         elif args.sort_sharpe:
             ranks_applied.append("sharpe ratio (sorted)")
+        if getattr(args, 'backtest_rankings', None):
+            rank_label = getattr(args, 'rank_by', 'score')
+            if getattr(args, 'rank_top_k', None):
+                ranks_applied.append(f"backtest {rank_label} (top {args.rank_top_k})")
+            else:
+                ranks_applied.append(f"backtest {rank_label} (sorted)")
         if not ranks_applied:
             ranks_applied.append("symbol order")
 
@@ -354,6 +385,9 @@ class BaseRunner:
             write_trade_log(strategy.trade_log, args.output_trades)
         if args.output_symbols:
             write_symbols(symbols, args.output_symbols)
+        if stats['per_symbol']:
+            rankings_path = getattr(args, 'output_rankings', 'backtest_rankings.csv')
+            write_rankings(stats['per_symbol'], rankings_path)
 
         # Write pending signals for open positions at backtest end
         output_signals = args.output_signals

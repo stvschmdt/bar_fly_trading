@@ -151,6 +151,38 @@ def write_symbols(symbols, filepath):
     print(f"Symbol list written to: {filepath} ({len(sorted_syms)} symbols)")
 
 
+def write_rankings(per_symbol_stats, filepath):
+    """Write per-symbol backtest rankings to CSV.
+
+    Columns: symbol, trades, wins, losses, win_rate, total_pnl,
+             avg_return_pct, avg_hold_days, score
+
+    The 'score' column is win_rate * avg_return_pct — rewards both
+    consistency and magnitude (higher = better).
+    """
+    if not per_symbol_stats:
+        print("No per-symbol stats to write.")
+        return
+
+    rows = []
+    for symbol, s in sorted(per_symbol_stats.items()):
+        rows.append({
+            'symbol': symbol,
+            'trades': s['trades'],
+            'wins': s['wins'],
+            'losses': s['losses'],
+            'win_rate': round(s['win_rate'], 2),
+            'total_pnl': round(s['total_pnl'], 2),
+            'avg_return_pct': round(s['avg_return_pct'], 4),
+            'avg_hold_days': round(s['avg_hold_days'], 1),
+            'score': round(s['win_rate'] * s['avg_return_pct'], 4),
+        })
+
+    df = pd.DataFrame(rows)
+    df.to_csv(filepath, index=False)
+    print(f"Rankings written to: {filepath} ({len(df)} symbols)")
+
+
 def read_symbols(filepath):
     """Read symbol list from CSV or text file.
 
