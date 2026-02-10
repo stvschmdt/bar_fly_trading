@@ -22,6 +22,7 @@ from ib_insync import IB, MarketOrder, Stock, Option, Contract
 
 from .config import IBKRConfig
 from .connection import IBKRConnection
+from .notifier import TradeNotifier
 from .position_ledger import PositionLedger
 
 logger = logging.getLogger(__name__)
@@ -318,6 +319,10 @@ Examples:
     parser.add_argument("--dry-run", action="store_true",
                         help="Preview positions without closing them")
 
+    # Notifications (email on by default)
+    parser.add_argument("--no-notify", action="store_true",
+                        help="Suppress email notifications")
+
     args = parser.parse_args()
 
     # Determine filter mode
@@ -393,6 +398,40 @@ Examples:
             results = close_positions(conn.ib, filtered, dry_run=False)
 
         print_summary(results)
+
+        # Send email notification (default on, --no-notify to suppress)
+        if not args.no_notify:
+            try:
+                notifier = TradeNotifier()
+                filled = [r for r in results if r['status'] == 'filled']
+                dry = [r for r in results if r['status'] == 'dry_run']
+                errors = [r for r in results if r['status'] in ('error', 'Cancelled')]
+                tag = "[DRY RUN] " if args.dry_run else ""
+
+                lines = [f"{tag}CLOSE POSITIONS REPORT",
+                         "=" * 50,
+                         f"Time:       {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                         f"Account:    {'LIVE' if args.live else 'Paper'}",
+                         f"Mode:       {mode.upper()}",
+                         f"Total:      {len(results)} position(s)",
+                         f"Filled:     {len(filled)}",
+                         f"Errors:     {len(errors)}",
+                         ""]
+                for r in filled:
+                    sec = f" ({r['sec_type']})" if r.get('sec_type') else ""
+                    lines.append(f"  {r['action']:4s} {r.get('qty', 0):>4} {r['symbol']:6s}{sec}"
+                                 f"  @ ${r['fill_price']:.2f}")
+                for r in errors:
+                    lines.append(f"  FAIL {r['symbol']:6s}  {r.get('error', r.get('status', ''))}")
+                for r in dry:
+                    lines.append(f"  [DRY] {r['action']:4s} {r.get('qty', 0):>4} {r['symbol']}")
+
+                subject = (f"{tag}[CLOSE] {len(filled)}/{len(results)} positions closed "
+                           f"({'LIVE' if args.live else 'Paper'})")
+                notifier._send_email(subject, "\n".join(lines))
+                print(f"\nEmail sent: {subject}")
+            except Exception as e:
+                print(f"\nWARNING: Failed to send email: {e}")
 
         # Update position ledger: archive closed positions so ledger stays
         # in sync with IBKR account.  Only touches STK positions (options
