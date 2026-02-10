@@ -5,7 +5,8 @@ Uses Bollinger band crossover with RSI confirmation for mean-reversion entries.
 
 Entry Conditions (BUY):
     - Price crossed below lower band (prev_close > prev_bb_lower AND close <= bb_lower)
-    - RSI <= 40 (not overbought)
+    - RSI <= 30 (deeply oversold)
+    - Volume >= 500K (liquidity filter)
 
 Exit Conditions (SELL):
     - Price reaches middle band (mean reversion target)
@@ -44,8 +45,9 @@ class BollingerBandsStrategy(BaseStrategy):
     ]
 
     # Entry thresholds
-    RSI_BUY_MAX = 40       # RSI must be <= this for BUY entry
+    RSI_BUY_MAX = 30       # RSI must be <= this for BUY entry (textbook oversold)
     RSI_SELL_MIN = 60      # RSI must be >= this for SELL entry
+    MIN_VOLUME = 500_000   # Minimum daily volume to filter illiquid names
 
     # Exit thresholds
     MAX_HOLD_DAYS = 20
@@ -118,6 +120,10 @@ class BollingerBandsStrategy(BaseStrategy):
         if pd.notna(rsi) and rsi > self.RSI_BUY_MAX:
             return False
 
+        volume = row.get('volume', None)
+        if pd.notna(volume) and volume < self.MIN_VOLUME:
+            return False
+
         return True
 
     def check_entry_crossover(self, symbol, indicators):
@@ -137,6 +143,10 @@ class BollingerBandsStrategy(BaseStrategy):
 
         rsi = indicators.get('rsi_14', None)
         if pd.notna(rsi) and rsi > self.RSI_BUY_MAX:
+            return False
+
+        volume = indicators.get('volume', None)
+        if pd.notna(volume) and volume < self.MIN_VOLUME:
             return False
 
         prev = self._prev_day.get(symbol)

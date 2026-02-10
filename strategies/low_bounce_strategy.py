@@ -49,13 +49,14 @@ class LowBounceStrategy(BaseStrategy):
     LOW_PROXIMITY = 1.10
     RSI_ENTRY_MAX = 40
     DELTA_ENTRY_MAX = 0
+    MIN_VOLUME = 500_000   # Minimum daily volume to filter illiquid names
     MAX_HOLD_DAYS = 30
     MIN_HOLD_DAYS = 3
     RSI_EXIT_THRESHOLD = 60
     MAX_POSITIONS = 10
 
     # Exit safety overrides (wider for longer-hold contrarian plays)
-    STOP_LOSS_PCT = -0.10       # -10%
+    STOP_LOSS_PCT = -0.08       # -8% (aligned with trailing stop)
     TAKE_PROFIT_PCT = 0.20      # +20%
     TRAILING_STOP_PCT = -0.08   # -8% from high-water mark
 
@@ -115,6 +116,10 @@ class LowBounceStrategy(BaseStrategy):
         if pd.isna(low_52w) or pd.isna(rsi) or pd.isna(delta):
             return False
         if low_52w <= 0:
+            return False
+
+        volume = row.get('volume', None)
+        if pd.notna(volume) and volume < self.MIN_VOLUME:
             return False
 
         return (close < low_52w * self.LOW_PROXIMITY and

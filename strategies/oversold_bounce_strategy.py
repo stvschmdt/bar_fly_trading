@@ -46,7 +46,8 @@ class OversoldBounceStrategy(BaseStrategy):
 
     # Entry thresholds
     RSI_ENTRY_MAX = 35
-    MAX_HOLD_DAYS = 3
+    MIN_VOLUME = 500_000   # Minimum daily volume to filter illiquid names
+    MAX_HOLD_DAYS = 5
     MIN_HOLD_DAYS = 1
     RSI_EXIT_THRESHOLD = 55
     MAX_POSITIONS = 10
@@ -56,7 +57,7 @@ class OversoldBounceStrategy(BaseStrategy):
     TAKE_PROFIT_PCT = 0.08      # +8%
 
     def __init__(self, account, symbols, data=None, data_path=None,
-                 position_size=0.1, max_hold_days=3):
+                 position_size=0.1, max_hold_days=5):
         super().__init__(account, symbols)
         self.position_size = position_size
         self.MAX_HOLD_DAYS = max_hold_days
@@ -102,6 +103,10 @@ class OversoldBounceStrategy(BaseStrategy):
         bb_lower = row.get('bbands_lower_20', None)
 
         if pd.isna(rsi) or pd.isna(bb_signal) or pd.isna(bb_lower):
+            return False
+
+        volume = row.get('volume', None)
+        if pd.notna(volume) and volume < self.MIN_VOLUME:
             return False
 
         return rsi < self.RSI_ENTRY_MAX and bb_signal == 1 and close < bb_lower

@@ -60,9 +60,9 @@ class OversoldReversalStrategy(BaseStrategy):
     # Entry thresholds
     RSI_ENTRY_THRESHOLD = 40
     DELTA_ENTRY_THRESHOLD = -2
-    PROB_UP_THRESHOLD = 0.50
+    PROB_UP_THRESHOLD = 0.55
     RSI_EXIT_THRESHOLD = 55
-    MAX_HOLD_DAYS = 5
+    MAX_HOLD_DAYS = 7
     MIN_HOLD_DAYS = 1
     MAX_POSITIONS = 10
 
@@ -137,6 +137,10 @@ class OversoldReversalStrategy(BaseStrategy):
         model_up = row.get('pred_bin_3d', None)
 
         if pd.isna(rsi) or pd.isna(delta) or pd.isna(model_up):
+            return False
+
+        prob_up = row.get('prob_up_3d', None)
+        if pd.notna(prob_up) and prob_up < self.PROB_UP_THRESHOLD:
             return False
 
         return (rsi < self.RSI_ENTRY_THRESHOLD and
