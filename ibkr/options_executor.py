@@ -28,7 +28,9 @@ from api_data.rt_utils import get_options_snapshot
 logger = logging.getLogger(__name__)
 
 # Guardrail defaults
-MAX_SPREAD_PCT = 0.05       # 5% max bid-ask spread for options
+MAX_SPREAD_PCT = 0.05       # 5% max bid-ask spread (percentage)
+MAX_SPREAD_DOLLAR = 0.20    # $0.20 per share -> $20 per 100-lot contract
+MIN_BID = 0.05              # Minimum bid price (filter penny options)
 MIN_OPEN_INTEREST = 10      # Minimum open interest
 MIN_VOLUME = 1              # Minimum daily volume
 DEFAULT_MONTHS_OUT = 1      # Next monthly expiration
@@ -101,15 +103,25 @@ def validate_option(option: dict, symbol: str) -> Optional[str]:
     if ask <= 0:
         return f"No valid ask price (ask={ask})"
 
+    # Minimum bid filter — reject penny options
+    if bid < MIN_BID:
+        return (f"Bid too low: ${bid:.2f} < ${MIN_BID:.2f} "
+                f"(ask={ask:.2f}) — filtered as penny option")
+
     if mid <= 0:
         mid = (bid + ask) / 2
         if mid <= 0:
             return f"No valid mid price (bid={bid}, ask={ask})"
 
-    # Spread check
+    # Spread check — reject only when BOTH percentage AND dollar spread are wide.
+    # This allows cheap options with high % spread but tiny absolute spread
+    # (e.g. bid=0.15/ask=0.17 → 12% but only $2 per contract).
     spread_pct = (ask - bid) / mid if mid > 0 else 1.0
-    if spread_pct > MAX_SPREAD_PCT:
-        return (f"Spread too wide: {spread_pct:.1%} > {MAX_SPREAD_PCT:.0%} "
+    spread_dollar = ask - bid
+    if spread_pct >= MAX_SPREAD_PCT and spread_dollar >= MAX_SPREAD_DOLLAR:
+        return (f"Spread too wide: {spread_pct:.1%} (>={MAX_SPREAD_PCT:.0%}) "
+                f"and ${spread_dollar:.2f}/share (>=${MAX_SPREAD_DOLLAR:.2f}, "
+                f"=${spread_dollar * 100:.0f}/contract) "
                 f"(bid={bid:.2f}, ask={ask:.2f}, mid={mid:.2f})")
 
     # Liquidity check
