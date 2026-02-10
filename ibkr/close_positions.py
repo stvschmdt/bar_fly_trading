@@ -209,8 +209,11 @@ def close_positions(ib: IB, positions, dry_run=False):
             })
             continue
 
-        # Submit market order
+        # Submit market order (must set account for multi-account gateways)
         order = MarketOrder(action, qty)
+        acct = p.get('account')
+        if acct:
+            order.account = acct
         print(f"  Submitting {action} {qty} {symbol} ({p['sec_type']})...", end=' ')
 
         try:
