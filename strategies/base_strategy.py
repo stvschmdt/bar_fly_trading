@@ -68,6 +68,10 @@ class BaseStrategy(ABC):
     # ── Instrument type (override in subclass or via runner flag) ──
     INSTRUMENT_TYPE = 'stock'   # 'stock' or 'option'
 
+    # ── Liquidity filters (override in subclass) ──────────────────
+    MIN_PRICE = 5.0             # Skip stocks below $5 (penny stock filter)
+    MIN_VOLUME = 500_000        # Skip stocks with < 500K daily volume
+
     # ── Re-entry cooldown (override in subclass) ──────────────────
     REENTRY_COOLDOWN_DAYS = 1   # 1 = no same-day re-entry; 0 = allow immediate
 
@@ -495,8 +499,15 @@ class BaseStrategy(ABC):
                     skipped_stale += 1
                     continue
 
+                # Liquidity filters
+                price = row.get('adjusted_close', 0)
+                if pd.notna(price) and price < self.MIN_PRICE:
+                    continue
+                volume = row.get('volume', None)
+                if pd.notna(volume) and volume < self.MIN_VOLUME:
+                    continue
+
                 if self.check_entry(row):
-                    price = row.get('adjusted_close', 0)
                     reason = self.entry_reason(row)
                     signals.append({
                         'action': 'BUY',

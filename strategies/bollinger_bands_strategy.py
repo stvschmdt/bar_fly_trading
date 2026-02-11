@@ -239,6 +239,14 @@ class BollingerBandsStrategy(BaseStrategy):
                     continue
 
                 close = today['adjusted_close']
+
+                # Liquidity filters
+                if pd.notna(close) and close < self.MIN_PRICE:
+                    continue
+                volume = today.get('volume', None)
+                if pd.notna(volume) and volume < self.MIN_VOLUME:
+                    continue
+
                 bb_lower = today.get('bbands_lower_20')
                 prev_close = prev['adjusted_close']
                 prev_bb_lower = prev.get('bbands_lower_20')
