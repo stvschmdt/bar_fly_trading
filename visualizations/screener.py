@@ -45,12 +45,11 @@ class StockScreener:
         target_date = pd.to_datetime(target_date)
         available_dates = pd.to_datetime(self.data['date']).drop_duplicates().sort_values()
 
-        # Calculate the absolute difference between target date and available dates
-        differences = abs(available_dates - target_date)
-        sorted_dates = available_dates.iloc[differences.argsort()]
+        # Filter to only dates on or before target (no future leak)
+        available_dates = available_dates[available_dates <= target_date]
 
-        # Get the nearest two dates
-        nearest_dates = sorted_dates[:2].sort_values(ascending=False)
+        # Get the two most recent dates
+        nearest_dates = available_dates[-2:].sort_values(ascending=False)
         return nearest_dates.tolist()
 
     def find_nearest_three_dates(self, target_date):
@@ -165,13 +164,17 @@ class StockScreener:
 
     def _check_atr(self, selected_date_data, bullish_signals, bearish_signals, signals):
         atr = selected_date_data['atr_14'].values[0]
-        # latest close
         latest_close = selected_date_data['adjusted_close'].values[0]
-        # Define ATR thresholds based on volatility conditions
-        if latest_close > atr * 2:
+        # ATR as percentage of price — comparable across all price levels
+        # High ATR% = high volatility = bearish, low ATR% = calm = bullish
+        if latest_close == 0:
+            signals.append(0)
+            return
+        atr_pct = atr / latest_close
+        if atr_pct > 0.04:
             bearish_signals.append('bearish_atr')
             signals.append(-1)
-        elif latest_close < atr * 2:
+        elif atr_pct < 0.015:
             bullish_signals.append('bullish_atr')
             signals.append(1)
         else:
@@ -179,10 +182,10 @@ class StockScreener:
 
     def _check_cci(self, selected_date_data, bullish_signals, bearish_signals, signals):
         cci = selected_date_data['cci_14'].values[0]
-        if cci >= 100:
+        if cci > 100:
             bearish_signals.append('bearish_cci')
             signals.append(-1)
-        elif cci <= -100:
+        elif cci < -100:
             bullish_signals.append('bullish_cci')
             signals.append(1)
         else:
@@ -190,10 +193,10 @@ class StockScreener:
     
     def _check_pcr(self, selected_date_data, bullish_signals, bearish_signals, signals):
         pcr = selected_date_data['pcr'].values[0]
-        if pcr > .7:
+        if pcr > 0.7:
             bearish_signals.append('bearish_pcr')
             signals.append(-1)
-        elif pcr <= .5:
+        elif pcr < 0.5:
             bullish_signals.append('bullish_pcr')
             signals.append(1)
         else:
@@ -212,33 +215,33 @@ class StockScreener:
         else:
             signals.append(0)
 
-    def _check_signals(self, symbol_data, selected_date_data):
+    def _check_signals(self, current_date_data, previous_date_data):
         bullish_signals = []
         bearish_signals = []
         signals = []
 
         if self.indicators == 'all' or 'sma_cross' in self.indicators:
-            self._check_sma_cross(selected_date_data, bullish_signals, bearish_signals, signals)
+            self._check_sma_cross(current_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'bollinger_band' in self.indicators:
-            self._check_bollinger_band(selected_date_data, bullish_signals, bearish_signals, signals)
+            self._check_bollinger_band(current_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'rsi' in self.indicators:
-            self._check_rsi(selected_date_data, bullish_signals, bearish_signals, signals)
+            self._check_rsi(current_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'macd' in self.indicators:
-            self._check_macd(selected_date_data, bullish_signals, bearish_signals, signals)
+            self._check_macd(current_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'macd_zero' in self.indicators:
-            self._check_macd_zero(selected_date_data, bullish_signals, bearish_signals, signals)
+            self._check_macd_zero(current_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'adx' in self.indicators:
-            self._check_adx(selected_date_data, bullish_signals, bearish_signals, signals)
+            self._check_adx(current_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'cci' in self.indicators:
-            self._check_cci(selected_date_data, bullish_signals, bearish_signals, signals)
+            self._check_cci(current_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'atr' in self.indicators:
-            self._check_atr(selected_date_data, bullish_signals, bearish_signals, signals)
+            self._check_atr(current_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'pe_ratio' in self.indicators:
-            self._check_pe_ratio(selected_date_data, bullish_signals, bearish_signals, signals)
+            self._check_pe_ratio(current_date_data, bullish_signals, bearish_signals, signals)
         if self.indicators == 'all' or 'pcr' in self.indicators:
-            self._check_pcr(selected_date_data, bullish_signals, bearish_signals, signals)
+            self._check_pcr(current_date_data, bullish_signals, bearish_signals, signals)
         #if self.indicators == 'all' or 'option_vol' in self.indicators:
-            #self._check_option_vol(selected_date_data, bullish_signals, bearish_signals, signals)
+            #self._check_option_vol(current_date_data, bullish_signals, bearish_signals, signals)
 
         return bullish_signals, bearish_signals, signals
 
@@ -256,11 +259,12 @@ class StockScreener:
 
     def _check_price_to_book(self, selected_date_data, bullish_signals, bearish_signals, signals):
         price_to_book = selected_date_data['price_to_book_ratio'].values[0]
-        price_to_book = selected_date_data['adjusted_close'].values[0] / price_to_book
-        if price_to_book < .99:
+        # P/B < 1 = trading below book value = bullish (value signal)
+        # P/B > 5 = richly valued relative to assets = bearish
+        if price_to_book < 1.0 and price_to_book > 0:
             bullish_signals.append('bullish_price_to_book')
             signals.append(1)
-        elif price_to_book > 1.25:
+        elif price_to_book > 5.0:
             bearish_signals.append('bearish_price_to_book')
             signals.append(-1)
         else:
