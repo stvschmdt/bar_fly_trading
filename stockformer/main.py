@@ -387,6 +387,12 @@ def parse_args():
         help="Comma-separated bucket edges for 'buckets' mode, e.g. '-6,-4,-2,0,2,4,6'",
     )
     parser.add_argument(
+        "--n-buckets",
+        type=int,
+        default=None,
+        help="Number of buckets when using --bucket-edges auto (default: 4)",
+    )
+    parser.add_argument(
         "--mode",
         type=str,
         default=DEFAULT_CONFIG["mode"],
@@ -673,6 +679,8 @@ def args_to_config(args):
             cfg["bucket_edges"] = "auto"
         else:
             cfg["bucket_edges"] = [float(x.strip()) for x in args.bucket_edges.split(",")]
+    if args.n_buckets is not None:
+        cfg["n_buckets"] = args.n_buckets
 
     # Set horizon and label_mode if provided
     if args.horizon is not None:

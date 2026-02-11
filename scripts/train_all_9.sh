@@ -3,13 +3,20 @@
 # Train all 9 StockFormer models (3 horizons x 3 label modes)
 # =============================================================================
 #
-# Launches 3 parallel groups (regression, binary, buckets), each running
-# sequentially through 3d -> 10d -> 30d horizons via explicit calls.
+# v3: Per-model hyperparameters to fix classification collapse.
+#
+# Key changes from v2:
+#   - Classification models use smaller architecture (d_model=64, 2 layers)
+#     to prevent memorization/collapse
+#   - Binary: label_smoothing loss + entropy_reg=0.3 + threshold=0.0
+#   - Buckets: soft_ordinal loss + auto quantile edges (balanced classes)
+#   - Noisy label filter disabled (min_return_threshold=0.0)
+#   - 30d models get extra regularization (dropout=0.3, weight_decay=0.03)
 #
 # Usage:
 #   ./scripts/train_all_9.sh
 #
-# Timeline: ~4-6 hours (3 parallel groups, reduced model size)
+# Timeline: ~3-5 hours (3 parallel groups, classification models are smaller)
 
 cd ~/proj/bar_fly_trading
 
@@ -33,9 +40,11 @@ mkdir -p "$MODEL_DIR" "$LOG_DIR" "$PRED_DIR" logs
 # =============================================================================
 
 echo "============================================================"
-echo "  StockFormer — Training all 9 models (v2)"
-echo "  Config: lookback=60, d_model=128, num_layers=3, dim_ff=256"
-echo "  Sector ETF + SPY features, noisy label filtering"
+echo "  StockFormer — Training all 9 models (v3)"
+echo "  Regression:      d_model=128, layers=3, dim_ff=256"
+echo "  Classification:  d_model=64,  layers=2, dim_ff=128"
+echo "  Binary:          label_smoothing + entropy_reg=0.3"
+echo "  Buckets:         soft_ordinal + auto quantile edges"
 echo "  Temporal split: train <= $TRAIN_END, infer >= $INFER_START"
 echo "  Started: $(date)"
 echo "============================================================"
@@ -78,42 +87,56 @@ export -f run_one
 export DATA_PATH TRAIN_END INFER_START MODEL_DIR LOG_DIR PRED_DIR
 
 # =============================================================================
+# Per-model hyperparameters
+# =============================================================================
+
+# Smaller model for classification (prevents memorization -> collapse)
+SMALL_MODEL="--d-model 64 --num-layers 2 --dim-feedforward 128"
+
+# 30d extra regularization (longer horizon = noisier target)
+REG_30D="--dropout 0.3 --weight-decay 0.03"
+
+# Binary classification: label smoothing + strong entropy reg + balanced threshold
+BINARY_BASE="--entropy-reg-weight 0.3 --binary-threshold 0.0 --min-return-threshold 0.0 $SMALL_MODEL"
+
+# Bucket classification: auto quantile edges (3 balanced classes) + strong entropy reg
+BUCKET_BASE="--bucket-edges auto --n-buckets 3 --entropy-reg-weight 0.3 --min-return-threshold 0.0 $SMALL_MODEL"
+
+# =============================================================================
 # Launch 3 parallel groups
 # =============================================================================
 
 echo "Launching 3 parallel training groups..."
-echo "  Group 1: regression (3d -> 10d -> 30d)"
-echo "  Group 2: binary    (3d -> 10d -> 30d)"
-echo "  Group 3: buckets   (3d -> 10d -> 30d)"
+echo "  Group 1: regression (3d -> 10d -> 30d)  [128d, 3 layers]"
+echo "  Group 2: binary    (3d -> 10d -> 30d)  [64d, 2 layers, label_smoothing]"
+echo "  Group 3: buckets   (3d -> 10d -> 30d)  [64d, 2 layers, soft_ordinal]"
 echo ""
 
-# Shared flags for classification models
-BINARY_FLAGS="--entropy-reg-weight 0.1 --binary-threshold 0.005 --min-return-threshold 0.0025"
-BUCKET_FLAGS="--bucket-edges=-1,1 --entropy-reg-weight 0.1 --min-return-threshold 0.0025"
-
 # Group 1: Regression — directional_mse (direction_weight=3.0 from config)
+# 3d and 10d: default model size (working well)
+# 30d: smaller model + extra regularization (was overfitting)
 (
-    run_one regression 3  directional_mse
-    run_one regression 10 directional_mse
-    run_one regression 30 directional_mse
+    run_one regression 3  directional_mse ""
+    run_one regression 10 directional_mse ""
+    run_one regression 30 directional_mse "$SMALL_MODEL $REG_30D"
 ) > "logs/train_regression_${LOGDATE}.log" 2>&1 &
 REG_PID=$!
 echo "  regression PID: $REG_PID"
 
-# Group 2: Binary — focal loss, noise filtering, asymmetric threshold
+# Group 2: Binary — label_smoothing loss, no noise filter, balanced threshold
 (
-    run_one binary 3  focal "$BINARY_FLAGS"
-    run_one binary 10 focal "$BINARY_FLAGS"
-    run_one binary 30 focal "$BINARY_FLAGS"
+    run_one binary 3  label_smoothing "$BINARY_BASE"
+    run_one binary 10 label_smoothing "$BINARY_BASE"
+    run_one binary 30 label_smoothing "$BINARY_BASE $REG_30D"
 ) > "logs/train_binary_${LOGDATE}.log" 2>&1 &
 BIN_PID=$!
 echo "  binary PID: $BIN_PID"
 
-# Group 3: 3-class buckets — focal loss, noise filtering
+# Group 3: 3-class buckets — soft_ordinal loss, auto quantile edges
 (
-    run_one buckets 3  focal "$BUCKET_FLAGS"
-    run_one buckets 10 focal "$BUCKET_FLAGS"
-    run_one buckets 30 focal "$BUCKET_FLAGS"
+    run_one buckets 3  soft_ordinal "$BUCKET_BASE"
+    run_one buckets 10 soft_ordinal "$BUCKET_BASE"
+    run_one buckets 30 soft_ordinal "$BUCKET_BASE $REG_30D"
 ) > "logs/train_buckets_${LOGDATE}.log" 2>&1 &
 BUCK_PID=$!
 echo "  buckets PID: $BUCK_PID"
