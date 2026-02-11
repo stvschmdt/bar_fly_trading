@@ -23,10 +23,27 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+from pandas.tseries.holiday import USFederalHolidayCalendar
+from pandas.tseries.offsets import CustomBusinessDay
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trading calendar helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_previous_trading_day(today: pd.Timestamp) -> pd.Timestamp:
+    """Get the most recent trading day before today, skipping weekends and US market holidays."""
+    us_holidays = USFederalHolidayCalendar().holidays(
+        start=today - pd.Timedelta(days=10),
+        end=today,
+    )
+    cbday = CustomBusinessDay(holidays=us_holidays)
+    return (today - cbday).normalize()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Column groups
@@ -330,14 +347,8 @@ def update_csv_from_bulk(csv_path, bulk_df, dry_run=False):
         }
 
     # Compute expected last trading day for staleness check
-    # If today is Monday, last trading day is Friday; otherwise yesterday
-    _dow = today.dayofweek  # 0=Mon ... 4=Fri
-    if _dow == 0:  # Monday
-        expected_last_trading_day = today - pd.Timedelta(days=3)
-    elif _dow == 6:  # Sunday (shouldn't run, but safety)
-        expected_last_trading_day = today - pd.Timedelta(days=2)
-    else:
-        expected_last_trading_day = today - pd.Timedelta(days=1)
+    # Accounts for weekends AND US market holidays (e.g., MLK Day, Presidents Day)
+    expected_last_trading_day = get_previous_trading_day(today)
 
     new_rows = []
     updated = 0

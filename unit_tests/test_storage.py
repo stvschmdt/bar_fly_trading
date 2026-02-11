@@ -792,3 +792,47 @@ class TestSignalGeneration:
         df = pd.DataFrame([signals])
         df["bull_bear_delta"] = sum(df[col] for col in signals.keys())
         assert df["bull_bear_delta"].iloc[0] == 1  # 4 bull - 3 bear - 3 neutral = 1
+
+
+# ===========================================================================
+# 13. Holiday-aware previous trading day
+# ===========================================================================
+
+class TestPreviousTradingDay:
+    """Validate get_previous_trading_day() skips weekends and US holidays."""
+
+    def test_normal_tuesday(self):
+        """Tuesday → Monday (no holiday)."""
+        from api_data.pull_api_data_rt import get_previous_trading_day
+        result = get_previous_trading_day(pd.Timestamp("2026-01-13"))
+        assert result == pd.Timestamp("2026-01-12")
+
+    def test_normal_monday(self):
+        """Monday → Friday (skip weekend)."""
+        from api_data.pull_api_data_rt import get_previous_trading_day
+        result = get_previous_trading_day(pd.Timestamp("2026-01-12"))
+        assert result == pd.Timestamp("2026-01-09")
+
+    def test_normal_friday(self):
+        """Friday → Thursday."""
+        from api_data.pull_api_data_rt import get_previous_trading_day
+        result = get_previous_trading_day(pd.Timestamp("2026-01-16"))
+        assert result == pd.Timestamp("2026-01-15")
+
+    def test_post_mlk_day(self):
+        """Tuesday after MLK Day (Mon Jan 19 2026) → Friday Jan 16."""
+        from api_data.pull_api_data_rt import get_previous_trading_day
+        result = get_previous_trading_day(pd.Timestamp("2026-01-20"))
+        assert result == pd.Timestamp("2026-01-16")
+
+    def test_post_thanksgiving(self):
+        """Friday after Thanksgiving (Thu Nov 27 2025) → Wednesday Nov 26."""
+        from api_data.pull_api_data_rt import get_previous_trading_day
+        result = get_previous_trading_day(pd.Timestamp("2025-11-28"))
+        assert result == pd.Timestamp("2025-11-26")
+
+    def test_post_independence_day(self):
+        """Monday Jul 6 2026 after July 4th (Sat, observed Fri Jul 3) → Thursday Jul 2."""
+        from api_data.pull_api_data_rt import get_previous_trading_day
+        result = get_previous_trading_day(pd.Timestamp("2026-07-06"))
+        assert result == pd.Timestamp("2026-07-02")
