@@ -18,7 +18,7 @@ import torch.nn.functional as F
 # Loss Function Selection
 # =============================================================================
 
-def get_loss_function(label_mode, loss_name=None, class_weights=None):
+def get_loss_function(label_mode, loss_name=None, class_weights=None, **kwargs):
     """
     Returns the appropriate loss function for the given label mode.
 
@@ -76,10 +76,10 @@ def get_loss_function(label_mode, loss_name=None, class_weights=None):
         return LogCoshLoss()
 
     elif key == "directional_mse":
-        return DirectionalMSE(direction_weight=1.0)
+        return DirectionalMSE(direction_weight=kwargs.get("direction_weight", 3.0))
 
     elif key == "combined_regression":
-        return CombinedRegressionLoss()
+        return CombinedRegressionLoss(direction_weight=kwargs.get("direction_weight", 3.0))
 
     elif key == "symmetric_ce":
         return SymmetricCrossEntropy(alpha=1.0, beta=0.5, class_weights=class_weights)
@@ -177,11 +177,11 @@ class DirectionalMSE(nn.Module):
     than minimizing MSE on noise.
 
     Args:
-        direction_weight: Extra penalty multiplier for sign errors (default: 1.0).
+        direction_weight: Extra penalty multiplier for sign errors (default: 3.0).
             Total weight on sign-wrong samples = 1 + direction_weight.
     """
 
-    def __init__(self, direction_weight=1.0):
+    def __init__(self, direction_weight=3.0):
         super().__init__()
         self.direction_weight = direction_weight
 
@@ -202,10 +202,10 @@ class CombinedRegressionLoss(nn.Module):
     Args:
         logcosh_weight: Weight for Log-Cosh component (default: 0.5)
         dmse_weight: Weight for Directional MSE component (default: 0.5)
-        direction_weight: DMSE direction penalty (default: 1.0)
+        direction_weight: DMSE direction penalty (default: 3.0)
     """
 
-    def __init__(self, logcosh_weight=0.5, dmse_weight=0.5, direction_weight=1.0):
+    def __init__(self, logcosh_weight=0.5, dmse_weight=0.5, direction_weight=3.0):
         super().__init__()
         self.logcosh = LogCoshLoss()
         self.dmse = DirectionalMSE(direction_weight=direction_weight)

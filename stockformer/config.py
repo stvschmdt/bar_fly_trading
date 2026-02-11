@@ -58,10 +58,10 @@ DEFAULT_CONFIG = {
     # -------------------------------------------------------------------------
     # Sequence and label settings
     # -------------------------------------------------------------------------
-    "lookback": 30,           # Number of past days to feed into the model
+    "lookback": 60,           # Number of past days to feed into the model
     "horizon": 3,             # Prediction horizon in days (3, 10, or 30)
     "label_mode": "binary",   # Options: "regression", "binary", "buckets"
-    "bucket_edges": [-6, -4, -2, 0, 2, 4, 6],  # Bucket edges in percent for "buckets" mode
+    "bucket_edges": [-1, 1],  # Bucket edges in percent for "buckets" mode (3 classes: DOWN/FLAT/UP)
     "mode": "correlated",     # "single" = stock features only, "correlated" = include embeddings
 
     # -------------------------------------------------------------------------
@@ -79,10 +79,10 @@ DEFAULT_CONFIG = {
     # -------------------------------------------------------------------------
     # Model architecture
     # -------------------------------------------------------------------------
-    "d_model": 64,            # Transformer model dimension
+    "d_model": 128,           # Transformer model dimension
     "nhead": 4,               # Number of attention heads
-    "num_layers": 2,          # Number of transformer encoder layers
-    "dim_feedforward": 128,   # Hidden dimension of feedforward network
+    "num_layers": 3,          # Number of transformer encoder layers
+    "dim_feedforward": 256,   # Hidden dimension of feedforward network
     "dropout": 0.2,
     "layer_drop": 0.1,        # Stochastic depth: probability of skipping a layer (0 = disabled)
 
@@ -97,6 +97,9 @@ DEFAULT_CONFIG = {
     # -------------------------------------------------------------------------
     "loss_name": None,            # Override loss: "focal", "label_smoothing", etc. (None = default for label_mode)
     "entropy_reg_weight": 0.05,   # Entropy regularization weight (>0 penalizes collapsed predictions)
+    "binary_threshold": 0.005,    # Binary label: class 1 = return >= +0.5% (was 0.0)
+    "min_return_threshold": 0.0025,  # Filter samples with |return| < 0.25% from classification training
+    "direction_weight": 3.0,      # DirectionalMSE penalty for wrong-sign predictions
 
     # -------------------------------------------------------------------------
     # Output paths
@@ -172,6 +175,15 @@ BASE_FEATURE_COLUMNS = [
     "treasury_yield_2year",
     "unemployment",
     "nonfarm_payroll",
+    # Sector-relative features (added by sector_features.py)
+    "sector_etf_ret_1d",
+    "sector_etf_ret_5d",
+    "sector_etf_vol_5d",
+    "sector_rel_ret_1d",
+    # Market features (SPY)
+    "spy_ret_1d",
+    "spy_ret_5d",
+    "spy_vol_5d",
 ]
 
 

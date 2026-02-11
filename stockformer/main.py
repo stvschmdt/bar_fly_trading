@@ -31,6 +31,7 @@ from .data_utils import (
     merge_embeddings,
 )
 from .features import add_all_features
+from .sector_features import extract_etf_features, add_sector_features, exclude_etf_symbols
 from .dataset import StockSequenceDataset, make_train_val_split, compute_quantile_edges
 from .model import create_model
 from .losses import get_loss_function
@@ -92,6 +93,12 @@ def train(cfg):
             print("Adding technical features...")
             df = add_all_features(df)
 
+            # Add sector/market ETF features (real data, replaces dummy embeddings)
+            print("Extracting sector/market ETF features...")
+            etf_features = extract_etf_features(df)
+            df = add_sector_features(df, etf_features)
+            df = exclude_etf_symbols(df)
+
             # Load embeddings (auto-create if missing)
             print("Loading embeddings...")
             market_result = None
@@ -134,6 +141,8 @@ def train(cfg):
             feature_cols=feature_cols,
             label_mode=cfg["label_mode"],
             bucket_edges=cfg["bucket_edges"],
+            binary_threshold=cfg.get("binary_threshold", 0.0),
+            min_return_threshold=cfg.get("min_return_threshold", 0.0),
         )
 
         # Train/val split
@@ -184,7 +193,10 @@ def train(cfg):
             effective_loss_name = None  # skip classification losses for regression
         else:
             effective_loss_name = _requested
-        loss_fn = get_loss_function(cfg["label_mode"], loss_name=effective_loss_name)
+        loss_fn = get_loss_function(
+            cfg["label_mode"], loss_name=effective_loss_name,
+            direction_weight=cfg.get("direction_weight", 3.0),
+        )
         optimizer = get_optimizer(model, cfg["optimizer"], cfg["lr"],
                                   weight_decay=cfg.get("weight_decay", 0.01))
 
@@ -313,11 +325,6 @@ def run_all_horizons(cfg):
                 else f"predictions_{suffix}.csv"
             )
 
-            # Auto-upgrade focal → ordinal_focal for bucket models
-            if label_mode == "buckets" and run_cfg.get("loss_name") == "focal":
-                run_cfg["loss_name"] = "ordinal_focal"
-                print(f"  Auto-upgraded loss: focal → ordinal_focal (ordinal-aware for buckets)")
-
             # Train and infer
             train(run_cfg)
             infer(run_cfg)
@@ -438,6 +445,24 @@ def parse_args():
         type=float,
         default=DEFAULT_CONFIG["entropy_reg_weight"],
         help="Entropy regularization weight to prevent prediction collapse (0 = disabled)",
+    )
+    parser.add_argument(
+        "--binary-threshold",
+        type=float,
+        default=DEFAULT_CONFIG["binary_threshold"],
+        help="Binary label threshold: class 1 = return >= this value (default: 0.005 = +0.5%%)",
+    )
+    parser.add_argument(
+        "--min-return-threshold",
+        type=float,
+        default=DEFAULT_CONFIG["min_return_threshold"],
+        help="Filter samples with |return| < this from classification training (default: 0.0025)",
+    )
+    parser.add_argument(
+        "--direction-weight",
+        type=float,
+        default=DEFAULT_CONFIG["direction_weight"],
+        help="DirectionalMSE penalty for wrong-sign predictions (default: 3.0)",
     )
     parser.add_argument(
         "--weight-decay",
@@ -609,6 +634,9 @@ def args_to_config(args):
     cfg["optimizer"] = args.optimizer
     cfg["loss_name"] = args.loss_name
     cfg["entropy_reg_weight"] = args.entropy_reg_weight
+    cfg["binary_threshold"] = args.binary_threshold
+    cfg["min_return_threshold"] = args.min_return_threshold
+    cfg["direction_weight"] = args.direction_weight
     cfg["weight_decay"] = args.weight_decay
     cfg["patience"] = args.patience
     cfg["warmup_epochs"] = args.warmup_epochs

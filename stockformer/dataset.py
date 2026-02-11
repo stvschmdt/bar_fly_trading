@@ -56,6 +56,8 @@ class StockSequenceDataset(Dataset):
         group_col: str = "ticker",
         date_col: str = "date",
         market_feature_cols: Optional[List[str]] = None,
+        binary_threshold: float = 0.0,
+        min_return_threshold: float = 0.0,
     ):
         self.df = df.sort_values([group_col, date_col]).reset_index(drop=True)
         self.lookback = lookback
@@ -66,6 +68,8 @@ class StockSequenceDataset(Dataset):
         self.group_col = group_col
         self.date_col = date_col
         self.market_feature_cols = market_feature_cols
+        self.binary_threshold = binary_threshold
+        self.min_return_threshold = min_return_threshold
 
         # Clean feature columns: forward-fill within each ticker, then zero-fill
         all_feat_cols = list(self.feature_cols)
@@ -110,6 +114,18 @@ class StockSequenceDataset(Dataset):
             if not pd.isna(val):
                 valid_indices.append(idx)
         self.indices = valid_indices
+
+        # Noisy label filter: remove samples with tiny |return| that are
+        # essentially coin-flips for classification (near the 0% boundary)
+        if self.min_return_threshold > 0 and self.label_mode in ("binary", "buckets"):
+            filtered = [
+                idx for idx in self.indices
+                if abs(float(self.df.loc[idx, self.target_col])) >= self.min_return_threshold
+            ]
+            removed = len(self.indices) - len(filtered)
+            print(f"Noisy label filter: removed {removed} samples with "
+                  f"|return| < {self.min_return_threshold:.4f}")
+            self.indices = filtered
 
         if not self.indices:
             raise ValueError("No valid indices with non-NaN targets found.")
@@ -159,7 +175,7 @@ class StockSequenceDataset(Dataset):
         if self.label_mode == "regression":
             label = target_val
         elif self.label_mode == "binary":
-            label = int(target_val >= 0.0)
+            label = int(target_val >= self.binary_threshold)
         elif self.label_mode == "buckets":
             label = self._get_bucket_label(target_val)
         else:

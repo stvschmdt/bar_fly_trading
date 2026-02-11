@@ -31,6 +31,7 @@ from .data_utils import (
     merge_embeddings,
 )
 from .features import add_all_features
+from .sector_features import extract_etf_features, add_sector_features, exclude_etf_symbols
 from .dataset import StockSequenceDataset
 from .model import create_model
 from .logging_utils import Timer
@@ -308,6 +309,12 @@ def infer(cfg):
             print("Adding technical features...")
             df = add_all_features(df)
 
+            # Add sector/market ETF features
+            print("Extracting sector/market ETF features...")
+            etf_features = extract_etf_features(df)
+            df = add_sector_features(df, etf_features)
+            df = exclude_etf_symbols(df)
+
             # Load embeddings
             print("Loading embeddings...")
             market_result = None
@@ -357,6 +364,8 @@ def infer(cfg):
             label_mode=cfg["label_mode"],
             bucket_edges=cfg.get("bucket_edges"),
             market_feature_cols=market_feature_cols,
+            binary_threshold=cfg.get("binary_threshold", 0.0),
+            min_return_threshold=cfg.get("min_return_threshold", 0.0),
         )
 
         print(f"Inference samples: {len(dataset)}")

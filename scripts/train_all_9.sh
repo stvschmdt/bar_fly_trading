@@ -33,9 +33,9 @@ mkdir -p "$MODEL_DIR" "$LOG_DIR" "$PRED_DIR" logs
 # =============================================================================
 
 echo "============================================================"
-echo "  StockFormer — Training all 9 models"
-echo "  Config from stockformer/config.py (lookback=30, d_model=64,"
-echo "    num_layers=2, features=stationary-only, per-ticker norm)"
+echo "  StockFormer — Training all 9 models (v2)"
+echo "  Config: lookback=60, d_model=128, num_layers=3, dim_ff=256"
+echo "  Sector ETF + SPY features, noisy label filtering"
 echo "  Temporal split: train <= $TRAIN_END, infer >= $INFER_START"
 echo "  Started: $(date)"
 echo "============================================================"
@@ -87,29 +87,33 @@ echo "  Group 2: binary    (3d -> 10d -> 30d)"
 echo "  Group 3: buckets   (3d -> 10d -> 30d)"
 echo ""
 
-# Group 1: Regression — sequential 3d, 10d, 30d
+# Shared flags for classification models
+BINARY_FLAGS="--entropy-reg-weight 0.1 --binary-threshold 0.005 --min-return-threshold 0.0025"
+BUCKET_FLAGS="--bucket-edges -1,1 --entropy-reg-weight 0.1 --min-return-threshold 0.0025"
+
+# Group 1: Regression — directional_mse (direction_weight=3.0 from config)
 (
-    run_one regression 3  combined_regression
-    run_one regression 10 combined_regression
-    run_one regression 30 combined_regression
+    run_one regression 3  directional_mse
+    run_one regression 10 directional_mse
+    run_one regression 30 directional_mse
 ) > "logs/train_regression_${LOGDATE}.log" 2>&1 &
 REG_PID=$!
 echo "  regression PID: $REG_PID"
 
-# Group 2: Binary — sequential 3d, 10d, 30d
+# Group 2: Binary — focal loss, noise filtering, asymmetric threshold
 (
-    run_one binary 3  symmetric_ce
-    run_one binary 10 symmetric_ce
-    run_one binary 30 symmetric_ce
+    run_one binary 3  focal "$BINARY_FLAGS"
+    run_one binary 10 focal "$BINARY_FLAGS"
+    run_one binary 30 focal "$BINARY_FLAGS"
 ) > "logs/train_binary_${LOGDATE}.log" 2>&1 &
 BIN_PID=$!
 echo "  binary PID: $BIN_PID"
 
-# Group 3: Buckets — sequential 3d, 10d, 30d
+# Group 3: 3-class buckets — focal loss, noise filtering
 (
-    run_one buckets 3  soft_ordinal "--bucket-edges auto"
-    run_one buckets 10 soft_ordinal "--bucket-edges auto"
-    run_one buckets 30 soft_ordinal "--bucket-edges auto"
+    run_one buckets 3  focal "$BUCKET_FLAGS"
+    run_one buckets 10 focal "$BUCKET_FLAGS"
+    run_one buckets 30 focal "$BUCKET_FLAGS"
 ) > "logs/train_buckets_${LOGDATE}.log" 2>&1 &
 BUCK_PID=$!
 echo "  buckets PID: $BUCK_PID"
