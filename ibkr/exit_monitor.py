@@ -268,7 +268,13 @@ class ExitMonitor:
                                  'dry_run': False})
 
     def _adjust_trailing_stops(self):
-        """Adjust stop order prices upward for trailing stop positions."""
+        """Adjust stop order prices upward for trailing stop positions.
+
+        Supports:
+          - Activation threshold: trailing only starts after gain >= activation_pct
+          - Progressive tightening: trail narrows from full to half as price
+            approaches take-profit
+        """
         trailing_positions = self.ledger.get_trailing_stop_positions()
 
         for pos in trailing_positions:
@@ -277,46 +283,75 @@ class ExitMonitor:
                 pos.get('contract_type', ''), pos.get('strike', 0),
                 pos.get('expiration', ''))
             trailing_pct = pos['trailing_stop_pct']
-            old_hwm = pos.get('high_water_mark', pos['entry_price'])
+            activation_pct = pos.get('trailing_activation_pct', 0.0)
+            tp_pct = pos.get('take_profit_pct')
+            entry_price = pos['entry_price']
+            old_hwm = pos.get('high_water_mark', entry_price)
             stop_id = pos.get('stop_order_id', -1)
+            is_active = pos.get('trailing_active', False)
 
             current_price = self._get_price(pos)
             if current_price is None or current_price <= 0:
                 continue
 
+            pct_from_entry = (current_price - entry_price) / entry_price
+
+            # B: Check activation threshold
+            if not is_active:
+                if pct_from_entry >= activation_pct:
+                    is_active = True
+                    self.ledger.set_trailing_active(ledger_key, True)
+                    logger.info(f"  TRAIL ACTIVATED: {ledger_key} "
+                               f"gain={pct_from_entry:+.1%} >= {activation_pct:+.1%}")
+                else:
+                    continue  # Not yet activated, skip
+
+            # C: Progressive tightening
+            if tp_pct and tp_pct > activation_pct:
+                progress = min(max(
+                    (pct_from_entry - activation_pct) / (tp_pct - activation_pct),
+                    0.0), 1.0)
+                effective_trail = trailing_pct * (1.0 - 0.5 * progress)
+            else:
+                effective_trail = trailing_pct
+
             # Update high-water mark if price is higher
             if current_price > old_hwm:
                 new_hwm = current_price
                 self.ledger.update_high_water_mark(ledger_key, new_hwm)
+            else:
+                new_hwm = old_hwm
 
-                new_stop_price = round(new_hwm * (1 + trailing_pct), 2)
-                old_stop_price = round(old_hwm * (1 + trailing_pct), 2)
+            new_stop_price = round(new_hwm * (1 + effective_trail), 2)
+            old_stop_price = round(old_hwm * (1 + trailing_pct), 2)
 
-                if new_stop_price > old_stop_price:
-                    logger.info(
-                        f"  TRAILING: {ledger_key} HWM ${old_hwm:.2f} → ${new_hwm:.2f}, "
-                        f"stop ${old_stop_price:.2f} → ${new_stop_price:.2f}")
+            if new_stop_price > old_stop_price:
+                logger.info(
+                    f"  TRAILING: {ledger_key} HWM ${old_hwm:.2f} → ${new_hwm:.2f}, "
+                    f"stop ${old_stop_price:.2f} → ${new_stop_price:.2f} "
+                    f"(trail={effective_trail:.1%})")
 
-                    if not self.dry_run:
-                        if stop_id > 0:
-                            # Stock: modify IBKR stop order
-                            self.order_manager.modify_stop_price(stop_id, new_stop_price)
-                        elif pos.get('instrument_type') == 'option':
-                            # Option: check if trailing stop triggered
-                            if current_price <= new_stop_price:
-                                logger.info(f"  TRAILING STOP triggered for {ledger_key}")
-                                self._sell_position(pos, ledger_key,
-                                                    'trailing_stop', current_price)
+                if not self.dry_run:
+                    if stop_id > 0:
+                        # Stock: modify IBKR stop order
+                        self.order_manager.modify_stop_price(stop_id, new_stop_price)
+                    elif pos.get('instrument_type') == 'option':
+                        # Option: check if trailing stop triggered
+                        if current_price <= new_stop_price:
+                            logger.info(f"  TRAILING STOP triggered for {ledger_key}")
+                            self._sell_position(pos, ledger_key,
+                                                'trailing_stop', current_price)
 
-                    self.actions.append({
-                        'action': 'trailing_stop_adjust',
-                        'symbol': ledger_key,
-                        'old_hwm': old_hwm,
-                        'new_hwm': new_hwm,
-                        'old_stop': old_stop_price,
-                        'new_stop': new_stop_price,
-                        'dry_run': self.dry_run,
-                    })
+                self.actions.append({
+                    'action': 'trailing_stop_adjust',
+                    'symbol': ledger_key,
+                    'old_hwm': old_hwm,
+                    'new_hwm': new_hwm,
+                    'old_stop': old_stop_price,
+                    'new_stop': new_stop_price,
+                    'effective_trail': effective_trail,
+                    'dry_run': self.dry_run,
+                })
 
     def get_summary(self) -> str:
         """Format a summary of actions taken."""

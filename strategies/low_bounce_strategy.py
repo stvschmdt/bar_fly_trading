@@ -56,9 +56,10 @@ class LowBounceStrategy(BaseStrategy):
     MAX_POSITIONS = 10
 
     # Exit safety overrides (wider for longer-hold contrarian plays)
-    STOP_LOSS_PCT = -0.08       # -8% (aligned with trailing stop)
+    STOP_LOSS_PCT = -0.10       # -10%
     TAKE_PROFIT_PCT = 0.20      # +20%
     TRAILING_STOP_PCT = -0.08   # -8% from high-water mark
+    TRAILING_ACTIVATION_PCT = 0.04  # Start trailing after +4%
 
     def __init__(self, account, symbols, data=None, data_path=None,
                  position_size=0.1, max_hold_days=30):

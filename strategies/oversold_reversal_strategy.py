@@ -69,6 +69,8 @@ class OversoldReversalStrategy(BaseStrategy):
     # Exit safety overrides (tighter for short-term reversal plays)
     STOP_LOSS_PCT = -0.05       # -5%
     TAKE_PROFIT_PCT = 0.10      # +10%
+    TRAILING_STOP_PCT = -0.04   # -4% from high-water mark
+    TRAILING_ACTIVATION_PCT = 0.02  # Start trailing after +2%
 
     def __init__(self, account, symbols, data=None, predictions_path=None,
                  position_size=0.1):

@@ -80,12 +80,15 @@ class PositionLedger:
             self._version = data.get('version', 1)
             self._positions = data.get('positions', {})
 
-            # Backfill options fields for old entries
+            # Backfill fields for old entries
             for pos in self._positions.values():
                 pos.setdefault('instrument_type', 'stock')
                 pos.setdefault('contract_type', '')
                 pos.setdefault('strike', 0.0)
                 pos.setdefault('expiration', '')
+                pos.setdefault('trailing_activation_pct', 0.0)
+                pos.setdefault('trailing_active',
+                               pos.get('trailing_stop_pct') is not None)
 
             # Migration: drop closed_positions from old files on next save
         except json.JSONDecodeError as e:
@@ -128,6 +131,7 @@ class PositionLedger:
                      trailing_stop_pct: Optional[float], max_hold_days: Optional[int],
                      stop_order_id: int, profit_order_id: int,
                      parent_order_id: int = -1,
+                     trailing_activation_pct: float = 0.0,
                      instrument_type: str = 'stock',
                      contract_type: str = '',
                      strike: float = 0.0,
@@ -151,6 +155,8 @@ class PositionLedger:
             'stop_loss_pct': stop_loss_pct,
             'take_profit_pct': take_profit_pct,
             'trailing_stop_pct': trailing_stop_pct,
+            'trailing_activation_pct': trailing_activation_pct,
+            'trailing_active': False,
             'max_hold_days': max_hold_days,
             'stop_price': stop_price,
             'take_profit_price': take_profit_price,
@@ -205,7 +211,8 @@ class PositionLedger:
         fieldnames = [
             'symbol', 'instrument_type', 'contract_type', 'strike', 'expiration',
             'strategy', 'entry_price', 'entry_date', 'shares',
-            'stop_loss_pct', 'take_profit_pct', 'trailing_stop_pct', 'max_hold_days',
+            'stop_loss_pct', 'take_profit_pct', 'trailing_stop_pct',
+            'trailing_activation_pct', 'trailing_active', 'max_hold_days',
             'stop_price', 'take_profit_price',
             'exit_price', 'exit_date', 'exit_time', 'exit_reason',
             'high_water_mark', 'stop_order_id', 'profit_order_id',
@@ -239,6 +246,11 @@ class PositionLedger:
         """Update trailing stop high-water mark."""
         if symbol in self._positions:
             self._positions[symbol]['high_water_mark'] = new_high
+
+    def set_trailing_active(self, key: str, active: bool) -> None:
+        """Mark a position's trailing stop as activated."""
+        if key in self._positions:
+            self._positions[key]['trailing_active'] = active
 
     def get_expired_positions(self, as_of: Optional[date] = None) -> list[dict]:
         """Return positions that have exceeded their max_hold_days."""

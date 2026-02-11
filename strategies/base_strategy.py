@@ -63,6 +63,7 @@ class BaseStrategy(ABC):
     STOP_LOSS_PCT = -0.08       # -8% hard stop (backstop)
     TAKE_PROFIT_PCT = 0.15      # +15% take profit (backstop)
     TRAILING_STOP_PCT = None    # None = disabled; e.g. -0.08 for -8%
+    TRAILING_ACTIVATION_PCT = 0.0  # Start trailing after position is up this much (0.0 = immediate)
 
     # ── Instrument type (override in subclass or via runner flag) ──
     INSTRUMENT_TYPE = 'stock'   # 'stock' or 'option'
@@ -371,15 +372,27 @@ class BaseStrategy(ABC):
         if self.TAKE_PROFIT_PCT is not None and pct_change >= self.TAKE_PROFIT_PCT:
             return True, f"take_profit ({pct_change:+.1%} >= {self.TAKE_PROFIT_PCT:+.0%})"
 
-        # Trailing stop
+        # Trailing stop (with activation threshold + progressive tightening)
         if self.TRAILING_STOP_PCT is not None:
-            high = self._trailing_highs.get(symbol, entry_price)
-            if current_price > high:
-                high = current_price
-                self._trailing_highs[symbol] = high
-            drawdown = (current_price - high) / high
-            if drawdown <= self.TRAILING_STOP_PCT:
-                return True, f"trailing_stop ({drawdown:+.1%} from high ${high:.2f})"
+            # B: Only activate trailing after position is up enough
+            if pct_change >= self.TRAILING_ACTIVATION_PCT:
+                high = self._trailing_highs.get(symbol, entry_price)
+                if current_price > high:
+                    high = current_price
+                    self._trailing_highs[symbol] = high
+
+                # C: Progressive tightening — interpolate trailing pct between
+                # TRAILING_STOP_PCT (at activation) and half that (at take profit)
+                if self.TAKE_PROFIT_PCT and self.TAKE_PROFIT_PCT > self.TRAILING_ACTIVATION_PCT:
+                    progress = (pct_change - self.TRAILING_ACTIVATION_PCT) / (self.TAKE_PROFIT_PCT - self.TRAILING_ACTIVATION_PCT)
+                    progress = min(max(progress, 0.0), 1.0)
+                    effective_trail = self.TRAILING_STOP_PCT * (1.0 - 0.5 * progress)
+                else:
+                    effective_trail = self.TRAILING_STOP_PCT
+
+                drawdown = (current_price - high) / high
+                if drawdown <= effective_trail:
+                    return True, f"trailing_stop ({drawdown:+.1%} from high ${high:.2f}, trail={effective_trail:.1%})"
 
         return False, ""
 

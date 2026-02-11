@@ -55,6 +55,8 @@ class OversoldBounceStrategy(BaseStrategy):
     # Exit safety overrides (tighter than base for short-term bounces)
     STOP_LOSS_PCT = -0.05       # -5%
     TAKE_PROFIT_PCT = 0.08      # +8%
+    TRAILING_STOP_PCT = -0.03   # -3% from high-water mark
+    TRAILING_ACTIVATION_PCT = 0.02  # Start trailing after +2%
 
     def __init__(self, account, symbols, data=None, data_path=None,
                  position_size=0.1, max_hold_days=5):

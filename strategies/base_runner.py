@@ -417,6 +417,7 @@ class BaseRunner:
                         stop_loss_pct=strategy.STOP_LOSS_PCT,
                         take_profit_pct=strategy.TAKE_PROFIT_PCT,
                         trailing_stop_pct=strategy.TRAILING_STOP_PCT,
+                        trailing_activation_pct=strategy.TRAILING_ACTIVATION_PCT,
                         max_hold_days=strategy.MAX_HOLD_DAYS,
                         instrument_type=strategy.INSTRUMENT_TYPE,
                     )
@@ -480,6 +481,7 @@ class BaseRunner:
                     stop_loss_pct=strategy.STOP_LOSS_PCT,
                     take_profit_pct=strategy.TAKE_PROFIT_PCT,
                     trailing_stop_pct=strategy.TRAILING_STOP_PCT,
+                    trailing_activation_pct=strategy.TRAILING_ACTIVATION_PCT,
                     max_hold_days=strategy.MAX_HOLD_DAYS,
                     instrument_type=strategy.INSTRUMENT_TYPE,
                 )
@@ -595,6 +597,7 @@ class BaseRunner:
                     stop_loss_pct=strategy.STOP_LOSS_PCT,
                     take_profit_pct=strategy.TAKE_PROFIT_PCT,
                     trailing_stop_pct=strategy.TRAILING_STOP_PCT,
+                    trailing_activation_pct=strategy.TRAILING_ACTIVATION_PCT,
                     max_hold_days=strategy.MAX_HOLD_DAYS,
                     instrument_type=strategy.INSTRUMENT_TYPE,
                 )

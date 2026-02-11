@@ -65,6 +65,8 @@ class RegressionMomentumStrategy(BaseStrategy):
     # Exit safety overrides
     STOP_LOSS_PCT = -0.06       # -6%
     TAKE_PROFIT_PCT = 0.12      # +12%
+    TRAILING_STOP_PCT = -0.05   # -5% from high-water mark
+    TRAILING_ACTIVATION_PCT = 0.03  # Start trailing after +3%
 
     def __init__(self, account, symbols, data=None, predictions_path=None,
                  position_size=0.1, max_hold_days=13):

@@ -377,6 +377,7 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
                 sl_pct = _parse_exit_param(sig.get('stop_loss_pct'), default=-0.08)
                 tp_pct = _parse_exit_param(sig.get('take_profit_pct'), default=0.15)
                 ts_pct = _parse_exit_param(sig.get('trailing_stop_pct'), default=None)
+                ta_pct = _parse_exit_param(sig.get('trailing_activation_pct'), default=0.0)
                 max_hold = _parse_exit_param(sig.get('max_hold_days'), default=20, as_int=True)
 
                 try:
@@ -395,6 +396,7 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
                         stop_order_id=-1,
                         profit_order_id=-1,
                         parent_order_id=-1,
+                        trailing_activation_pct=ta_pct,
                         instrument_type='option',
                         contract_type=opt_ctype_val,
                         strike=float(opt_strike_val) if opt_strike_val else 0.0,
@@ -453,6 +455,7 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
                     sl_pct = _parse_exit_param(sig.get('stop_loss_pct'), default=-0.08)
                     tp_pct = _parse_exit_param(sig.get('take_profit_pct'), default=0.15)
                     ts_pct = _parse_exit_param(sig.get('trailing_stop_pct'), default=None)
+                    ta_pct = _parse_exit_param(sig.get('trailing_activation_pct'), default=0.0)
                     max_hold = _parse_exit_param(sig.get('max_hold_days'), default=20, as_int=True)
 
                     bracket = _submit_exit_brackets(
@@ -491,6 +494,7 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
                             stop_order_id=stop_oid,
                             profit_order_id=profit_oid,
                             parent_order_id=result.order.order_id if result.order else -1,
+                            trailing_activation_pct=ta_pct,
                         )
                         ledger.save()
                         logger.info(f"  LEDGER: Stock position recorded for {symbol}")

@@ -33,7 +33,8 @@ import pandas as pd
 
 SIGNAL_COLUMNS = [
     'action', 'symbol', 'shares', 'price', 'strategy', 'reason', 'timestamp',
-    'stop_loss_pct', 'take_profit_pct', 'trailing_stop_pct', 'max_hold_days',
+    'stop_loss_pct', 'take_profit_pct', 'trailing_stop_pct',
+    'trailing_activation_pct', 'max_hold_days',
     'instrument_type',
 ]
 
@@ -51,7 +52,8 @@ class SignalWriter:
 
     def add(self, action, symbol, shares=0, price=0.0, strategy="", reason="",
             stop_loss_pct=None, take_profit_pct=None, trailing_stop_pct=None,
-            max_hold_days=None, instrument_type='stock'):
+            trailing_activation_pct=None, max_hold_days=None,
+            instrument_type='stock'):
         """
         Add a trade signal.
 
@@ -65,6 +67,7 @@ class SignalWriter:
             stop_loss_pct: Stop loss as decimal (e.g. -0.07 for -7%)
             take_profit_pct: Take profit as decimal (e.g. 0.12 for +12%)
             trailing_stop_pct: Trailing stop as decimal (e.g. -0.08 for -8%)
+            trailing_activation_pct: Gain threshold to activate trailing (e.g. 0.03 for +3%)
             max_hold_days: Maximum hold period in trading days
             instrument_type: 'stock' or 'option' — controls execution routing
         """
@@ -79,6 +82,7 @@ class SignalWriter:
             'stop_loss_pct': stop_loss_pct if stop_loss_pct is not None else '',
             'take_profit_pct': take_profit_pct if take_profit_pct is not None else '',
             'trailing_stop_pct': trailing_stop_pct if trailing_stop_pct is not None else '',
+            'trailing_activation_pct': trailing_activation_pct if trailing_activation_pct is not None else '',
             'max_hold_days': max_hold_days if max_hold_days is not None else '',
             'instrument_type': instrument_type,
         })
@@ -149,7 +153,8 @@ def read_signals(filepath):
         df['timestamp'] = ''
 
     # Exit param columns (backward compatible with old CSVs)
-    exit_cols = ['stop_loss_pct', 'take_profit_pct', 'trailing_stop_pct', 'max_hold_days']
+    exit_cols = ['stop_loss_pct', 'take_profit_pct', 'trailing_stop_pct',
+                 'trailing_activation_pct', 'max_hold_days']
     for col in exit_cols:
         if col not in df.columns:
             df[col] = ''
