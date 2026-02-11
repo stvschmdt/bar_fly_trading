@@ -329,8 +329,19 @@ def update_csv_from_bulk(csv_path, bulk_df, dry_run=False):
             'low': row.get('low', 0),
         }
 
+    # Compute expected last trading day for staleness check
+    # If today is Monday, last trading day is Friday; otherwise yesterday
+    _dow = today.dayofweek  # 0=Mon ... 4=Fri
+    if _dow == 0:  # Monday
+        expected_last_trading_day = today - pd.Timedelta(days=3)
+    elif _dow == 6:  # Sunday (shouldn't run, but safety)
+        expected_last_trading_day = today - pd.Timedelta(days=2)
+    else:
+        expected_last_trading_day = today - pd.Timedelta(days=1)
+
     new_rows = []
     updated = 0
+    stale_symbols = []
     for symbol, qdata in quotes.items():
         price = qdata['price']
         volume = qdata['volume']
@@ -353,6 +364,23 @@ def update_csv_from_bulk(csv_path, bulk_df, dry_run=False):
 
         # If latest row is NOT today, clone it and append as today
         if has_date and pd.notna(latest_date) and latest_date.normalize() < today:
+            # Staleness check: source row must be from the last trading day
+            source_date = latest_date.normalize()
+            if source_date < expected_last_trading_day:
+                days_stale = (expected_last_trading_day - source_date).days
+                stale_symbols.append((symbol, source_date.strftime('%Y-%m-%d'), days_stale))
+                logger.warning(
+                    f"STALE DATA: {symbol} last row is {source_date.strftime('%Y-%m-%d')} "
+                    f"({days_stale}d older than expected {expected_last_trading_day.strftime('%Y-%m-%d')}). "
+                    f"Skipping clone — run nightly pipeline first."
+                )
+                print(
+                    f"  WARNING: {symbol} data stale "
+                    f"(last={source_date.strftime('%Y-%m-%d')}, "
+                    f"expected>={expected_last_trading_day.strftime('%Y-%m-%d')}). "
+                    f"Skipping row clone."
+                )
+                continue
             new_row = df.loc[latest_idx].copy()
             new_row['date'] = today_str
             new_row['_parsed_date'] = today
@@ -445,8 +473,23 @@ def update_csv_from_bulk(csv_path, bulk_df, dry_run=False):
         for i in range(len(df) - len(new_rows), len(df)):
             update_derived_columns_generic(df, i, sym_col, close_col)
 
+    # Summary of stale symbols
+    if stale_symbols:
+        print(f"\n  === STALE DATA SUMMARY: {len(stale_symbols)} symbols skipped ===")
+        for sym, last_date, days in stale_symbols:
+            print(f"    {sym}: last data {last_date} ({days}d stale)")
+        print(f"  Run nightly pipeline to refresh before RT scanning.\n")
+        logger.warning(
+            f"Skipped {len(stale_symbols)} stale symbols: "
+            + ", ".join(s[0] for s in stale_symbols[:10])
+            + ("..." if len(stale_symbols) > 10 else "")
+        )
+
+    # Drop temporary column before saving
+    df.drop(columns=['_parsed_date'], inplace=True, errors='ignore')
+
     if not dry_run and updated > 0:
-        df.to_csv(csv_path)
+        df.to_csv(csv_path, index=False)
 
     return updated
 
@@ -491,6 +534,30 @@ def _fetch_individual_quotes(symbols_list):
             print(" FAILED")
 
     print(f"  Fetched {len(rows)}/{total} quotes ({failed} failed)")
+
+    # Second pass: retry failed symbols to maximize coverage
+    if failed > 0:
+        fetched_syms = {r['symbol'] for r in rows}
+        retry_syms = [s for s in symbols_list if s not in fetched_syms]
+        print(f"  Retry pass: {len(retry_syms)} symbols...")
+        retry_ok = 0
+        for symbol in retry_syms:
+            data = fetch_symbol_rt_data(alpha_client, symbol)
+            if data and data['ohlcv'].get('adjusted_close', 0) > 0:
+                ohlcv = data['ohlcv']
+                rows.append({
+                    'symbol': symbol,
+                    'open': ohlcv.get('open', 0),
+                    'high': ohlcv.get('high', 0),
+                    'low': ohlcv.get('low', 0),
+                    'price': ohlcv['adjusted_close'],
+                    'volume': ohlcv.get('volume', 0),
+                })
+                rt_data[symbol] = data
+                retry_ok += 1
+        print(f"  Retry recovered {retry_ok}/{len(retry_syms)} symbols "
+              f"(total: {len(rows)}/{total})")
+
     bulk_df = pd.DataFrame(rows) if rows else pd.DataFrame()
     return bulk_df, rt_data
 
@@ -639,8 +706,18 @@ def find_csv_files(data_dir):
 
 def get_symbols_from_csv(csv_path):
     """Get unique symbols from a CSV without loading all data."""
-    df = pd.read_csv(csv_path, index_col=0, usecols=[0, 2])  # index + symbol
-    return df['symbol'].unique().tolist()
+    # Read just the header to detect column layout
+    header = pd.read_csv(csv_path, nrows=0)
+    if 'symbol' in header.columns:
+        df = pd.read_csv(csv_path, usecols=['symbol'])
+        return df['symbol'].unique().tolist()
+    elif 'ticker' in header.columns:
+        df = pd.read_csv(csv_path, usecols=['ticker'])
+        return df['ticker'].unique().tolist()
+    else:
+        # Legacy format with unnamed index column
+        df = pd.read_csv(csv_path, index_col=0, usecols=[0, 2])
+        return df.iloc[:, 0].unique().tolist()
 
 
 def run_rt_update(api_client, data_dir, symbols_filter=None, dry_run=False,
