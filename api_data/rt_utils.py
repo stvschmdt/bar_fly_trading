@@ -417,6 +417,84 @@ def get_options_snapshot(
     return quote, df
 
 
+def get_realtime_options_snapshot(
+    symbol: str,
+    months_out: int = 1,
+    num_strikes: int = 2,
+    option_type: str = 'both'
+) -> tuple[dict, pd.DataFrame]:
+    """
+    Get REALTIME options snapshot using the AV REALTIME_OPTIONS endpoint.
+
+    Same interface as get_options_snapshot but uses live intraday pricing
+    instead of end-of-day historical data.
+
+    Args:
+        symbol: Stock ticker symbol
+        months_out: Months out for expiration (1 = next month)
+        num_strikes: Number of strikes above and below ATM
+        option_type: 'call', 'put', or 'both'
+
+    Returns:
+        Tuple of (quote_dict, options_dataframe)
+    """
+    # Get current price
+    quote = get_realtime_quote(symbol)
+    current_price = quote['price']
+    logger.info(f"{symbol} RT options price: ${current_price:.2f}")
+
+    # Fetch realtime options chain
+    response = alpha_client.fetch(
+        function='REALTIME_OPTIONS', symbol=symbol, require_greeks='true'
+    )
+
+    if 'data' not in response or not response['data']:
+        raise ValueError(f"No realtime options data returned for {symbol}")
+
+    df = pd.DataFrame(response['data'])
+
+    # Convert numeric columns
+    numeric_cols = ['strike', 'last', 'mark', 'bid', 'ask', 'bid_size', 'ask_size',
+                    'volume', 'open_interest', 'implied_volatility',
+                    'delta', 'gamma', 'theta', 'vega', 'rho']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Get available expirations and find closest monthly
+    expirations = sorted(df['expiration'].unique())
+    target_exp = find_closest_monthly_expiration(expirations, months_out)
+    target_3rd_friday = get_monthly_expiration(months_out)
+    logger.info(f"RT options target exp (3rd Friday): {target_3rd_friday}, closest: {target_exp}")
+
+    # Filter to target expiration
+    df = df[df['expiration'] == target_exp]
+
+    # Filter by option type
+    if option_type in ('call', 'put'):
+        df = df[df['type'] == option_type]
+
+    # Find ATM + nearby strikes
+    all_strikes = sorted(df['strike'].unique())
+    nearby_strikes = _get_nearby_strikes(all_strikes, current_price, num_strikes)
+
+    # Filter to nearby strikes
+    df = df[df['strike'].isin(nearby_strikes)]
+
+    # Compute midpoint
+    df = df.copy()
+    df['mid'] = (df['bid'] + df['ask']) / 2
+
+    # Select and order columns
+    output_cols = ['strike', 'type', 'bid', 'ask', 'mid', 'last', 'volume',
+                   'open_interest', 'implied_volatility', 'delta', 'gamma',
+                   'theta', 'vega', 'expiration']
+    available_cols = [c for c in output_cols if c in df.columns]
+    df = df[available_cols].sort_values(['strike', 'type']).reset_index(drop=True)
+
+    return quote, df
+
+
 def _get_nearby_strikes(strike_prices: list[float], stock_price: float, num_strikes: int) -> list[float]:
     """
     Get ATM strike + num_strikes above and below.

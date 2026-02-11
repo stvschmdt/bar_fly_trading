@@ -8,11 +8,12 @@ Translates stock BUY/SELL signals into options orders:
 Always buys to open — never sells naked options.
 
 Flow:
-  1. Initial AV options fetch → select strike (closest to money, tightest spread)
+  1. Realtime AV options fetch → select strike (closest to money, tightest spread)
   2. Validate guardrails (spread, OI, volume)
-  3. Before order: fresh AV re-fetch → re-select best strike, get live pricing
-  4. Qualify contract with IBKR
-  5. Place limit order at fresh mid, reprice toward ask if not filled
+  3. Qualify contract with IBKR
+  4. Place limit order at realtime mid, reprice toward ask if not filled
+
+Uses AV REALTIME_OPTIONS endpoint for live intraday bid/ask pricing.
 
 Usage:
     from ibkr.options_executor import execute_option_signal
@@ -31,7 +32,7 @@ from ib_insync import Option as IBOption, MarketOrder, LimitOrder
 # Ensure project root on path for rt_utils import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api_data.rt_utils import get_options_snapshot
+from api_data.rt_utils import get_realtime_options_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,9 @@ REPRICE_SPREAD_PCT = 0.15   # After timeout, bump limit by 15% of spread toward 
 def select_option_contract(symbol: str, action: str, stock_price: float,
                            months_out: int = DEFAULT_MONTHS_OUT):
     """
-    Fetch the options chain and select the target contract.
+    Fetch the realtime options chain and select the target contract.
+
+    Uses AV REALTIME_OPTIONS for live intraday bid/ask pricing.
 
     Args:
         symbol: Stock ticker
@@ -66,12 +69,12 @@ def select_option_contract(symbol: str, action: str, stock_price: float,
     option_type = 'call' if action == 'BUY' else 'put'
 
     try:
-        quote, options_df = get_options_snapshot(
+        quote, options_df = get_realtime_options_snapshot(
             symbol, months_out=months_out,
             num_strikes=NUM_STRIKES, option_type=option_type
         )
     except Exception as e:
-        logger.error(f"Failed to fetch options chain for {symbol}: {e}")
+        logger.error(f"Failed to fetch realtime options chain for {symbol}: {e}")
         return None, None, None
 
     if options_df is None or options_df.empty:
@@ -157,7 +160,7 @@ def validate_option(option: dict, symbol: str) -> Optional[str]:
     spread_dollar = ask - bid
     if spread_pct >= MAX_SPREAD_PCT and spread_dollar >= MAX_SPREAD_DOLLAR:
         return (f"Spread too wide: {spread_pct:.1%} (>={MAX_SPREAD_PCT:.0%}) "
-                f"and ${spread_dollar:.2f}/share (>={MAX_SPREAD_DOLLAR:.2f}, "
+                f"and ${spread_dollar:.2f}/share (>=${MAX_SPREAD_DOLLAR:.2f}, "
                 f"=${spread_dollar * 100:.0f}/contract) "
                 f"(bid={bid:.2f}, ask={ask:.2f}, mid={mid:.2f})")
 
@@ -241,7 +244,7 @@ def execute_option_signal(executor, sig: dict, dry_run: bool = False,
         'executed_at': timestamp,
     }
 
-    # 1. Initial AV fetch — select option contract (strike, expiration)
+    # 1. Realtime AV fetch — select option contract (strike, expiration, live pricing)
     logger.info(f"Selecting {option_type} for {symbol} ({action} signal, price=${signal_price:.2f})")
     option, quote, options_df = select_option_contract(symbol, action, signal_price)
 
@@ -265,79 +268,7 @@ def execute_option_signal(executor, sig: dict, dry_run: bool = False,
     base_result['expiration'] = expiration
     base_result['premium'] = mid
 
-    logger.info(f"  Initial selection: {symbol} {expiration} {strike} {option_type.upper()}")
-    logger.info(f"  Bid={bid:.2f} Ask={ask:.2f} Mid={mid:.2f} OI={oi} Vol={vol} IV={iv:.2f} Delta={delta:.3f}")
-
-    # 2. Validate guardrails on initial data
-    rejection = validate_option(option, symbol)
-    if rejection:
-        logger.warning(f"  REJECTED: {rejection}")
-        return {**base_result, 'status': 'failed', 'fill_price': 0.0,
-                'filled_shares': 0, 'error': rejection}
-
-    # 3. Dry run: log and return (skip fresh re-fetch)
-    if dry_run:
-        if raw_shares == 0:
-            contracts = calculate_option_contracts(executor, mid)
-        else:
-            contracts = raw_shares
-        logger.info(f"  [DRY RUN] Would BUY {contracts} x {symbol} {expiration} "
-                     f"{strike} {option_type.upper()} @ ~${mid:.2f} "
-                     f"(total ~${contracts * mid * 100:.2f})")
-        return {**base_result, 'status': 'dry_run', 'fill_price': 0.0,
-                'filled_shares': 0, 'error': ''}
-
-    # 4. FRESH AV re-fetch — get current pricing right before order placement
-    #    Re-selects closest-to-money with tightest spread from fresh data
-    logger.info(f"  Re-fetching fresh AV options chain for {symbol}...")
-    try:
-        fresh_option, fresh_quote, fresh_df = select_option_contract(
-            symbol, action, signal_price
-        )
-        if fresh_option and fresh_option.get('mid', 0) > 0:
-            fresh_bid = fresh_option.get('bid', 0) or 0
-            fresh_ask = fresh_option.get('ask', 0) or 0
-            fresh_mid = fresh_option.get('mid', 0) or ((fresh_bid + fresh_ask) / 2)
-            fresh_strike = fresh_option['strike']
-            fresh_exp = fresh_option['expiration']
-            fresh_oi = fresh_option.get('open_interest', 0) or 0
-            fresh_vol = fresh_option.get('volume', 0) or 0
-            fresh_iv = fresh_option.get('implied_volatility', 0) or 0
-            fresh_delta = fresh_option.get('delta', 0) or 0
-
-            logger.info(f"  Fresh AV: {symbol} {fresh_exp} {fresh_strike} {option_type.upper()} "
-                        f"bid=${fresh_bid:.2f} ask=${fresh_ask:.2f} mid=${fresh_mid:.2f} "
-                        f"(was mid=${mid:.2f}, delta=${mid - fresh_mid:+.2f})")
-
-            # Re-validate with fresh pricing
-            rejection = validate_option(fresh_option, symbol)
-            if rejection:
-                logger.warning(f"  REJECTED (fresh pricing): {rejection}")
-                return {**base_result, 'status': 'failed', 'fill_price': 0.0,
-                        'filled_shares': 0, 'error': rejection}
-
-            # Update all pricing to fresh values
-            strike = fresh_strike
-            expiration = fresh_exp
-            bid = fresh_bid
-            ask = fresh_ask
-            mid = fresh_mid
-            oi = fresh_oi
-            vol = fresh_vol
-            iv = fresh_iv
-            delta = fresh_delta
-            option = fresh_option
-
-            base_result['strike'] = strike
-            base_result['expiration'] = expiration
-            base_result['premium'] = mid
-        else:
-            logger.warning(f"  Fresh AV re-fetch returned no valid contract — "
-                          f"using initial data (mid=${mid:.2f})")
-    except Exception as e:
-        logger.warning(f"  Fresh AV re-fetch failed: {e} — using initial data (mid=${mid:.2f})")
-
-    # 5. Auto-size contracts using fresh mid
+    # Auto-size contracts
     if raw_shares == 0:
         contracts = calculate_option_contracts(executor, mid)
         logger.info(f"  Sized: {contracts} contract(s) "
@@ -345,10 +276,26 @@ def execute_option_signal(executor, sig: dict, dry_run: bool = False,
     else:
         contracts = raw_shares
 
-    logger.info(f"  Final: {symbol} {expiration} {strike} {option_type.upper()} "
-                f"x{contracts} @ ~${mid:.2f} (total ~${contracts * mid * 100:,.2f})")
+    logger.info(f"  Selected: {symbol} {expiration} {strike} {option_type.upper()}")
+    logger.info(f"  Bid={bid:.2f} Ask={ask:.2f} Mid={mid:.2f} OI={oi} Vol={vol} IV={iv:.2f} Delta={delta:.3f}")
+    logger.info(f"  Contracts={contracts} (total ~${contracts * mid * 100:,.2f})")
 
-    # 6. Build ib_insync Option contract
+    # 2. Validate guardrails
+    rejection = validate_option(option, symbol)
+    if rejection:
+        logger.warning(f"  REJECTED: {rejection}")
+        return {**base_result, 'status': 'failed', 'fill_price': 0.0,
+                'filled_shares': 0, 'error': rejection}
+
+    # 3. Dry run: log and return
+    if dry_run:
+        logger.info(f"  [DRY RUN] Would BUY {contracts} x {symbol} {expiration} "
+                     f"{strike} {option_type.upper()} @ ~${mid:.2f} "
+                     f"(total ~${contracts * mid * 100:.2f})")
+        return {**base_result, 'status': 'dry_run', 'fill_price': 0.0,
+                'filled_shares': 0, 'error': ''}
+
+    # 4. Build ib_insync Option contract
     ibkr_exp = expiration.replace('-', '')
     right = 'C' if option_type == 'call' else 'P'
     contract = IBOption(symbol, ibkr_exp, strike, right, 'SMART', currency='USD')
@@ -361,7 +308,7 @@ def execute_option_signal(executor, sig: dict, dry_run: bool = False,
         return {**base_result, 'status': 'error', 'fill_price': 0.0,
                 'filled_shares': 0, 'error': reason}
 
-    # 7. Create order — always BUY to open
+    # 5. Create order — always BUY to open
     if use_market_orders:
         order = MarketOrder('BUY', contracts)
     else:
@@ -374,7 +321,7 @@ def execute_option_signal(executor, sig: dict, dry_run: bool = False,
     if acct:
         order.account = acct
 
-    # 8. Submit and wait for fill
+    # 6. Submit and wait for fill
     try:
         trade = executor.order_manager.ib.placeOrder(contract, order)
         order_id = trade.order.orderId
