@@ -27,10 +27,11 @@ Usage:
     summary = summarize_with_llm('AAPL', articles, fundamentals)
 
 CLI:
-    python -m api_data.rt_utils AAPL
-    python -m api_data.rt_utils AAPL --news
-    python -m api_data.rt_utils AAPL --news --summary
-    python -m api_data.rt_utils AAPL --months-out 2 --strikes 3 --news --summary
+    python -m api_data.rt_utils AAPL                          # all sections (default)
+    python -m api_data.rt_utils AAPL --news                   # news only
+    python -m api_data.rt_utils AAPL --summary                # LLM summary (implies --news)
+    python -m api_data.rt_utils AAPL --sector-analysis        # sector analysis only
+    python -m api_data.rt_utils AAPL --data-path 'all_data_*.csv' --email  # full report emailed
 """
 
 import argparse
@@ -46,6 +47,7 @@ from email.mime.text import MIMEText
 import pandas as pd
 
 from api_data.collector import alpha_client
+from stockformer.sector_features import SECTOR_ETF_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -681,6 +683,96 @@ Format:
     return {'bullets': bullets[:3]}
 
 
+def summarize_90day_with_llm(symbol: str, tech_data: dict, news_data: list[dict],
+                              model: str = 'llama3.1:8b') -> dict:
+    """
+    Use local ollama LLM to generate a 3-bullet 90-day forward outlook.
+
+    Combines technical indicators with high-relevance stock-specific news
+    to produce medium-term outlook bullets (vs. the short-term technical outlook).
+
+    Args:
+        symbol: Stock ticker symbol
+        tech_data: Dict from get_technical_data()
+        news_data: List of article dicts from get_news_sentiment()
+        model: Ollama model name
+
+    Returns:
+        Dict with 'bullets' (list[str], max 3, each under 150 chars)
+    """
+    try:
+        import ollama
+    except ImportError:
+        logger.error("ollama package not installed. Run: pip install ollama")
+        return {'bullets': []}
+
+    # Build technical context
+    lines = []
+    for key, val in tech_data.items():
+        if key in ('symbol', 'date'):
+            continue
+        lines.append(f"{key}: {val}")
+    tech_ctx = '\n'.join(lines)
+
+    # Build news context — only high-relevance (1.0) stock-specific articles
+    high_rel = [a for a in (news_data or []) if a.get('relevance_score', 0) >= 0.99]
+    news_ctx = ""
+    for i, article in enumerate(high_rel[:10], 1):
+        news_ctx += f"\n{i}. [{article['source']}] {article['title']}"
+        if article['summary']:
+            news_ctx += f"\n   {article['summary'][:200]}"
+        news_ctx += f"\n   Sentiment: {article['sentiment_score']:.3f}"
+
+    prompt = f"""Given {symbol}'s technical indicators and recent stock-specific news, provide exactly 3 bullet points about the 90-day forward outlook.
+
+TECHNICAL INDICATORS (as of {tech_data.get('date', 'latest')}):
+{tech_ctx}
+
+STOCK-SPECIFIC NEWS ({len(high_rel)} high-relevance articles):
+{news_ctx if news_ctx else "(no high-relevance articles)"}
+
+Rules:
+- Focus on MEDIUM-TERM (90-day) outlook, not day-to-day
+- Each bullet must cite ONE specific data point: a number, price, or event
+- Keep each bullet to ONE short sentence under 100 characters
+- Be terse like a Bloomberg terminal alert
+- No hedging, no disclaimers, no filler words
+
+Format:
+- [bullet 1]
+- [bullet 2]
+- [bullet 3]"""
+
+    system_msg = "You are a stock analyst. Write terse, data-driven 90-day outlook bullets. One sentence per bullet, under 100 characters each. No disclaimers."
+
+    try:
+        response = ollama.chat(model=model, messages=[
+            {'role': 'system', 'content': system_msg},
+            {'role': 'user', 'content': prompt},
+        ])
+        content = response['message']['content']
+    except Exception as e:
+        logger.error(f"LLM 90-day outlook failed: {e}")
+        return {'bullets': []}
+
+    # Parse bullets (handle -, *, •, numbered)
+    bullets = []
+    for line in content.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        if line[0] in ('-', '*', '•'):
+            bullet = line.lstrip('-*• ').strip()
+        elif len(line) > 2 and line[0].isdigit() and line[1] in ('.', ')'):
+            bullet = line[2:].strip()
+        else:
+            continue
+        if bullet:
+            bullets.append(bullet[:150])
+
+    return {'bullets': bullets[:3]}
+
+
 def summarize_with_llm(symbol: str, news_data: list[dict], earnings_data: dict, model: str = 'llama3.1:8b') -> dict:
     """
     Use local ollama LLM to summarize earnings + news into a condensed output.
@@ -894,6 +986,184 @@ BULLETS:
     return {'summary': summary, 'bullets': bullets[:5]}
 
 
+def get_sector_etf(symbol: str, data_path: str = None) -> dict:
+    """
+    Map a stock symbol to its sector and corresponding sector ETF.
+
+    Lookup order:
+      1. all_data CSV (if data_path provided) — uses the 'sector' column
+      2. Alpha Vantage OVERVIEW endpoint — uses the 'Sector' field
+
+    Args:
+        symbol: Stock ticker symbol
+        data_path: Optional path to all_data CSV (supports globs)
+
+    Returns:
+        Dict with 'sector' (str), 'etf' (str or None), 'source' ('csv'|'api'|'unknown')
+    """
+    sector = None
+    source = 'unknown'
+
+    # Try CSV first (fast, no API call)
+    if data_path:
+        import glob as glob_mod
+        try:
+            if '*' in data_path or '?' in data_path:
+                files = sorted(glob_mod.glob(data_path))
+                if files:
+                    # Read just the first file that has this symbol
+                    for f in files:
+                        df = pd.read_csv(f, usecols=['symbol', 'sector'])
+                        match = df[df['symbol'] == symbol]
+                        if not match.empty:
+                            sector = match.iloc[-1]['sector']
+                            source = 'csv'
+                            break
+            else:
+                df = pd.read_csv(data_path, usecols=['symbol', 'sector'])
+                match = df[df['symbol'] == symbol]
+                if not match.empty:
+                    sector = match.iloc[-1]['sector']
+                    source = 'csv'
+        except Exception as e:
+            logger.warning(f"Could not read sector from data file: {e}")
+
+    # Fallback to API
+    if not sector or pd.isna(sector):
+        try:
+            overview = alpha_client.fetch(function='OVERVIEW', symbol=symbol)
+            sector = overview.get('Sector', None)
+            if sector:
+                source = 'api'
+        except Exception as e:
+            logger.warning(f"Could not fetch sector from API for {symbol}: {e}")
+
+    if not sector or pd.isna(sector):
+        return {'sector': 'Unknown', 'etf': None, 'source': source}
+
+    sector_upper = sector.upper().strip()
+    etf = SECTOR_ETF_MAP.get(sector_upper)
+
+    return {'sector': sector, 'etf': etf, 'source': source}
+
+
+def summarize_sector_with_llm(sector: str, etf: str, articles: list[dict],
+                               model: str = 'llama3.1:8b') -> dict:
+    """
+    Use local ollama LLM to generate a sector synopsis (<=500 chars).
+
+    Args:
+        sector: Sector name (e.g. "CONSUMER CYCLICAL")
+        etf: Sector ETF symbol (e.g. "XLY")
+        articles: News articles from get_news_sentiment(etf)
+        model: Ollama model name
+
+    Returns:
+        Dict with 'synopsis' (str, <=500 chars) and 'etf' (str)
+    """
+    try:
+        import ollama
+    except ImportError:
+        logger.error("ollama package not installed. Run: pip install ollama")
+        return {'synopsis': 'Error: ollama not installed', 'etf': etf}
+
+    # Build news context from sector ETF articles
+    news_ctx = ""
+    for i, article in enumerate(articles[:20], 1):
+        news_ctx += f"\n{i}. [{article['source']}] {article['title']}"
+        if article['summary']:
+            news_ctx += f"\n   {article['summary'][:150]}"
+        news_ctx += f"\n   Sentiment: {article['sentiment_score']:.3f}"
+
+    total_relevance = sum(a['relevance_score'] for a in articles)
+    if total_relevance > 0:
+        weighted_avg = sum(a['weighted_score'] for a in articles) / total_relevance
+    else:
+        weighted_avg = 0.0
+
+    prompt = f"""Analyze the {sector} sector as a whole (tracked by ETF: {etf}) based on the following recent news.
+
+SECTOR NEWS (weighted sentiment: {weighted_avg:+.3f}):
+{news_ctx}
+
+RULES:
+- Write about the SECTOR as a whole, NOT about individual stocks or companies by name
+- Focus on broad sector-level themes: consumer spending, margins, regulation, macro trends
+- Cover both the past 90 days and forward outlook for the next 90 days
+- Your response MUST be a single complete paragraph of 3-4 sentences
+- Your response MUST be under 450 characters total — count carefully
+- End with a complete sentence — do NOT get cut off mid-thought
+- No bullet points, no headers, no stock tickers"""
+
+    system_msg = "You are a sector analyst. Write about sectors as a whole, never individual stocks. Keep responses under 450 characters. Always end with a complete sentence. No disclaimers."
+
+    try:
+        response = ollama.chat(model=model, messages=[
+            {'role': 'system', 'content': system_msg},
+            {'role': 'user', 'content': prompt},
+        ])
+        synopsis = response['message']['content'].strip()
+    except Exception as e:
+        logger.error(f"LLM sector inference failed: {e}")
+        return {'synopsis': f'Error: {e}', 'etf': etf}
+
+    # If LLM still exceeded limit, trim to last complete sentence under 500 chars
+    if len(synopsis) > 500:
+        truncated = synopsis[:500]
+        # Find last sentence-ending punctuation
+        for end_char in ['. ', '! ', '? ']:
+            last_period = truncated.rfind(end_char)
+            if last_period > 200:
+                synopsis = truncated[:last_period + 1]
+                break
+        else:
+            # No sentence break found — just use the last period
+            last_period = truncated.rfind('.')
+            if last_period > 200:
+                synopsis = truncated[:last_period + 1]
+
+    return {'synopsis': synopsis, 'etf': etf, 'sector': sector, 'sentiment': weighted_avg}
+
+
+def print_sector_analysis(symbol: str, data_path: str = None):
+    """
+    Fetch sector info, get sector ETF news, and print LLM sector synopsis.
+
+    Args:
+        symbol: Stock ticker symbol
+        data_path: Optional path to all_data CSV
+
+    Returns:
+        Dict with sector analysis result, or None if sector unknown
+    """
+    sector_info = get_sector_etf(symbol, data_path)
+    sector = sector_info['sector']
+    etf = sector_info['etf']
+
+    if not etf:
+        print(f"\n  Could not map {symbol} (sector: {sector}) to a sector ETF.")
+        return None
+
+    print(f"\n{'=' * 70}")
+    print(f"  BFT SECTOR ANALYSIS: {symbol}")
+    print(f"  Sector: {sector}  |  ETF: {etf}")
+    print(f"{'=' * 70}")
+    print(f"  Fetching {etf} news sentiment...")
+
+    _, articles = get_news_sentiment(etf, limit=20)
+    if not articles:
+        print(f"  No news found for sector ETF {etf}")
+        return {'sector': sector, 'etf': etf, 'synopsis': 'No sector news available.', 'sentiment': 0.0}
+
+    print(f"  {len(articles)} articles found. Generating sector synopsis...")
+    result = summarize_sector_with_llm(sector, etf, articles)
+
+    print(f"\n  {result['synopsis']}\n")
+    print(f"  Sector Sentiment ({etf}): {result.get('sentiment', 0.0):+.4f}")
+    print(f"{'=' * 70}\n")
+    return result
+
+
 def print_earnings_summary(symbol: str, earnings_data: dict = None):
     """Fetch earnings data (if not provided) and print LLM-generated earnings summary."""
     if earnings_data is None:
@@ -999,10 +1269,11 @@ def print_summary(symbol: str, news_data: list[dict], earnings_data: dict,
     Sections (in order):
       1. BFT AI Current Outlook (news-driven, always)
       2. BFT Technical Outlook (technical indicators, if tech_data provided)
-      3. BFT Latest Earnings Summary (divisions/guidance, if include_earnings_summary)
+      3. BFT 90 Day Outlook (technicals + stock-specific news, if both available)
+      4. BFT Latest Earnings Summary (divisions/guidance, if include_earnings_summary)
 
     Returns:
-        Tuple of (outlook_result, earnings_summary_result, technical_result)
+        Tuple of (outlook_result, earnings_summary_result, technical_result, outlook_90d_result)
     """
     if include_earnings_summary:
         print(f"\n{'=' * 70}")
@@ -1037,7 +1308,20 @@ def print_summary(symbol: str, news_data: list[dict], earnings_data: dict,
             for b in technical_result['bullets']:
                 print(f"    - {b}")
 
-    # Part 3: Earnings Summary (divisions/guidance/forward-looking)
+    # Part 3: 90 Day Outlook (technicals + stock-specific news)
+    outlook_90d_result = None
+    if tech_data and news_data:
+        print(f"\n  {'─' * 50}")
+        print(f"  BFT 90 DAY OUTLOOK: {symbol}")
+        print(f"  {'─' * 50}")
+
+        outlook_90d_result = summarize_90day_with_llm(symbol, tech_data, news_data)
+
+        if outlook_90d_result['bullets']:
+            for b in outlook_90d_result['bullets']:
+                print(f"    - {b}")
+
+    # Part 4: Earnings Summary (divisions/guidance/forward-looking)
     earnings_summary_result = None
     if include_earnings_summary:
         print(f"\n  {'─' * 50}")
@@ -1054,7 +1338,7 @@ def print_summary(symbol: str, news_data: list[dict], earnings_data: dict,
                 print(f"    - {b}")
 
     print(f"\n{'=' * 70}\n")
-    return outlook_result, earnings_summary_result, technical_result
+    return outlook_result, earnings_summary_result, technical_result, outlook_90d_result
 
 
 def print_snapshot(symbol: str, months_out: int = 1, num_strikes: int = 2, option_type: str = 'both'):
@@ -1121,9 +1405,12 @@ def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
                      news_data: list[dict] = None, weighted_avg: float = None,
                      earnings_data: dict = None, llm_result: dict = None,
                      earnings_summary: dict = None,
-                     technical_result: dict = None) -> str:
+                     technical_result: dict = None,
+                     sector_result: dict = None,
+                     outlook_90d_result: dict = None) -> str:
     """
-    Build an HTML email body with quote, options, news, earnings, and LLM summary sections.
+    Build an HTML email body with quote, options, news, earnings, LLM summary,
+    sector analysis, and 90-day outlook sections.
 
     Args:
         symbol: Stock ticker symbol
@@ -1135,6 +1422,8 @@ def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
         llm_result: Current outlook LLM summary dict (optional)
         earnings_summary: Earnings-only LLM summary dict (optional)
         technical_result: Technical outlook LLM dict (optional)
+        sector_result: Sector analysis dict from print_sector_analysis() (optional)
+        outlook_90d_result: 90-day outlook LLM dict (optional)
 
     Returns:
         HTML string
@@ -1282,6 +1571,35 @@ def build_email_html(symbol: str, quote: dict, options: pd.DataFrame,
             html += f"<li>{b}</li>"
         html += "</ul>"
 
+    # 90 Day Outlook
+    if outlook_90d_result and outlook_90d_result.get('bullets'):
+        html += f"""
+        <h4 style="border-bottom: 1px solid #ccc; padding-bottom: 4px; color: #00695c;">BFT 90 Day Outlook</h4>
+        <ul>"""
+        for b in outlook_90d_result['bullets']:
+            html += f"<li>{b}</li>"
+        html += "</ul>"
+
+    # Sector Analysis
+    if sector_result and sector_result.get('synopsis'):
+        sect_sentiment = sector_result.get('sentiment', 0.0)
+        if sect_sentiment > 0.15:
+            sect_label, sect_color = 'Bullish', '#2e7d32'
+        elif sect_sentiment < -0.15:
+            sect_label, sect_color = 'Bearish', '#c62828'
+        else:
+            sect_label, sect_color = 'Neutral', '#f57f17'
+
+        html += f"""
+        <h3 style="border-bottom: 1px solid #ccc; padding-bottom: 4px;">BFT Sector Analysis</h3>
+        <p><b>Sector:</b> {sector_result.get('sector', 'N/A')} &nbsp; | &nbsp;
+           <b>ETF:</b> {sector_result.get('etf', 'N/A')} &nbsp; | &nbsp;
+           <b>Sentiment:</b> <span style="color: {sect_color}; font-weight: bold;">{sect_sentiment:+.4f} ({sect_label})</span></p>
+        <p style="line-height: 1.5; background: #f9f9f9; padding: 10px; border-left: 3px solid {sect_color};">
+            {sector_result['synopsis']}
+        </p>
+        """
+
     # News Sentiment
     if news_data is not None and weighted_avg is not None:
         if weighted_avg > 0.15:
@@ -1386,6 +1704,19 @@ def send_email_report(subject: str, html_body: str) -> bool:
         return False
 
 
+def check_ollama_available() -> bool:
+    """Check if ollama Python package is installed and the server is reachable."""
+    try:
+        import ollama
+        ollama.list()
+        return True
+    except ImportError:
+        return False
+    except Exception:
+        # Package installed but server not running
+        return False
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Real-time stock quote, options, news sentiment & LLM summary',
@@ -1403,6 +1734,8 @@ if __name__ == '__main__':
                         help='Run LLM summary of news + earnings (implies --news, requires ollama)')
     parser.add_argument('--earnings-summary', action='store_true',
                         help='Run LLM summary of earnings & fundamentals only (requires ollama)')
+    parser.add_argument('--sector-analysis', action='store_true',
+                        help='Run sector ETF news analysis with LLM synopsis (requires ollama)')
     parser.add_argument('--no-earnings', action='store_true',
                         help='Skip earnings data in --summary (news-only LLM summary)')
     parser.add_argument('--email', action='store_true',
@@ -1410,9 +1743,31 @@ if __name__ == '__main__':
     parser.add_argument('--email-to', type=str, default=None,
                         help='Override IBKR_NOTIFY_EMAIL and send only to this address')
     parser.add_argument('--data-path', type=str, default=None,
-                        help='Path to merged_predictions.csv for technical indicators')
+                        help='Path to all_data CSV for technical indicators and sector lookup')
 
     args = parser.parse_args()
+
+    # Default-all: if no section flags given, enable all sections
+    section_flags = [args.news, args.summary, args.earnings_summary, args.sector_analysis]
+    if not any(section_flags):
+        args.news = True
+        args.summary = True
+        args.earnings_summary = True
+        args.sector_analysis = True
+
+    # Pre-flight: verify ollama is available if any LLM sections requested
+    needs_ollama = args.summary or args.earnings_summary or args.sector_analysis
+    ollama_ok = False
+    if needs_ollama:
+        ollama_ok = check_ollama_available()
+        if not ollama_ok:
+            print("  ERROR: ollama is not available (package missing or server not running).")
+            print("  LLM sections (summary, earnings-summary, sector-analysis) will be skipped.")
+            if args.email:
+                print("  Email will NOT be sent without LLM content.")
+            args.summary = False
+            args.earnings_summary = False
+            args.sector_analysis = False
 
     # Always show the quote + options snapshot
     try:
@@ -1443,7 +1798,9 @@ if __name__ == '__main__':
     llm_result = None
     earnings_summary_result = None
     technical_result = None
+    outlook_90d_result = None
     tech_data = None
+    sector_result = None
 
     # Fetch technical data if data-path provided
     if args.data_path:
@@ -1469,7 +1826,7 @@ if __name__ == '__main__':
     if args.summary:
         include_earnings = needs_earnings
         try:
-            llm_result, earnings_summary_result, technical_result = print_summary(
+            llm_result, earnings_summary_result, technical_result, outlook_90d_result = print_summary(
                 args.symbol, news_data, earnings_data,
                 include_earnings_summary=include_earnings,
                 tech_data=tech_data,
@@ -1490,8 +1847,18 @@ if __name__ == '__main__':
             logger.error(f"LLM earnings summary failed: {e}")
             print(f"\n  [BFT AI Earnings Summary unavailable: {e}]\n")
 
+    # 6) BFT Sector Analysis
+    if args.sector_analysis:
+        try:
+            sector_result = print_sector_analysis(args.symbol, args.data_path)
+        except Exception as e:
+            logger.error(f"Sector analysis failed: {e}")
+            print(f"\n  [BFT Sector Analysis unavailable: {e}]\n")
+
     # Send email if requested
-    if args.email:
+    if args.email and needs_ollama and not ollama_ok:
+        print("  Skipping email — ollama was required but not available.")
+    elif args.email:
         # Override recipient if --email-to is set
         if args.email_to:
             os.environ['IBKR_NOTIFY_EMAIL'] = args.email_to
@@ -1507,5 +1874,7 @@ if __name__ == '__main__':
             llm_result=llm_result,
             earnings_summary=earnings_summary_result,
             technical_result=technical_result,
+            sector_result=sector_result,
+            outlook_90d_result=outlook_90d_result,
         )
         send_email_report(subject, html)
