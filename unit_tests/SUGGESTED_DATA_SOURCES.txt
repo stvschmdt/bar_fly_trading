@@ -1,0 +1,347 @@
+================================================================================
+  SUGGESTED ADDITIONAL ALPHA VANTAGE DATA SOURCES
+  Reviewed: 2026-02-11
+  Ref: https://www.alphavantage.co/documentation/
+================================================================================
+
+CURRENT PULLS (for reference):
+  - Core stock:     TIME_SERIES_DAILY_ADJUSTED (daily OHLCV + adjusted close)
+  - Technical:      SMA(20,50,200), EMA(20,50,200), MACD, RSI(14), ADX(14),
+                    ATR(14), BBANDS(20), CCI(14)
+  - Economic:       TREASURY_YIELD(2y,10y), FEDERAL_FUNDS_RATE, CPI, INFLATION,
+                    RETAIL_SALES, DURABLES, UNEMPLOYMENT, NONFARM_PAYROLL
+  - Fundamental:    OVERVIEW, EARNINGS, SPLITS
+  - Options:        HISTORICAL_OPTIONS
+
+================================================================================
+  TIER 1 — HIGH VALUE, DIRECT ML IMPACT
+================================================================================
+
+1. NEWS_SENTIMENT
+   ─────────────
+   Endpoint:    function=NEWS_SENTIMENT
+   Params:      tickers=NVDA, topics=earnings, time_from/time_to=YYYYMMDDTHHMM,
+                sort=RELEVANCE, limit=1000
+   Frequency:   Continuous (aggregate to daily for our pipeline)
+   Returns:     Per-article: title, source, sentiment_score, relevance_score
+                Per-ticker:  ticker_sentiment_score (-0.35 to +0.35),
+                             ticker_relevance_score (0 to 1),
+                             ticker_sentiment_label (Bearish/Neutral/Bullish)
+
+   WHY: Sentiment is the single biggest feature gap in our pipeline. Our
+   strategies (especially oversold_bounce, oversold_reversal) react to price
+   drops but have no way to distinguish "healthy pullback" from "bad news
+   selloff." Aggregated daily sentiment scores give the model context for
+   whether a dip is likely to reverse or continue.
+
+   STORAGE: New table `news_sentiment` with columns:
+     date, symbol, article_count, avg_sentiment, avg_relevance,
+     bullish_count, bearish_count, neutral_count
+   Aggregate per symbol per day. One API call per symbol per day.
+
+   DERIVED FEATURES FOR ML:
+     - sentiment_1d (today's avg sentiment)
+     - sentiment_3d_mean (3-day rolling avg)
+     - sentiment_momentum (today - 3d mean)
+     - news_volume (article count — high = event-driven)
+
+   API CALLS: ~1 per symbol per day (filter by ticker). With 37 symbols
+   that's 37 calls/day — well within rate limits.
+
+────────────────────────────────────────────────────────────────────────────────
+
+2. INCOME_STATEMENT + BALANCE_SHEET + CASH_FLOW
+   ─────────────────────────────────────────────
+   Endpoint:    function=INCOME_STATEMENT, BALANCE_SHEET, CASH_FLOW
+   Params:      symbol=NVDA
+   Frequency:   Quarterly (and annual) — updates when company reports earnings
+   Returns:     Full financial statements (GAAP/IFRS normalized):
+                - Income: totalRevenue, grossProfit, operatingIncome, netIncome,
+                  ebitda, costOfRevenue, researchAndDevelopment
+                - Balance: totalAssets, totalLiabilities, totalShareholderEquity,
+                  totalCurrentAssets, totalCurrentLiabilities, cashAndEquivalents,
+                  longTermDebt, shortTermDebt
+                - Cash flow: operatingCashflow, capitalExpenditures,
+                  freeCashFlow, dividendPayout, shareRepurchase
+
+   WHY: We currently only have OVERVIEW (single snapshot) and EARNINGS
+   (just EPS). Full financials let us derive:
+     - Revenue growth rate (QoQ, YoY) — the #1 fundamental signal
+     - Operating/gross margins and margin trends
+     - Debt-to-equity ratio, current ratio (liquidity)
+     - Free cash flow yield (FCF / market_cap)
+     - R&D intensity (R&D / revenue) — matters for tech stocks
+
+   Our pe_ratio feature has look-ahead bias from OVERVIEW. These quarterly
+   reports have specific fiscalDateEnding dates, so we can properly align
+   them temporally — no look-ahead.
+
+   STORAGE: New tables `income_statement`, `balance_sheet`, `cash_flow`
+   with PK (symbol, fiscalDateEnding). Pull once per symbol, then
+   incremental quarterly.
+
+   DERIVED FEATURES FOR ML (ffilled like earnings):
+     - revenue_growth_yoy (totalRevenue YoY pct change)
+     - gross_margin (grossProfit / totalRevenue)
+     - operating_margin (operatingIncome / totalRevenue)
+     - debt_to_equity (totalLiabilities / totalShareholderEquity)
+     - current_ratio (totalCurrentAssets / totalCurrentLiabilities)
+     - fcf_yield (freeCashFlow / market_capitalization)
+
+   API CALLS: 3 per symbol (one-time backfill), then 3 per symbol quarterly.
+
+────────────────────────────────────────────────────────────────────────────────
+
+3. COMMODITIES: WTI, NATURAL_GAS, COPPER
+   ──────────────────────────────────────
+   Endpoint:    function=WTI, function=NATURAL_GAS, function=COPPER
+   Params:      interval=daily
+   Frequency:   Daily
+   Returns:     date, value (spot price)
+
+   WHY: Commodity prices are macro regime features that affect large swaths
+   of equities. Oil prices correlate with energy stocks, transportation costs,
+   and inflation expectations. Copper is a leading indicator of industrial
+   activity ("Dr. Copper"). Natural gas affects utilities and manufacturing.
+   These are daily frequency — perfect match for our data.
+
+   STORAGE: Add columns to economic_indicators table:
+     wti_price, natural_gas_price, copper_price
+   Same pattern as treasury yields — daily, ffilled for missing days.
+
+   DERIVED FEATURES FOR ML:
+     - wti_ret_1d, wti_ret_5d (daily/weekly oil returns)
+     - copper_ret_5d (industrial activity proxy)
+     - wti_vol_10d (energy volatility regime)
+
+   API CALLS: 3 total (one per commodity). Daily incremental.
+
+================================================================================
+  TIER 2 — MODERATE VALUE, STRATEGY-SPECIFIC
+================================================================================
+
+4. EARNINGS_CALENDAR
+   ─────────────────
+   Endpoint:    function=EARNINGS_CALENDAR
+   Params:      horizon=3month, symbol=NVDA (optional)
+   Frequency:   Updated continuously, pull weekly
+   Returns:     CSV with: symbol, name, reportDate, fiscalDateEnding,
+                estimate, currency
+
+   WHY: Knowing WHEN earnings are coming is critical for risk management.
+   Our strategies could:
+     - Avoid entering positions within N days of earnings (high vol event)
+     - Size down positions approaching earnings
+     - Create an "earnings_proximity" feature (days until next earnings)
+   Currently we have no way to know if earnings are 2 days or 2 months away.
+
+   STORAGE: New table `earnings_calendar` (symbol, report_date, estimate).
+   Or just a derived feature in gold_table_processing.
+
+   DERIVED FEATURES FOR ML:
+     - days_to_earnings (countdown — strong vol predictor)
+     - earnings_week (binary: is earnings within 5 trading days?)
+
+   API CALLS: 1 call for all symbols (bulk CSV endpoint).
+
+────────────────────────────────────────────────────────────────────────────────
+
+5. ADDITIONAL TECHNICAL INDICATORS: OBV, STOCH, MFI, NATR, AROON
+   ──────────────────────────────────────────────────────────────
+   Endpoint:    function=OBV, STOCH, MFI, NATR, AROON
+   Params:      symbol, interval=daily, time_period=14 (where applicable)
+   Frequency:   Daily (same as our existing technicals)
+   Returns:     date + indicator value(s)
+
+   a) OBV (On-Balance Volume)
+      - No time_period needed (cumulative)
+      - Tracks volume flowing in/out — a divergence between OBV and price
+        signals trend reversals. We track volume_pct but not cumulative
+        volume pressure. Complements our volume-based features.
+
+   b) STOCH (Stochastic Oscillator)
+      - Params: fastkperiod=14, slowkperiod=3, slowdperiod=3
+      - Returns: SlowK, SlowD (both 0-100 bounded)
+      - Mean-reversion signal that complements RSI. RSI looks at magnitude
+        of moves; stochastic looks at where close falls within the range.
+        Our oversold_bounce and oversold_reversal strategies would benefit.
+
+   c) MFI (Money Flow Index) — time_period=14
+      - "Volume-weighted RSI" — 0-100 bounded
+      - Incorporates volume into overbought/oversold detection.
+        Currently our signals use RSI (price only) and volume_pct
+        (volume only) separately. MFI combines them.
+
+   d) NATR (Normalized ATR) — time_period=14
+      - ATR as percentage of close price (cross-stock comparable)
+      - We have raw ATR, but a $5 stock with ATR=0.50 and a $500 stock with
+        ATR=5.00 have the same 1% NATR. This makes volatility comparable
+        across our universe without manual normalization.
+
+   e) AROON (Aroon Oscillator) — time_period=14
+      - Returns: Aroon Up, Aroon Down (0-100)
+      - Measures how long since the highest high and lowest low.
+        Identifies trend strength and direction differently from ADX.
+        ADX says "is there a trend?" AROON says "is the trend starting
+        or ending?"
+
+   STORAGE: Add to technical_indicators table:
+     obv, stoch_k, stoch_d, mfi_14, natr_14, aroon_up, aroon_down
+
+   API CALLS: 5 per symbol (one-time backfill). 185 total for 37 symbols.
+   At 140 req/min, that's ~1.3 minutes. Daily incremental: same 185 calls.
+
+────────────────────────────────────────────────────────────────────────────────
+
+6. FX_DAILY: USD/EUR, USD/JPY
+   ──────────────────────────
+   Endpoint:    function=FX_DAILY
+   Params:      from_symbol=USD, to_symbol=EUR (or JPY)
+   Frequency:   Daily
+   Returns:     date, open, high, low, close (exchange rate)
+
+   WHY: Dollar strength (DXY proxy) affects:
+     - Export-heavy companies (weaker dollar = higher foreign revenue)
+     - Commodity prices (inverse correlation)
+     - International fund flows
+   USD/JPY specifically tracks risk appetite (yen = safe haven).
+   These are daily, match our format, and are global macro features
+   that apply to all symbols equally (like treasury yields).
+
+   STORAGE: Add to economic_indicators:
+     usd_eur, usd_jpy
+   Or create new fx_data table.
+
+   DERIVED FEATURES FOR ML:
+     - usd_eur_ret_1d, usd_jpy_ret_1d (daily FX returns)
+     - dollar_strength_5d (5-day rolling USD/EUR return)
+
+   API CALLS: 2 total. Daily incremental.
+
+================================================================================
+  TIER 3 — NICE TO HAVE, LOWER PRIORITY
+================================================================================
+
+7. REAL_GDP
+   ────────
+   Endpoint:    function=REAL_GDP
+   Params:      interval=quarterly
+   Frequency:   Quarterly
+   Returns:     date, value (GDP in billions)
+
+   WHY: GDP growth rate is the broadest macro regime indicator. Regime
+   detection (expansion vs contraction) could help the model adjust
+   strategy aggressiveness. However, it's quarterly and lagged — GDP
+   data is released ~1 month after quarter end. Lower frequency means
+   less ML signal compared to daily features.
+
+   DERIVED: gdp_growth_qoq (quarterly pct change). Ffill like CPI.
+   API CALLS: 1 total.
+
+────────────────────────────────────────────────────────────────────────────────
+
+8. DIVIDENDS
+   ─────────
+   Endpoint:    function=DIVIDENDS
+   Params:      symbol=NVDA
+   Frequency:   Per-event (typically quarterly for dividend payers)
+   Returns:     ex_dividend_date, declaration_date, record_date,
+                payment_date, amount
+
+   WHY: Ex-dividend dates cause mechanical price drops equal to the
+   dividend amount. Without knowing this, our models might interpret
+   an ex-div drop as a bearish signal. Also useful for:
+     - Dividend capture strategies
+     - Adjusting stop-loss thresholds around ex-div dates
+   Lower priority because most of our universe is growth/tech stocks
+   with low or no dividends.
+
+   DERIVED: is_ex_div (binary), days_to_ex_div, annual_div_yield
+   API CALLS: 1 per symbol (37 total, one-time).
+
+────────────────────────────────────────────────────────────────────────────────
+
+9. CRYPTO_DAILY: BTC/USD
+   ─────────────────────
+   Endpoint:    function=DIGITAL_CURRENCY_DAILY
+   Params:      symbol=BTC, market=USD
+   Frequency:   Daily
+   Returns:     date, open, high, low, close, volume, market_cap
+
+   WHY: Bitcoin has become a risk-on/risk-off barometer. BTC daily
+   returns correlate with tech stocks and growth names (our universe).
+   BTC volatility spikes often precede equity vol spikes. However,
+   the correlation is noisy and regime-dependent. Lower priority
+   than commodities and FX.
+
+   DERIVED: btc_ret_1d, btc_ret_5d, btc_vol_5d
+   API CALLS: 1 total. Daily incremental.
+
+────────────────────────────────────────────────────────────────────────────────
+
+10. EARNINGS_ESTIMATES (Forward Estimates)
+    ──────────────────────────────────────
+    Endpoint:    function=EARNINGS_ESTIMATES  (Premium?)
+    Params:      symbol=NVDA
+    Frequency:   Quarterly (updates as analysts revise)
+    Returns:     fiscalDateEnding, consensus estimate, number of analysts,
+                 high/low estimates
+
+    WHY: Earnings estimate revisions are one of the strongest fundamental
+    alpha signals in quant finance. Rising estimates = bullish, falling =
+    bearish. Currently we only have historical actual EPS. Forward
+    estimates would let us compute:
+      - Estimate revision momentum (current vs 30-day-ago consensus)
+      - Forward PE ratio (price / forward_eps) — better than trailing PE
+    Lower priority because this may require premium tier and the data
+    is harder to historicize.
+
+    DERIVED: forward_eps, estimate_revision_pct, forward_pe_ratio
+    API CALLS: 1 per symbol per quarter.
+
+================================================================================
+  IMPLEMENTATION PRIORITY & API BUDGET
+================================================================================
+
+  Priority  Endpoint                  Daily Calls   One-Time Backfill
+  ────────  ────────────────────────  ───────────   ─────────────────
+  1         NEWS_SENTIMENT            37            37 x ~30 (history)
+  2         INCOME/BALANCE/CASHFLOW   0 (quarterly) 37 x 3 = 111
+  3         WTI + NATURAL_GAS + CU    3             3
+  4         EARNINGS_CALENDAR         1             1
+  5         OBV,STOCH,MFI,NATR,AROON  185           185
+  6         FX_DAILY (EUR, JPY)       2             2
+  7         REAL_GDP                  0 (quarterly) 1
+  8         DIVIDENDS                 0 (event)     37
+  9         CRYPTO_DAILY (BTC)        1             1
+  10        EARNINGS_ESTIMATES        0 (quarterly) 37
+                                      ───────────
+  Daily total (Tier 1-2):             ~228 calls
+  Current daily usage:                ~222 calls (37 sym x 6 endpoints)
+  Combined:                           ~450 calls/day
+  Rate limit:                         150/min = 9000/hr — easily fits
+
+================================================================================
+  NOTES
+================================================================================
+
+  - All suggested data matches our daily granularity (or lower-frequency
+    ffilled to daily, same pattern as economic indicators).
+
+  - NEWS_SENTIMENT is the single biggest bang-for-buck addition. It's the
+    only source of "why" context for price moves. Every other feature we
+    have is derived from price/volume/fundamentals — adding sentiment
+    gives the model an orthogonal signal dimension.
+
+  - Financial statements (INCOME/BALANCE/CASH) fix the look-ahead bias
+    problem identified in the storage.py review. Unlike OVERVIEW (single
+    snapshot), these have proper fiscalDateEnding timestamps for temporal
+    alignment.
+
+  - Commodities + FX are "free" macro features — 5 API calls/day, apply
+    to all 37 symbols equally (like treasury yields do now).
+
+  Sources:
+    - https://www.alphavantage.co/documentation/
+    - https://alphalog.ai/blog/alphavantage-api-complete-guide
+    - https://www.fintut.com/alpha-vantage-fundamental-data/
