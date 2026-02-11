@@ -1799,7 +1799,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Real-time stock quote, options, news sentiment & LLM summary',
     )
-    parser.add_argument('symbol', type=str, help='Stock ticker symbol')
+    parser.add_argument('symbol', type=str,
+                        help='Stock ticker symbol(s) — single (NVDA) or comma-separated (NVDA,AMD,SOXL)')
     parser.add_argument('--months-out', type=int, default=1,
                         help='Months out for expiration (default: 1)')
     parser.add_argument('--strikes', type=int, default=2,
@@ -1825,6 +1826,13 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    # Parse comma-separated symbols into a list
+    symbols = [s.strip().upper() for s in args.symbol.split(',') if s.strip()]
+    if not symbols:
+        print("Error: No valid symbols provided.")
+        import sys
+        sys.exit(1)
+
     # Default-all: if no section flags given, enable all sections
     section_flags = [args.news, args.summary, args.earnings_summary, args.sector_analysis]
     if not any(section_flags):
@@ -1847,112 +1855,119 @@ if __name__ == '__main__':
             args.earnings_summary = False
             args.sector_analysis = False
 
-    # Always show the quote + options snapshot
-    try:
-        quote, options = get_options_snapshot(args.symbol, args.months_out, args.strikes, args.type)
-    except Exception as e:
-        logger.error(f"Failed to fetch options for {args.symbol}: {e}")
-        # Fall back to quote-only
-        try:
-            quote = get_realtime_quote(args.symbol)
-            options = pd.DataFrame()
-            logger.info(f"Continuing with quote only (no options data)")
-        except Exception as e2:
-            logger.error(f"Failed to fetch quote for {args.symbol}: {e2}")
-            print(f"Error: Could not fetch data for {args.symbol}. Check symbol and API key.")
-            import sys
-            sys.exit(1)
-    # Print snapshot using already-fetched data
-    _print_snapshot_from_data(quote, options, args.months_out, args.strikes, args.type)
-
     # --summary implies --news
     if args.summary:
         args.news = True
 
-    # Track data for email
-    news_data = None
-    weighted_avg = None
-    earnings_data = None
-    llm_result = None
-    earnings_summary_result = None
-    technical_result = None
-    outlook_90d_result = None
-    tech_data = None
-    sector_result = None
-
-    # Fetch technical data if data-path provided
-    if args.data_path:
-        tech_data = get_technical_data(args.symbol, args.data_path)
-        if tech_data:
-            print(f"  Technical data loaded for {args.symbol} (as of {tech_data.get('date', 'N/A')})")
-        else:
-            print(f"  WARNING: No technical data found for {args.symbol} in {args.data_path}")
-
-    # 2) Earnings & Overview (raw data)
     needs_earnings = (args.summary and not args.no_earnings) or args.earnings_summary
-    if needs_earnings:
-        earnings_data = get_earnings_overview(args.symbol)
-        print_earnings_overview(args.symbol, earnings_data)
-    elif args.summary and args.no_earnings:
-        earnings_data = {'symbol': args.symbol}
 
-    # Fetch news data silently (needed for LLM before display)
-    if args.news:
-        weighted_avg, news_data = get_news_sentiment(args.symbol)
+    for sym_idx, symbol in enumerate(symbols):
+        if sym_idx > 0:
+            print(f"\n{'='*70}")
+        if len(symbols) > 1:
+            print(f"  [{sym_idx+1}/{len(symbols)}] {symbol}")
+            print(f"{'='*70}")
 
-    # 3) BFT AI Summary — two-part when earnings included, optional technical
-    if args.summary:
-        include_earnings = needs_earnings
+        # Always show the quote + options snapshot
         try:
-            llm_result, earnings_summary_result, technical_result, outlook_90d_result = print_summary(
-                args.symbol, news_data, earnings_data,
-                include_earnings_summary=include_earnings,
-                tech_data=tech_data,
+            quote, options = get_options_snapshot(symbol, args.months_out, args.strikes, args.type)
+        except Exception as e:
+            logger.error(f"Failed to fetch options for {symbol}: {e}")
+            # Fall back to quote-only
+            try:
+                quote = get_realtime_quote(symbol)
+                options = pd.DataFrame()
+                logger.info(f"Continuing with quote only (no options data)")
+            except Exception as e2:
+                logger.error(f"Failed to fetch quote for {symbol}: {e2}")
+                print(f"Error: Could not fetch data for {symbol}. Check symbol and API key.")
+                continue
+        # Print snapshot using already-fetched data
+        _print_snapshot_from_data(quote, options, args.months_out, args.strikes, args.type)
+
+        # Track data for email
+        news_data = None
+        weighted_avg = None
+        earnings_data = None
+        llm_result = None
+        earnings_summary_result = None
+        technical_result = None
+        outlook_90d_result = None
+        tech_data = None
+        sector_result = None
+
+        # Fetch technical data if data-path provided
+        if args.data_path:
+            tech_data = get_technical_data(symbol, args.data_path)
+            if tech_data:
+                print(f"  Technical data loaded for {symbol} (as of {tech_data.get('date', 'N/A')})")
+            else:
+                print(f"  WARNING: No technical data found for {symbol} in {args.data_path}")
+
+        # 2) Earnings & Overview (raw data)
+        if needs_earnings:
+            earnings_data = get_earnings_overview(symbol)
+            print_earnings_overview(symbol, earnings_data)
+        elif args.summary and args.no_earnings:
+            earnings_data = {'symbol': symbol}
+
+        # Fetch news data silently (needed for LLM before display)
+        if args.news:
+            weighted_avg, news_data = get_news_sentiment(symbol)
+
+        # 3) BFT AI Summary — two-part when earnings included, optional technical
+        if args.summary:
+            include_earnings = needs_earnings
+            try:
+                llm_result, earnings_summary_result, technical_result, outlook_90d_result = print_summary(
+                    symbol, news_data, earnings_data,
+                    include_earnings_summary=include_earnings,
+                    tech_data=tech_data,
+                )
+            except Exception as e:
+                logger.error(f"LLM summary failed: {e}")
+                print(f"\n  [BFT AI Summary unavailable: {e}]\n")
+
+        # 4) News Sentiment (display after LLM summary)
+        if args.news:
+            print_news_sentiment(symbol, prefetched=(weighted_avg, news_data))
+
+        # 5) BFT AI Earnings Report Summary (standalone, only when --earnings-summary without --summary)
+        if args.earnings_summary and not args.summary:
+            try:
+                earnings_summary_result = print_earnings_summary(symbol, earnings_data)
+            except Exception as e:
+                logger.error(f"LLM earnings summary failed: {e}")
+                print(f"\n  [BFT AI Earnings Summary unavailable: {e}]\n")
+
+        # 6) BFT Sector Analysis
+        if args.sector_analysis:
+            try:
+                sector_result = print_sector_analysis(symbol, args.data_path)
+            except Exception as e:
+                logger.error(f"Sector analysis failed: {e}")
+                print(f"\n  [BFT Sector Analysis unavailable: {e}]\n")
+
+        # Send email if requested
+        if args.email and needs_ollama and not ollama_ok:
+            print("  Skipping email — ollama was required but not available.")
+        elif args.email:
+            # Override recipient if --email-to is set
+            if args.email_to:
+                os.environ['IBKR_NOTIFY_EMAIL'] = args.email_to
+            change_sign = '+' if quote['change'] >= 0 else ''
+            subject = f"{symbol} ${quote['price']:.2f} {change_sign}{quote['change']:.2f} ({change_sign}{quote['change_pct']}%) - RT Report"
+            html = build_email_html(
+                symbol=symbol,
+                quote=quote,
+                options=options,
+                news_data=news_data,
+                weighted_avg=weighted_avg,
+                earnings_data=earnings_data,
+                llm_result=llm_result,
+                earnings_summary=earnings_summary_result,
+                technical_result=technical_result,
+                sector_result=sector_result,
+                outlook_90d_result=outlook_90d_result,
             )
-        except Exception as e:
-            logger.error(f"LLM summary failed: {e}")
-            print(f"\n  [BFT AI Summary unavailable: {e}]\n")
-
-    # 4) News Sentiment (display after LLM summary)
-    if args.news:
-        print_news_sentiment(args.symbol, prefetched=(weighted_avg, news_data))
-
-    # 5) BFT AI Earnings Report Summary (standalone, only when --earnings-summary without --summary)
-    if args.earnings_summary and not args.summary:
-        try:
-            earnings_summary_result = print_earnings_summary(args.symbol, earnings_data)
-        except Exception as e:
-            logger.error(f"LLM earnings summary failed: {e}")
-            print(f"\n  [BFT AI Earnings Summary unavailable: {e}]\n")
-
-    # 6) BFT Sector Analysis
-    if args.sector_analysis:
-        try:
-            sector_result = print_sector_analysis(args.symbol, args.data_path)
-        except Exception as e:
-            logger.error(f"Sector analysis failed: {e}")
-            print(f"\n  [BFT Sector Analysis unavailable: {e}]\n")
-
-    # Send email if requested
-    if args.email and needs_ollama and not ollama_ok:
-        print("  Skipping email — ollama was required but not available.")
-    elif args.email:
-        # Override recipient if --email-to is set
-        if args.email_to:
-            os.environ['IBKR_NOTIFY_EMAIL'] = args.email_to
-        change_sign = '+' if quote['change'] >= 0 else ''
-        subject = f"{args.symbol} ${quote['price']:.2f} {change_sign}{quote['change']:.2f} ({change_sign}{quote['change_pct']}%) - RT Report"
-        html = build_email_html(
-            symbol=args.symbol,
-            quote=quote,
-            options=options,
-            news_data=news_data,
-            weighted_avg=weighted_avg,
-            earnings_data=earnings_data,
-            llm_result=llm_result,
-            earnings_summary=earnings_summary_result,
-            technical_result=technical_result,
-            sector_result=sector_result,
-            outlook_90d_result=outlook_90d_result,
-        )
-        send_email_report(subject, html)
+            send_email_report(subject, html)
