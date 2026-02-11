@@ -105,7 +105,11 @@ class TradeNotifier:
         status: str,
         order_id: Optional[int] = None,
         account: Optional[str] = None,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        instrument_type: Optional[str] = None,
+        contract_type: Optional[str] = None,
+        strike: Optional[float] = None,
+        expiration: Optional[str] = None,
     ) -> bool:
         """
         Send trade notification via all configured channels.
@@ -113,20 +117,32 @@ class TradeNotifier:
         Args:
             action: BUY or SELL
             symbol: Stock symbol
-            shares: Number of shares
+            shares: Number of shares/contracts
             price: Execution price
             status: Order status (FILLED, SUBMITTED, ERROR, etc.)
             order_id: IBKR order ID
             account: Account ID
             error: Error message if failed
+            instrument_type: 'stock' or 'option'
+            contract_type: 'call' or 'put' (options only)
+            strike: Strike price (options only)
+            expiration: Expiration date (options only)
 
         Returns:
             True if at least one notification was sent successfully
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        is_option = instrument_type == 'option'
+        unit = "contracts" if is_option else "shares"
 
-        # Build message
-        subject = f"IBKR Trade: {action} {shares} {symbol} - {status}"
+        # Build subject with option details
+        if is_option and contract_type and strike:
+            desc = f"{symbol} {contract_type.upper()[0]} ${strike:.0f}"
+            if expiration:
+                desc += f" {expiration}"
+            subject = f"IBKR Trade: {action} {shares} {desc} - {status}"
+        else:
+            subject = f"IBKR Trade: {action} {shares} {symbol} - {status}"
 
         body_lines = [
             f"Trade Notification",
@@ -134,11 +150,23 @@ class TradeNotifier:
             f"Time:    {timestamp}",
             f"Action:  {action}",
             f"Symbol:  {symbol}",
-            f"Shares:  {shares}",
-            f"Price:   ${price:.2f}",
-            f"Value:   ${shares * price:,.2f}",
-            f"Status:  {status}",
+            f"Type:    {'Option' if is_option else 'Stock'}",
         ]
+
+        if is_option:
+            if contract_type:
+                body_lines.append(f"Contract: {contract_type.upper()}")
+            if strike:
+                body_lines.append(f"Strike:  ${strike:.2f}")
+            if expiration:
+                body_lines.append(f"Expiry:  {expiration}")
+
+        body_lines.extend([
+            f"{'Contracts' if is_option else 'Shares'}:  {shares}",
+            f"Price:   ${price:.2f}",
+            f"Value:   ${shares * price * (100 if is_option else 1):,.2f}",
+            f"Status:  {status}",
+        ])
 
         if order_id:
             body_lines.append(f"Order:   {order_id}")
@@ -150,7 +178,13 @@ class TradeNotifier:
         body = "\n".join(body_lines)
 
         # Short version for SMS
-        sms_body = f"IBKR: {action} {shares} {symbol} @ ${price:.2f} = ${shares * price:,.2f} [{status}]"
+        if is_option and contract_type and strike:
+            sms_body = (f"IBKR: {action} {shares}x {symbol} "
+                        f"{contract_type.upper()[0]}${strike:.0f} "
+                        f"@ ${price:.2f} [{status}]")
+        else:
+            sms_body = (f"IBKR: {action} {shares} {symbol} "
+                        f"@ ${price:.2f} = ${shares * price:,.2f} [{status}]")
         if error:
             sms_body += f" ERR: {error[:50]}"
 

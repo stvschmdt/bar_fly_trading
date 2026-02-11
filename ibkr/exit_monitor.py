@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ibkr.config import IBKRConfig, TradingConfig
 from ibkr.connection import IBKRConnection
+from ibkr.notifier import TradeNotifier
 from ibkr.order_manager import OrderManager
 from ibkr.position_ledger import PositionLedger, make_ledger_key
 
@@ -180,6 +181,9 @@ class ExitMonitor:
                 'symbol': ledger_key,
                 'hold_days': hold_days,
                 'shares': shares,
+                'instrument_type': instrument,
+                'strategy': pos.get('strategy', ''),
+                'entry_price': pos.get('entry_price', 0),
                 'dry_run': False,
             })
 
@@ -247,12 +251,20 @@ class ExitMonitor:
             if self.dry_run:
                 self.actions.append({'action': 'option_sl_tp_exit',
                                      'symbol': ledger_key, 'reason': reason,
+                                     'entry_price': entry_price,
+                                     'current_price': current_price,
+                                     'strategy': pos.get('strategy', ''),
+                                     'shares': pos.get('shares', 0),
                                      'dry_run': True})
                 continue
 
             self._sell_position(pos, ledger_key, reason, current_price)
             self.actions.append({'action': 'option_sl_tp_exit',
                                  'symbol': ledger_key, 'reason': reason,
+                                 'entry_price': entry_price,
+                                 'current_price': current_price,
+                                 'strategy': pos.get('strategy', ''),
+                                 'shares': pos.get('shares', 0),
                                  'dry_run': False})
 
     def _adjust_trailing_stops(self):
@@ -311,20 +323,33 @@ class ExitMonitor:
         if not self.actions:
             return "Exit monitor: no actions taken"
 
-        lines = [f"Exit monitor: {len(self.actions)} action(s)"]
+        lines = [f"Exit monitor: {len(self.actions)} action(s)",
+                 f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                 ""]
         for a in self.actions:
             action = a['action']
             symbol = a.get('symbol', '?')
             dry = " [DRY RUN]" if a.get('dry_run') else ""
+            strategy = a.get('strategy', '')
+            strat_tag = f" [{strategy}]" if strategy else ""
             if action == 'sync_remove':
-                lines.append(f"  SYNC {symbol}: removed ({a.get('reason', 'closed')})")
+                lines.append(f"  SYNC {symbol}: removed ({a.get('reason', 'closed')}){strat_tag}")
             elif action == 'max_hold_exit':
-                lines.append(f"  EXIT {symbol}: max hold {a.get('hold_days')}d{dry}")
+                entry = a.get('entry_price', 0)
+                itype = a.get('instrument_type', 'stock')
+                unit = "contracts" if itype == 'option' else "shares"
+                lines.append(f"  EXIT {symbol}: max hold {a.get('hold_days')}d, "
+                             f"{a.get('shares', 0)} {unit}, entry=${entry:.2f}{strat_tag}{dry}")
             elif action == 'option_sl_tp_exit':
-                lines.append(f"  OPT EXIT {symbol}: {a.get('reason', 'sl/tp')}{dry}")
+                entry = a.get('entry_price', 0)
+                cur = a.get('current_price', 0)
+                pnl = (cur - entry) * a.get('shares', 0) * 100 if entry > 0 else 0
+                lines.append(f"  OPT EXIT {symbol}: {a.get('reason', 'sl/tp')}, "
+                             f"entry=${entry:.2f} → ${cur:.2f}, "
+                             f"P&L=${pnl:+,.0f}{strat_tag}{dry}")
             elif action == 'trailing_stop_adjust':
                 lines.append(f"  TRAIL {symbol}: stop ${a.get('old_stop'):.2f} → "
-                           f"${a.get('new_stop'):.2f}{dry}")
+                           f"${a.get('new_stop'):.2f}{strat_tag}{dry}")
         return "\n".join(lines)
 
 
@@ -349,6 +374,8 @@ Examples:
                         help="Preview actions without executing")
     parser.add_argument("--ledger", type=str, default=None,
                         help="Path to position ledger JSON")
+    parser.add_argument("--no-notify", action="store_true",
+                        help="Suppress email notifications")
 
     args = parser.parse_args()
 
@@ -386,6 +413,19 @@ Examples:
 
         if not actions:
             print("No actions needed.")
+
+        # Send email if actions were taken
+        if actions and not args.no_notify:
+            try:
+                notifier = TradeNotifier()
+                dry_tag = "[DRY RUN] " if args.dry_run else ""
+                acct_tag = "LIVE" if args.live else "Paper"
+                subject = (f"{dry_tag}[EXIT MONITOR] {len(actions)} action(s) "
+                           f"({acct_tag})")
+                notifier._send_email(subject, summary)
+                print(f"Email sent: {subject}")
+            except Exception as e:
+                print(f"WARNING: Failed to send email: {e}")
 
     finally:
         connection.disconnect()

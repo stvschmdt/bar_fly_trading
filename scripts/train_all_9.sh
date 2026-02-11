@@ -89,7 +89,7 @@ echo ""
 
 # Shared flags for classification models
 BINARY_FLAGS="--entropy-reg-weight 0.1 --binary-threshold 0.005 --min-return-threshold 0.0025"
-BUCKET_FLAGS="--bucket-edges -1,1 --entropy-reg-weight 0.1 --min-return-threshold 0.0025"
+BUCKET_FLAGS="--bucket-edges=-1,1 --entropy-reg-weight 0.1 --min-return-threshold 0.0025"
 
 # Group 1: Regression — directional_mse (direction_weight=3.0 from config)
 (

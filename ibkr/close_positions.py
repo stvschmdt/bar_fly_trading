@@ -181,11 +181,16 @@ def close_positions(ib: IB, positions, dry_run=False):
 
         if dry_run:
             print(f"  [DRY RUN] Would {action} {qty} {symbol} ({p['sec_type']})")
-            results.append({
+            result = {
                 'symbol': symbol, 'sec_type': p['sec_type'],
                 'action': action, 'qty': qty,
                 'status': 'dry_run', 'fill_price': 0,
-            })
+            }
+            if p['sec_type'] == 'OPT':
+                result['right'] = p.get('right', '?')
+                result['strike'] = p.get('strike', 0)
+                result['expiry'] = p.get('expiry', '?')
+            results.append(result)
             continue
 
         # Force SMART routing to avoid exchange-specific restrictions
@@ -231,11 +236,16 @@ def close_positions(ib: IB, positions, dry_run=False):
             if trade.orderStatus.status == 'Filled':
                 fill_price = trade.orderStatus.avgFillPrice
                 print(f"FILLED @ ${fill_price:.2f}")
-                results.append({
+                result = {
                     'symbol': symbol, 'sec_type': p['sec_type'],
                     'action': action, 'qty': qty,
                     'status': 'filled', 'fill_price': fill_price,
-                })
+                }
+                if p['sec_type'] == 'OPT':
+                    result['right'] = p.get('right', '?')
+                    result['strike'] = p.get('strike', 0)
+                    result['expiry'] = p.get('expiry', '?')
+                results.append(result)
             else:
                 status = trade.orderStatus.status
                 print(f"STATUS: {status}")
@@ -421,9 +431,16 @@ Examples:
                          f"Errors:     {len(errors)}",
                          ""]
                 for r in filled:
-                    sec = f" ({r['sec_type']})" if r.get('sec_type') else ""
-                    lines.append(f"  {r['action']:4s} {r.get('qty', 0):>4} {r['symbol']:6s}{sec}"
-                                 f"  @ ${r['fill_price']:.2f}")
+                    if r.get('sec_type') == 'OPT':
+                        right = r.get('right', '?')
+                        strike = r.get('strike', 0)
+                        expiry = r.get('expiry', '?')
+                        desc = f"{r['symbol']} {right} ${strike:.0f} exp {expiry}"
+                        lines.append(f"  {r['action']:4s} {r.get('qty', 0):>4}x {desc}"
+                                     f"  @ ${r['fill_price']:.2f}")
+                    else:
+                        lines.append(f"  {r['action']:4s} {r.get('qty', 0):>4}  {r['symbol']:6s}"
+                                     f"  @ ${r['fill_price']:.2f}")
                 for r in errors:
                     lines.append(f"  FAIL {r['symbol']:6s}  {r.get('error', r.get('status', ''))}")
                 for r in dry:
