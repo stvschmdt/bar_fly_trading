@@ -433,9 +433,13 @@ class OrderManager:
             logger.error(f"Failed to cancel order {order_id}: {e}")
             return False
 
-    def cancel_all_orders(self) -> int:
+    def cancel_all_orders(self, include_brackets: bool = False) -> int:
         """
         Cancel all open orders.
+
+        Args:
+            include_brackets: If True, also cancel bracket/OCA exit orders.
+                              Default False preserves stop-loss/take-profit orders.
 
         Returns:
             Number of orders cancelled
@@ -444,14 +448,22 @@ class OrderManager:
             return 0
 
         cancelled = 0
+        skipped = 0
         for trade in self.ib.openTrades():
+            # Skip bracket/OCA orders (stop-loss + take-profit) unless explicitly requested
+            if not include_brackets and getattr(trade.order, 'ocaGroup', ''):
+                skipped += 1
+                logger.info(f"Preserving bracket order {trade.order.orderId} "
+                           f"({trade.order.orderType} {trade.order.action} "
+                           f"{trade.contract.symbol}, OCA={trade.order.ocaGroup})")
+                continue
             try:
                 self.ib.cancelOrder(trade.order)
                 cancelled += 1
             except Exception as e:
                 logger.error(f"Failed to cancel order {trade.order.orderId}: {e}")
 
-        logger.info(f"Cancelled {cancelled} open orders")
+        logger.info(f"Cancelled {cancelled} open orders (preserved {skipped} bracket orders)")
         return cancelled
 
     def get_open_orders(self) -> list[OrderResult]:

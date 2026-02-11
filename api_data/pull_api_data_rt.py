@@ -266,6 +266,15 @@ def update_derived_columns_generic(df, idx, sym_col='symbol', close_col='adjuste
                 vol = df.at[idx, 'volume']
                 df.at[idx, 'volume_pct'] = (vol - prev_vol) / prev_vol
 
+            # OHLC pct change vs previous row
+            for ohlc_col in ['open', 'high', 'low']:
+                pct_col = f'{ohlc_col}_pct'
+                if pct_col in df.columns and ohlc_col in df.columns:
+                    prev_val = df.at[prev_idx, ohlc_col]
+                    cur_val = df.at[idx, ohlc_col]
+                    if pd.notna(prev_val) and prev_val != 0 and pd.notna(cur_val):
+                        df.at[idx, pct_col] = (cur_val - prev_val) / prev_val
+
 
 def update_csv_from_bulk(csv_path, bulk_df, dry_run=False):
     """
@@ -363,6 +372,27 @@ def update_csv_from_bulk(csv_path, bulk_df, dry_run=False):
                 new_row['low'] = price
             if volume > 0:
                 new_row['volume'] = volume
+
+            # Fix calendar columns for the new date (don't clone yesterday's day-of-week)
+            new_date = pd.to_datetime(today_str)
+            if 'day_of_week_num' in df.columns:
+                new_row['day_of_week_num'] = new_date.dayofweek
+            if 'day_of_week_name' in df.columns:
+                new_row['day_of_week_name'] = new_date.day_name()
+            if 'month' in df.columns:
+                new_row['month'] = new_date.month
+            if 'day_of_year' in df.columns:
+                new_row['day_of_year'] = new_date.dayofyear
+            if 'year' in df.columns:
+                new_row['year'] = new_date.year
+
+            # Fix adjusted OHLC to match today's values (not yesterday's)
+            if 'adjusted_open' in df.columns:
+                new_row['adjusted_open'] = new_row['open']
+            if 'adjusted_high' in df.columns:
+                new_row['adjusted_high'] = new_row['high']
+            if 'adjusted_low' in df.columns:
+                new_row['adjusted_low'] = new_row['low']
 
             new_rows.append(new_row)
             updated += 1
