@@ -211,8 +211,9 @@ class TradeExecutor:
         # Use adjusted shares if needed
         shares_to_trade = validation.adjusted_shares or signal.shares
 
-        # Determine order type: prefer marketable limit over pure market
-        order_type = OrderType.MARKET if self.trading_config.use_market_orders else OrderType.LIMIT
+        # Determine order type: stocks default to market, options to limit
+        use_market = self.trading_config.use_market_orders or self.trading_config.stock_market_orders
+        order_type = OrderType.MARKET if use_market else OrderType.LIMIT
 
         # Submit order
         order_result = self.order_manager.submit_order(

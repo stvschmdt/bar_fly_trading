@@ -95,7 +95,8 @@ class TradingConfig:
     max_daily_trades: int = 20
     max_daily_loss: float = 5000.0  # Max $5k daily loss
     max_daily_loss_pct: float = 0.02  # Max 2% daily loss
-    use_market_orders: bool = False  # Default to marketable limit orders
+    use_market_orders: bool = False  # Default to marketable limit orders (options)
+    stock_market_orders: bool = True  # Default stocks to market orders
     limit_offset_pct: float = 0.002  # 0.2% marketable limit offset
     order_timeout: int = 60  # 60 second timeout
 

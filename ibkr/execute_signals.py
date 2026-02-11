@@ -336,6 +336,42 @@ def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
 
         # Options: route through options_executor
         if is_option:
+            # Check position ledger for existing option position before executing
+            if action == 'BUY' and not dry_run:
+                try:
+                    ledger = PositionLedger()
+                    ledger.load()
+                    existing = ledger.get_all_positions()
+                    # Check if any open position matches this symbol
+                    already_held = any(
+                        pos.get('symbol', '').upper() == symbol
+                        and pos.get('instrument_type') == 'option'
+                        for pos in existing.values()
+                    )
+                    if already_held:
+                        reason_msg = f"Already have option position in {symbol}"
+                        is_new = _is_new_rejection(symbol, 'position')
+                        if is_new:
+                            logger.warning(f"REJECTED {action} {symbol}: {reason_msg}")
+                        rejections.append({
+                            **sig,
+                            'status': 'rejected',
+                            'rejection_reason': reason_msg,
+                            'is_new': is_new,
+                            'executed_at': datetime.now().isoformat(timespec='seconds'),
+                        })
+                        results.append({
+                            **sig,
+                            'status': 'failed',
+                            'fill_price': 0.0,
+                            'filled_shares': 0,
+                            'error': reason_msg,
+                            'executed_at': datetime.now().isoformat(timespec='seconds'),
+                        })
+                        continue
+                except Exception as e:
+                    logger.warning(f"Could not check ledger for {symbol}: {e}")
+
             logger.info("-" * 50)
             opt_label = f"[OPTIONS{'|DRY' if dry_run else ''}] {label}"
             logger.info(f"Executing: {opt_label}")
@@ -838,7 +874,9 @@ Examples:
     parser.add_argument("--default-shares", type=int, default=None,
                         help="Override shares=0 signals with this fixed share count (e.g. 1 for testing)")
     parser.add_argument("--market-orders", action="store_true",
-                        help="Use market orders instead of limit orders")
+                        help="Use market orders for all order types")
+    parser.add_argument("--stock-limit-orders", action="store_true",
+                        help="Use limit orders for stocks (overrides default market)")
     parser.add_argument("--buy-only", action="store_true",
                         help="Skip SELL signals for symbols we don't hold (still sell owned positions)")
     parser.add_argument("--options", action="store_true",
@@ -903,6 +941,7 @@ Examples:
         max_positions=args.max_positions,
         max_daily_loss=args.max_daily_loss,
         use_market_orders=args.market_orders,
+        stock_market_orders=not args.stock_limit_orders,  # Stocks default to market
     )
 
     if args.options:

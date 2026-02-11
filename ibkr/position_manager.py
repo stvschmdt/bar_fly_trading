@@ -72,49 +72,63 @@ class PositionManager:
                     target_account = next((a for a in accounts if a.startswith('U')), None)
 
             for item in all_positions:
-                if item.contract.secType != "STK":
-                    continue  # Only track stocks
+                sec_type = item.contract.secType
+                if sec_type not in ("STK", "OPT"):
+                    continue  # Track stocks and options
 
                 # Filter by account if we have a target
                 if target_account and item.account != target_account:
                     continue
 
-                symbol = item.contract.symbol
+                # Build key: stocks use symbol, options use full contract key
+                if sec_type == "OPT":
+                    right = "C" if item.contract.right == "C" else "P"
+                    key = f"{item.contract.symbol}_{right}_{item.contract.strike}_{item.contract.lastTradeDateOrContractMonth}"
+                    unit_label = "contracts"
+                else:
+                    key = item.contract.symbol
+                    unit_label = "shares"
+
                 shares = int(item.position)
                 avg_cost = item.avgCost
                 market_value = shares * avg_cost  # Approximate; positions() lacks live mktValue
 
                 position = Position(
-                    symbol=symbol,
+                    symbol=key,
                     shares=shares,
                     avg_cost=avg_cost,
                     market_value=market_value,
                     unrealized_pnl=0.0,  # Not available from positions()
-                    realized_pnl=self._realized_pnl.get(symbol, 0.0),
-                    entry_date=self._entry_dates.get(symbol)
+                    realized_pnl=self._realized_pnl.get(key, 0.0),
+                    entry_date=self._entry_dates.get(key)
                 )
 
                 # Track new positions
-                if symbol not in self._positions or self._positions[symbol].is_flat:
+                if key not in self._positions or self._positions[key].is_flat:
                     if position.shares != 0:
-                        self._entry_dates[symbol] = datetime.now()
-                        position.entry_date = self._entry_dates[symbol]
-                        logger.info(f"New position detected: {symbol} {position.shares} shares")
+                        self._entry_dates[key] = datetime.now()
+                        position.entry_date = self._entry_dates[key]
+                        logger.info(f"New position detected: {key} {position.shares} {unit_label}")
 
                 # Clear entry date if position closed
-                if position.is_flat and symbol in self._entry_dates:
-                    del self._entry_dates[symbol]
+                if position.is_flat and key in self._entry_dates:
+                    del self._entry_dates[key]
 
-                self._positions[symbol] = position
+                self._positions[key] = position
 
             # Remove positions no longer held
             current_symbols = set()
             for item in all_positions:
-                if item.contract.secType != "STK":
+                sec_type = item.contract.secType
+                if sec_type not in ("STK", "OPT"):
                     continue
                 if target_account and item.account != target_account:
                     continue
-                current_symbols.add(item.contract.symbol)
+                if sec_type == "OPT":
+                    right = "C" if item.contract.right == "C" else "P"
+                    current_symbols.add(f"{item.contract.symbol}_{right}_{item.contract.strike}_{item.contract.lastTradeDateOrContractMonth}")
+                else:
+                    current_symbols.add(item.contract.symbol)
 
             for symbol in list(self._positions.keys()):
                 if symbol not in current_symbols:
