@@ -269,6 +269,9 @@ def train_model(
     best_val_loss = float("inf")
     best_state_dict = None
     no_improve = 0
+    consecutive_collapse = 0  # Track epochs where dominant class > 90%
+    COLLAPSE_THRESHOLD = 0.90
+    COLLAPSE_PATIENCE = 3
 
     if entropy_reg_weight > 0 and label_mode != "regression":
         print(f"Entropy regularization enabled: weight={entropy_reg_weight}")
@@ -332,12 +335,24 @@ def train_model(
             flush=True,
         )
 
-        # Collapse detection warning
+        # Collapse detection: warn and halt if sustained
         dominant_pct = val_metrics.get("dominant_class_pct", 0)
         if dominant_pct > 0.85 and label_mode != "regression":
             dist = val_metrics.get("class_distribution", [])
             print(f"  WARNING: Possible collapse — {dominant_pct:.1%} predictions "
                   f"in one class. Distribution: {[f'{p:.2f}' for p in dist]}")
+
+        if dominant_pct > COLLAPSE_THRESHOLD and label_mode != "regression":
+            consecutive_collapse += 1
+            if consecutive_collapse >= COLLAPSE_PATIENCE:
+                print(
+                    f"  HALT: Model collapsed — dominant class > {COLLAPSE_THRESHOLD:.0%} "
+                    f"for {COLLAPSE_PATIENCE} consecutive epochs. "
+                    f"Stopping training to prevent wasted compute."
+                )
+                break
+        else:
+            consecutive_collapse = 0
 
         # Best model checkpointing + early stopping
         if val_metrics["loss"] < best_val_loss:

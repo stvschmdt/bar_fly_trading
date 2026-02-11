@@ -23,6 +23,15 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
+try:
+    from sklearn.metrics import (
+        confusion_matrix, classification_report, roc_auc_score,
+        precision_recall_fscore_support,
+    )
+    HAS_SKLEARN = True
+except ImportError:
+    HAS_SKLEARN = False
+
 from .config import get_feature_columns, get_target_column, OUTPUT_COLUMN_GROUPS, BASE_FEATURE_COLUMNS
 from .data_utils import (
     load_panel_csvs,
@@ -483,13 +492,168 @@ def infer(cfg):
     print(f"  Rows: {len(out_df)}")
     print(f"  Prediction columns: {list(pred_dict.keys())}")
 
-    # Print accuracy if classification
-    if "pred_class" in pred_dict and "true_class" in pred_dict:
-        accuracy = (pred_dict["pred_class"] == pred_dict["true_class"]).mean()
-        print(f"  Accuracy: {accuracy:.2%}")
-
-        # Class distribution
-        unique, counts = np.unique(pred_dict["pred_class"], return_counts=True)
-        print(f"  Predicted class distribution: {dict(zip(unique.astype(int), counts))}")
+    # Print evaluation report
+    print_eval_report(pred_dict, cfg.get("label_mode", "binary"))
 
     return out_df
+
+
+# =============================================================================
+# Evaluation Report
+# =============================================================================
+
+def print_eval_report(pred_dict, label_mode):
+    """
+    Print comprehensive evaluation metrics after inference.
+
+    For classification: confusion matrix, precision/recall/F1, ROC-AUC,
+    class distribution, and collapse detection.
+    For regression: correlation, direction accuracy, mean bias.
+    """
+    print("\n" + "=" * 60)
+    print("EVALUATION REPORT")
+    print("=" * 60)
+
+    if label_mode == "regression":
+        _eval_regression(pred_dict)
+    elif "pred_class" in pred_dict and "true_class" in pred_dict:
+        _eval_classification(pred_dict, label_mode)
+    else:
+        print("  No evaluation data available.")
+
+    print("=" * 60 + "\n")
+
+
+def _eval_classification(pred_dict, label_mode):
+    """Evaluate classification predictions."""
+    pred = pred_dict["pred_class"].astype(int)
+    true = pred_dict["true_class"].astype(int)
+    n = len(pred)
+
+    # Basic accuracy
+    accuracy = (pred == true).mean()
+    print(f"\n  Accuracy: {accuracy:.4f} ({accuracy:.2%})")
+    print(f"  Samples:  {n:,}")
+
+    # Class distribution comparison
+    unique_true, counts_true = np.unique(true, return_counts=True)
+    unique_pred, counts_pred = np.unique(pred, return_counts=True)
+    true_dist = dict(zip(unique_true.astype(int), counts_true))
+    pred_dist = dict(zip(unique_pred.astype(int), counts_pred))
+
+    all_classes = sorted(set(true_dist.keys()) | set(pred_dist.keys()))
+    print(f"\n  Class Distribution:")
+    print(f"  {'Class':<8} {'True':>10} {'True%':>8} {'Pred':>10} {'Pred%':>8}")
+    print(f"  {'-'*46}")
+    for c in all_classes:
+        tc = true_dist.get(c, 0)
+        pc = pred_dist.get(c, 0)
+        print(f"  {c:<8} {tc:>10,} {tc/n:>7.1%} {pc:>10,} {pc/n:>7.1%}")
+
+    # Collapse detection
+    dominant_pred_pct = max(counts_pred) / n if len(counts_pred) > 0 else 0
+    if dominant_pred_pct > 0.90:
+        dominant_class = unique_pred[np.argmax(counts_pred)]
+        print(f"\n  *** COLLAPSED: {dominant_pred_pct:.1%} of predictions are class {dominant_class} ***")
+    elif dominant_pred_pct > 0.75:
+        dominant_class = unique_pred[np.argmax(counts_pred)]
+        print(f"\n  ** WARNING: {dominant_pred_pct:.1%} of predictions are class {dominant_class} **")
+
+    if not HAS_SKLEARN:
+        print("\n  (Install scikit-learn for confusion matrix, F1, ROC-AUC)")
+        return
+
+    # Confusion matrix
+    cm = confusion_matrix(true, pred, labels=all_classes)
+    print(f"\n  Confusion Matrix (rows=true, cols=pred):")
+    header = "  " + " " * 8 + "".join(f"pred_{c:>3}" for c in all_classes)
+    print(header)
+    for i, c in enumerate(all_classes):
+        row = "  " + f"true_{c:<3}" + "".join(f"{cm[i, j]:>7,}" for j in range(len(all_classes)))
+        print(row)
+
+    # Precision, Recall, F1
+    prec, rec, f1, support = precision_recall_fscore_support(
+        true, pred, labels=all_classes, zero_division=0
+    )
+    print(f"\n  Per-Class Metrics:")
+    print(f"  {'Class':<8} {'Precision':>10} {'Recall':>10} {'F1':>10} {'Support':>10}")
+    print(f"  {'-'*50}")
+    for i, c in enumerate(all_classes):
+        print(f"  {c:<8} {prec[i]:>10.4f} {rec[i]:>10.4f} {f1[i]:>10.4f} {support[i]:>10,}")
+
+    # Macro / weighted averages
+    macro_f1 = f1.mean()
+    weighted_f1 = np.average(f1, weights=support)
+    print(f"\n  Macro F1:    {macro_f1:.4f}")
+    print(f"  Weighted F1: {weighted_f1:.4f}")
+
+    # ROC-AUC (binary only, needs probabilities)
+    if label_mode == "binary" and "prob_1" in pred_dict:
+        try:
+            auc = roc_auc_score(true, pred_dict["prob_1"])
+            print(f"  ROC-AUC:     {auc:.4f}")
+        except ValueError as e:
+            print(f"  ROC-AUC:     N/A ({e})")
+
+    # Probability calibration summary (if available)
+    prob_cols = [k for k in pred_dict if k.startswith("prob_")]
+    if prob_cols:
+        print(f"\n  Probability Stats:")
+        for col in sorted(prob_cols):
+            vals = pred_dict[col]
+            print(f"    {col}: mean={vals.mean():.4f}  std={vals.std():.4f}  "
+                  f"min={vals.min():.4f}  max={vals.max():.4f}")
+
+
+def _eval_regression(pred_dict):
+    """Evaluate regression predictions."""
+    pred = pred_dict.get("pred_return")
+    true = pred_dict.get("true_return")
+    if pred is None or true is None:
+        print("  No regression data available.")
+        return
+
+    pred = pred.flatten()
+    true = true.flatten()
+    n = len(pred)
+
+    # Basic stats
+    mse = np.mean((pred - true) ** 2)
+    mae = np.mean(np.abs(pred - true))
+    print(f"\n  Samples: {n:,}")
+    print(f"  MSE:     {mse:.6f}")
+    print(f"  MAE:     {mae:.6f}")
+
+    # Correlation
+    if np.std(pred) > 1e-10 and np.std(true) > 1e-10:
+        corr = np.corrcoef(pred, true)[0, 1]
+    else:
+        corr = 0.0
+    print(f"  Correlation: {corr:.4f}")
+
+    # Direction accuracy
+    pred_dir = np.sign(pred)
+    true_dir = np.sign(true)
+    # Exclude zero-return samples from direction calc
+    nonzero = true_dir != 0
+    if nonzero.sum() > 0:
+        dir_acc = (pred_dir[nonzero] == true_dir[nonzero]).mean()
+        print(f"  Direction Accuracy: {dir_acc:.4f} ({dir_acc:.2%})")
+    else:
+        print(f"  Direction Accuracy: N/A (all true returns are zero)")
+
+    # Bias
+    pred_mean = pred.mean()
+    true_mean = true.mean()
+    print(f"\n  Pred Mean:  {pred_mean:+.6f}")
+    print(f"  True Mean:  {true_mean:+.6f}")
+    print(f"  Bias:       {pred_mean - true_mean:+.6f}")
+
+    # Collapse detection for regression
+    pred_std = np.std(pred)
+    if pred_std < 1e-5:
+        print(f"\n  *** COLLAPSED: pred std={pred_std:.8f} (near-constant predictions) ***")
+    elif pred_std < np.std(true) * 0.1:
+        print(f"\n  ** WARNING: pred std={pred_std:.6f} << true std={np.std(true):.6f} "
+              f"(predictions lack variance) **")

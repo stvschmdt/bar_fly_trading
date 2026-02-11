@@ -3,15 +3,20 @@
 # Train all 9 StockFormer models (3 horizons x 3 label modes)
 # =============================================================================
 #
-# v3: Per-model hyperparameters to fix classification collapse.
+# v4: Aggressive anti-collapse measures after v3 models still collapsed.
 #
-# Key changes from v2:
-#   - Classification models use smaller architecture (d_model=64, 2 layers)
-#     to prevent memorization/collapse
-#   - Binary: label_smoothing loss + entropy_reg=0.3 + threshold=0.0
-#   - Buckets: soft_ordinal loss + auto quantile edges (balanced classes)
-#   - Noisy label filter disabled (min_return_threshold=0.0)
-#   - 30d models get extra regularization (dropout=0.3, weight_decay=0.03)
+# Key changes from v3:
+#   - Binary: focal loss (was label_smoothing) — down-weights easy examples
+#   - Binary: entropy_reg=0.5 (was 0.3) — stronger diversity pressure
+#   - Binary: threshold=0.015 / 1.5% (was 0.0) — cleaner label separation
+#   - Regression: combined_regression loss (was directional_mse) — logcosh + DMSE
+#   - Training auto-halts if dominant class > 90% for 3 consecutive epochs
+#   - Inference prints full eval report (confusion matrix, F1, ROC-AUC)
+#
+# Unchanged from v3:
+#   - Classification models: d_model=64, 2 layers (smaller to prevent memorization)
+#   - Buckets: soft_ordinal loss + auto quantile edges
+#   - 30d models: extra regularization (dropout=0.3, weight_decay=0.03)
 #
 # Usage:
 #   ./scripts/train_all_9.sh
@@ -40,10 +45,10 @@ mkdir -p "$MODEL_DIR" "$LOG_DIR" "$PRED_DIR" logs
 # =============================================================================
 
 echo "============================================================"
-echo "  StockFormer — Training all 9 models (v3)"
-echo "  Regression:      d_model=128, layers=3, dim_ff=256"
+echo "  StockFormer — Training all 9 models (v4)"
+echo "  Regression:      d_model=128, layers=3, combined_regression"
 echo "  Classification:  d_model=64,  layers=2, dim_ff=128"
-echo "  Binary:          label_smoothing + entropy_reg=0.3"
+echo "  Binary:          focal + entropy_reg=0.5, threshold=1.5%"
 echo "  Buckets:         soft_ordinal + auto quantile edges"
 echo "  Temporal split: train <= $TRAIN_END, infer >= $INFER_START"
 echo "  Started: $(date)"
@@ -96,38 +101,38 @@ SMALL_MODEL="--d-model 64 --num-layers 2 --dim-feedforward 128"
 # 30d extra regularization (longer horizon = noisier target)
 REG_30D="--dropout 0.3 --weight-decay 0.03"
 
-# Binary classification: label smoothing + strong entropy reg + balanced threshold
-BINARY_BASE="--entropy-reg-weight 0.3 --binary-threshold 0.0 --min-return-threshold 0.0 $SMALL_MODEL"
+# Binary classification: focal loss + strong entropy reg + 1.5% threshold for clean separation
+BINARY_BASE="--entropy-reg-weight 0.5 --binary-threshold 0.015 --min-return-threshold 0.0 $SMALL_MODEL"
 
 # Bucket classification: auto quantile edges (3 balanced classes) + strong entropy reg
-BUCKET_BASE="--bucket-edges auto --n-buckets 3 --entropy-reg-weight 0.3 --min-return-threshold 0.0 $SMALL_MODEL"
+BUCKET_BASE="--bucket-edges auto --n-buckets 3 --entropy-reg-weight 0.5 --min-return-threshold 0.0 $SMALL_MODEL"
 
 # =============================================================================
 # Launch 3 parallel groups
 # =============================================================================
 
 echo "Launching 3 parallel training groups..."
-echo "  Group 1: regression (3d -> 10d -> 30d)  [128d, 3 layers]"
-echo "  Group 2: binary    (3d -> 10d -> 30d)  [64d, 2 layers, label_smoothing]"
+echo "  Group 1: regression (3d -> 10d -> 30d)  [128d, 3 layers, combined_regression]"
+echo "  Group 2: binary    (3d -> 10d -> 30d)  [64d, 2 layers, focal]"
 echo "  Group 3: buckets   (3d -> 10d -> 30d)  [64d, 2 layers, soft_ordinal]"
 echo ""
 
-# Group 1: Regression — directional_mse (direction_weight=3.0 from config)
+# Group 1: Regression — combined_regression (logcosh + directional_mse, direction_weight=3.0)
 # 3d and 10d: default model size (working well)
 # 30d: smaller model + extra regularization (was overfitting)
 (
-    run_one regression 3  directional_mse ""
-    run_one regression 10 directional_mse ""
-    run_one regression 30 directional_mse "$SMALL_MODEL $REG_30D"
+    run_one regression 3  combined_regression ""
+    run_one regression 10 combined_regression ""
+    run_one regression 30 combined_regression "$SMALL_MODEL $REG_30D"
 ) > "logs/train_regression_${LOGDATE}.log" 2>&1 &
 REG_PID=$!
 echo "  regression PID: $REG_PID"
 
-# Group 2: Binary — label_smoothing loss, no noise filter, balanced threshold
+# Group 2: Binary — focal loss (down-weights easy examples, prevents class collapse)
 (
-    run_one binary 3  label_smoothing "$BINARY_BASE"
-    run_one binary 10 label_smoothing "$BINARY_BASE"
-    run_one binary 30 label_smoothing "$BINARY_BASE $REG_30D"
+    run_one binary 3  focal "$BINARY_BASE"
+    run_one binary 10 focal "$BINARY_BASE"
+    run_one binary 30 focal "$BINARY_BASE $REG_30D"
 ) > "logs/train_binary_${LOGDATE}.log" 2>&1 &
 BIN_PID=$!
 echo "  binary PID: $BIN_PID"

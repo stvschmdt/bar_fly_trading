@@ -96,8 +96,8 @@ DEFAULT_CONFIG = {
     # Anti-collapse / loss settings
     # -------------------------------------------------------------------------
     "loss_name": None,            # Override loss: "focal", "label_smoothing", etc. (None = default for label_mode)
-    "entropy_reg_weight": 0.05,   # Entropy regularization weight (>0 penalizes collapsed predictions)
-    "binary_threshold": 0.005,    # Binary label: class 1 = return >= +0.5% (was 0.0)
+    "entropy_reg_weight": 0.5,    # Entropy regularization weight (>0 penalizes collapsed predictions)
+    "binary_threshold": 0.015,    # Binary label: class 1 = return >= +1.5% (cleaner than 0.5%)
     "min_return_threshold": 0.0025,  # Filter samples with |return| < 0.25% from classification training
     "direction_weight": 3.0,      # DirectionalMSE penalty for wrong-sign predictions
 
