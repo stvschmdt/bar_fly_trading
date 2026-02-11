@@ -99,6 +99,7 @@ class TradingConfig:
     stock_market_orders: bool = True  # Default stocks to market orders
     limit_offset_pct: float = 0.002  # 0.2% marketable limit offset
     order_timeout: int = 60  # 60 second timeout
+    all_or_none: bool = True  # Reject partial fills (IBKR allOrNone flag)
 
     # Buy-side safety
     fee_buffer_pct: float = 0.005    # 0.5% cash buffer for fees + slippage

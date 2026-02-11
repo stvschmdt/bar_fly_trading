@@ -94,6 +94,8 @@ class OrderManager:
 
         order = MarketOrder(action, quantity)
         order.tif = "DAY"  # Time in force: day order
+        if self.config.all_or_none:
+            order.allOrNone = True
         # FA multi-account: must specify target account
         acct = self.target_account
         if acct:
@@ -137,6 +139,8 @@ class OrderManager:
 
         order = LimitOrder(action, quantity, limit_price)
         order.tif = "DAY"
+        if self.config.all_or_none:
+            order.allOrNone = True
         acct = self.target_account
         if acct:
             order.account = acct
