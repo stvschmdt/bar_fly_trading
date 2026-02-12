@@ -2,7 +2,7 @@
 BFT Web API — FastAPI backend serving sector, stock, and signal data.
 
 Reads pre-generated JSON files from a data directory.
-In development, serves sample data if files don't exist yet.
+Auth via JWT tokens (invite-code-gated registration).
 """
 
 import json
@@ -10,10 +10,18 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+
+from .auth import router as auth_router, get_current_user, SECRET_KEY
+from .database import (
+    init_db,
+    get_user_by_email,
+    get_watchlist as db_get_watchlist,
+    set_watchlist as db_set_watchlist,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +37,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include auth routes
+app.include_router(auth_router)
+
+
+# ── Startup ───────────────────────────────────────────────────────
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
+    if SECRET_KEY == "bft-dev-secret-change-in-prod":
+        logger.warning("Using default JWT secret — set BFT_JWT_SECRET in production")
+
+
+# ── Auth Middleware ────────────────────────────────────────────────
+
+AUTH_WHITELIST = {"/api/auth/login", "/api/auth/register", "/api/health"}
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and path not in AUTH_WHITELIST:
+        try:
+            get_current_user(request)
+        except HTTPException as e:
+            return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
+    response = await call_next(request)
+    return response
+
+
+# ── Helpers ───────────────────────────────────────────────────────
 
 def _read_json(filename: str) -> dict:
     """Read a JSON file from the data directory."""
@@ -38,6 +77,17 @@ def _read_json(filename: str) -> dict:
     with open(path) as f:
         return json.load(f)
 
+
+def _get_user_id(request: Request) -> int:
+    """Get user ID from JWT token."""
+    email = get_current_user(request)
+    user = get_user_by_email(email)
+    if not user:
+        raise HTTPException(401, "User not found")
+    return user["id"]
+
+
+# ── Data Endpoints ────────────────────────────────────────────────
 
 @app.get("/api/sectors")
 def get_sectors():
@@ -77,16 +127,19 @@ def get_signals():
     return data
 
 
-@app.get("/api/watchlist")
-def get_watchlist():
-    """Return the custom watchlist with current stock data."""
-    wl = _read_json("watchlist.json")
-    if wl is None:
-        return {"name": "Custom", "symbols": [], "stocks": []}
+# ── Per-User Watchlist ────────────────────────────────────────────
 
-    # Enrich with latest quote data from symbol JSONs
+@app.get("/api/watchlist")
+def get_watchlist(request: Request):
+    """Return the current user's watchlist with enriched stock data."""
+    user_id = _get_user_id(request)
+    wl = db_get_watchlist(user_id)
+
+    if wl is None:
+        return {"name": "Custom", "symbols": [], "stocks": [], "sector_id": "CUSTOM", "change_pct": 0}
+
     stocks = []
-    for sym in wl.get("symbols", []):
+    for sym in wl["symbols"]:
         sym_data = _read_json(f"{sym}.json")
         if sym_data and sym_data.get("quote"):
             stocks.append({
@@ -108,11 +161,11 @@ def get_watchlist():
 
 
 @app.post("/api/watchlist")
-def set_watchlist(payload: dict = Body(...)):
-    """Upload a custom watchlist. Accepts {symbols: [...]} or {symbols: "AAPL,NVDA,..."}."""
-    symbols = payload.get("symbols", [])
+def set_watchlist(request: Request, payload: dict = Body(...)):
+    """Save the current user's watchlist."""
+    user_id = _get_user_id(request)
 
-    # Accept comma-separated string or list
+    symbols = payload.get("symbols", [])
     if isinstance(symbols, str):
         symbols = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     else:
@@ -122,13 +175,9 @@ def set_watchlist(payload: dict = Body(...)):
         raise HTTPException(400, "No symbols provided")
 
     name = payload.get("name", "Custom")
+    db_set_watchlist(user_id, symbols, name)
 
-    wl_data = {"name": name, "symbols": symbols}
-    wl_path = DATA_DIR / "watchlist.json"
-    with open(wl_path, "w") as f:
-        json.dump(wl_data, f, indent=2)
-
-    logger.info(f"Watchlist updated: {len(symbols)} symbols")
+    logger.info(f"Watchlist updated for user {user_id}: {len(symbols)} symbols")
     return {"status": "ok", "count": len(symbols), "symbols": symbols}
 
 
@@ -138,7 +187,8 @@ def health():
     return {"status": "ok", "data_dir": str(DATA_DIR)}
 
 
-# Serve the React frontend (must be after API routes)
+# ── Serve React SPA (must be after API routes) ────────────────────
+
 if FRONTEND_DIR.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
 

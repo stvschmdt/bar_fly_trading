@@ -1,10 +1,12 @@
 import { useTheme } from '../hooks/useTheme'
+import { useAuth } from '../hooks/useAuth'
 
 const THEME_ICONS = { light: 'L', dark: 'D', system: 'A' }
 const THEME_CYCLE = ['system', 'light', 'dark']
 
 export default function Header({ lastUpdated }) {
   const { theme, setTheme } = useTheme()
+  const { user, logout } = useAuth()
 
   function cycleTheme() {
     const idx = THEME_CYCLE.indexOf(theme)
@@ -23,6 +25,9 @@ export default function Header({ lastUpdated }) {
           {lastUpdated && (
             <span className="hidden sm:inline">{lastUpdated}</span>
           )}
+          {user && (
+            <span className="hidden sm:inline text-xs">{user.email}</span>
+          )}
           <button
             onClick={cycleTheme}
             className="w-8 h-8 rounded-full border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-xs font-mono"
@@ -30,6 +35,14 @@ export default function Header({ lastUpdated }) {
           >
             {THEME_ICONS[theme]}
           </button>
+          {user && (
+            <button
+              onClick={logout}
+              className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            >
+              Sign Out
+            </button>
+          )}
         </div>
       </div>
     </header>

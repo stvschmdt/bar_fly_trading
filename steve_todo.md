@@ -1,15 +1,14 @@
 # Steve's Hosting Prep TODO
 
-Step-by-step guide to get the BFT web app hosted on your domain with AWS.
+Step-by-step guide to get the BFT web app hosted at `www.barflytrading.com`.
 
 ---
 
 ## 1. Domain DNS Setup
 
 - [ ] Log into your domain registrar (Route 53, Namecheap, etc.)
-- [ ] Create an **A record** pointing your domain (e.g. `barflytrading.com`) to your EC2 public IP
-- [ ] Create a **CNAME** for `www` → same domain
-- [ ] Optional: create `api.barflytrading.com` A record → same EC2 IP (or use path-based routing `/api/`)
+- [ ] Create an **A record** pointing `barflytrading.com` → your EC2 public IP
+- [ ] Create a **CNAME** for `www` → `barflytrading.com`
 - [ ] Wait for DNS propagation (usually 5-30 min)
 
 ## 2. EC2 Instance Prep
@@ -23,8 +22,6 @@ Step-by-step guide to get the BFT web app hosted on your domain with AWS.
 - [ ] SSH into the instance and confirm you have sudo access
 
 ## 3. Install System Dependencies (on EC2)
-
-Run these on the EC2 instance:
 
 ```bash
 # Update system
@@ -44,20 +41,55 @@ sudo apt install -y nginx
 sudo apt install -y certbot python3-certbot-nginx
 
 # pip packages for the backend
-pip install fastapi uvicorn[standard] yfinance aiofiles
+pip install fastapi 'uvicorn[standard]' aiofiles bcrypt pyjwt python-multipart
 ```
 
-## 4. SSL Certificate (Let's Encrypt)
+## 4. Clone the Repo & Checkout Website Branch
 
 ```bash
-# Get cert (replace with your actual domain)
-sudo certbot --nginx -d barflytrading.com -d www.barflytrading.com
+cd ~
+git clone git@github.com:stvschmdt/bar_fly_trading.git
+cd bar_fly_trading
+git checkout feature/website
+```
 
-# Verify auto-renewal
+## 5. Deploy Directory Setup
+
+```bash
+sudo mkdir -p /var/www/bft/{frontend,data}
+sudo chown -R $USER:$USER /var/www/bft
+sudo mkdir -p /var/log/bft
+sudo chown -R $USER:$USER /var/log/bft
+```
+
+## 6. Build & Deploy Frontend
+
+```bash
+cd ~/bar_fly_trading/webapp/frontend
+npm install && npm run build
+cp -r dist/* /var/www/bft/frontend/
+```
+
+## 7. Populate Data (one-time, from CSVs — no API calls)
+
+```bash
+cd ~/bar_fly_trading
+
+# Populate all ~543 symbol JSONs from all_data CSVs (takes ~2 sec)
+BFT_DATA_DIR=/var/www/bft/data python -m webapp.backend.populate_all
+
+# Generate invite codes for beta testers
+BFT_DATA_DIR=/var/www/bft/data python -m webapp.backend.database BETA2026 20
+```
+
+## 8. SSL Certificate (Let's Encrypt)
+
+```bash
+sudo certbot --nginx -d barflytrading.com -d www.barflytrading.com
 sudo certbot renew --dry-run
 ```
 
-## 5. Nginx Configuration
+## 9. Nginx Configuration
 
 Create `/etc/nginx/sites-available/bft`:
 
@@ -83,36 +115,24 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
-    # FastAPI backend
+    # FastAPI backend (API only)
     location /api/ {
         proxy_pass http://127.0.0.1:8000/api/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-    }
-
-    # WebSocket (Phase 2)
-    location /ws/ {
-        proxy_pass http://127.0.0.1:8000/ws/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```
 
 ```bash
 sudo ln -s /etc/nginx/sites-available/bft /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-## 6. Deploy Directory Setup
-
-```bash
-sudo mkdir -p /var/www/bft/{frontend,data}
-sudo chown -R $USER:$USER /var/www/bft
-```
-
-## 7. Systemd Service for FastAPI
+## 10. Systemd Service for FastAPI
 
 Create `/etc/systemd/system/bft-api.service`:
 
@@ -123,68 +143,65 @@ After=network.target
 
 [Service]
 User=ubuntu
-WorkingDirectory=/home/ubuntu/bar_fly_trading/webapp/backend
-ExecStart=/home/ubuntu/miniforge3/bin/uvicorn api:app --host 127.0.0.1 --port 8000
+WorkingDirectory=/home/ubuntu/bar_fly_trading
+ExecStart=/usr/bin/python3 -m uvicorn webapp.backend.api:app --host 127.0.0.1 --port 8000
 Restart=always
 Environment=BFT_DATA_DIR=/var/www/bft/data
+Environment=BFT_JWT_SECRET=<REPLACE-WITH-A-RANDOM-SECRET>
 
 [Install]
 WantedBy=multi-user.target
 ```
 
+Generate a random secret:
 ```bash
-sudo systemctl enable bft-api
-sudo systemctl start bft-api
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-## 8. Cron Jobs
+Start the service:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable bft-api
+sudo systemctl start bft-api
+sudo systemctl status bft-api
+```
+
+## 11. Cron Jobs (optional, for live data refresh)
 
 ```bash
 crontab -e
 ```
 
-Add:
 ```cron
-# Daily report generation at 6:00 AM ET (11:00 UTC)
-0 11 * * 1-5 cd /home/ubuntu/bar_fly_trading && python -m webapp.backend.generate_reports >> /var/log/bft/reports.log 2>&1
+# Populate latest technical data from CSVs nightly at 6:00 AM ET (11:00 UTC)
+0 11 * * 1-5 cd /home/ubuntu/bar_fly_trading && BFT_DATA_DIR=/var/www/bft/data python -m webapp.backend.refresh_technicals >> /var/log/bft/technicals.log 2>&1
 
-# Quote updates every 5 min during market hours (9:30-4:00 ET = 14:30-21:00 UTC)
-*/5 14-20 * * 1-5 cd /home/ubuntu/bar_fly_trading && python -m webapp.backend.update_quotes >> /var/log/bft/quotes.log 2>&1
+# Batch quote updates every 30 min during market hours (9:30-4:00 ET = 14:30-21:00 UTC)
+*/30 14-20 * * 1-5 cd /home/ubuntu/bar_fly_trading && BFT_DATA_DIR=/var/www/bft/data python -m webapp.backend.update_quotes >> /var/log/bft/quotes.log 2>&1
 ```
 
-```bash
-sudo mkdir -p /var/log/bft
-sudo chown $USER:$USER /var/log/bft
-```
+## 12. Verify
 
-## 9. Build & Deploy (first time)
-
-```bash
-# On your dev machine, build the React frontend
-cd webapp/frontend
-npm install
-npm run build
-
-# Copy build output to EC2
-scp -r dist/* ubuntu@YOUR_EC2_IP:/var/www/bft/frontend/
-
-# Or on EC2 directly:
-cd ~/bar_fly_trading/webapp/frontend
-npm install && npm run build
-cp -r dist/* /var/www/bft/frontend/
-
-# Generate initial data files
-cd ~/bar_fly_trading
-python -m webapp.backend.build_sector_map
-python -m webapp.backend.generate_reports --symbols SPY,QQQ,AAPL,NVDA,JPM  # start small
-```
-
-## 10. Verify
-
-- [ ] Visit `https://barflytrading.com` — should see the sector grid
+- [ ] Visit `https://barflytrading.com` — should see the login page
+- [ ] Register with invite code `BETA2026` — should redirect to sector dashboard
 - [ ] Click a sector — should see stock grid
 - [ ] Click a stock — should see the detail card
-- [ ] Check `https://barflytrading.com/api/sectors` — should return JSON
+- [ ] Sign out — should return to login page
+- [ ] Check `https://barflytrading.com/api/health` — should return `{"status": "ok"}`
+
+---
+
+## Quick Deploy Script (after first setup)
+
+For future deploys, run on the EC2 server:
+
+```bash
+cd ~/bar_fly_trading
+git pull origin feature/website
+cd webapp/frontend && npm run build
+cp -r dist/* /var/www/bft/frontend/
+sudo systemctl restart bft-api
+```
 
 ---
 
@@ -192,9 +209,12 @@ python -m webapp.backend.generate_reports --symbols SPY,QQQ,AAPL,NVDA,JPM  # sta
 
 | What | Where |
 |------|-------|
+| Repo | `~/bar_fly_trading` |
 | Frontend build | `/var/www/bft/frontend/` |
 | JSON data files | `/var/www/bft/data/` |
-| FastAPI service | `systemctl status bft-api` |
+| Auth database | `/var/www/bft/data/bft_auth.db` |
+| FastAPI service | `sudo systemctl status bft-api` |
 | Nginx config | `/etc/nginx/sites-available/bft` |
 | SSL certs | Auto-renewed by certbot |
 | Logs | `/var/log/bft/` |
+| Invite code CLI | `BFT_DATA_DIR=/var/www/bft/data python -m webapp.backend.database CODE 10` |
