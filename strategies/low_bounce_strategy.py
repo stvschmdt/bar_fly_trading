@@ -49,11 +49,17 @@ class LowBounceStrategy(BaseStrategy):
     LOW_PROXIMITY = 1.10
     RSI_ENTRY_MAX = 40
     DELTA_ENTRY_MAX = 0
+    MIN_VOLUME = 500_000   # Minimum daily volume to filter illiquid names
     MAX_HOLD_DAYS = 30
     MIN_HOLD_DAYS = 3
     RSI_EXIT_THRESHOLD = 60
-    TAKE_PROFIT_PCT = 15.0
     MAX_POSITIONS = 10
+
+    # Exit safety overrides (wider for longer-hold contrarian plays)
+    STOP_LOSS_PCT = -0.10       # -10%
+    TAKE_PROFIT_PCT = 0.20      # +20%
+    TRAILING_STOP_PCT = -0.08   # -8% from high-water mark
+    TRAILING_ACTIVATION_PCT = 0.04  # Start trailing after +4%
 
     def __init__(self, account, symbols, data=None, data_path=None,
                  position_size=0.1, max_hold_days=30):
@@ -113,24 +119,24 @@ class LowBounceStrategy(BaseStrategy):
         if low_52w <= 0:
             return False
 
+        volume = row.get('volume', None)
+        if pd.notna(volume) and volume < self.MIN_VOLUME:
+            return False
+
         return (close < low_52w * self.LOW_PROXIMITY and
                 rsi < self.RSI_ENTRY_MAX and
                 delta <= self.DELTA_ENTRY_MAX)
 
     def check_exit(self, row, hold_days, entry_price=None):
-        """Exit: max hold 30d OR RSI > 60 OR take profit 15%."""
+        """Exit: max hold 30d OR RSI > 60.
+
+        Note: take-profit and stop-loss are handled by check_exit_safety()
+        in the base class using TAKE_PROFIT_PCT / STOP_LOSS_PCT (decimal).
+        """
         if hold_days < self.MIN_HOLD_DAYS:
             return False, ""
         if hold_days >= self.MAX_HOLD_DAYS:
             return True, f"max hold {self.MAX_HOLD_DAYS}d"
-
-        # Take profit
-        if entry_price and entry_price > 0 and row is not None:
-            current_price = row.get('adjusted_close', 0)
-            if current_price > 0:
-                pct_return = (current_price - entry_price) / entry_price * 100
-                if pct_return >= self.TAKE_PROFIT_PCT:
-                    return True, f"take profit ({pct_return:.1f}%)"
 
         if row is None:
             return False, ""
@@ -183,12 +189,10 @@ class LowBounceStrategy(BaseStrategy):
 
                 should_exit, exit_reason = self.check_exit(
                     indicators, hold_days, entry_price)
-                # Also check take profit using current_price directly
-                if not should_exit and hold_days >= self.MIN_HOLD_DAYS and entry_price > 0:
-                    pct_return = (current_price - entry_price) / entry_price * 100
-                    if pct_return >= self.TAKE_PROFIT_PCT:
-                        should_exit = True
-                        exit_reason = f"take profit ({pct_return:.1f}%)"
+                # Safety backstop: stop-loss, take-profit, trailing stop
+                if not should_exit:
+                    should_exit, exit_reason = self.check_exit_safety(
+                        symbol, current_price, entry_price)
 
                 if should_exit:
                     shares = self.positions[symbol]['shares']
@@ -211,10 +215,14 @@ class LowBounceStrategy(BaseStrategy):
                     })
 
                     print(f"  EXIT {symbol}: held {hold_days}d, return: {pct_return:+.2f}% ({exit_reason})")
+                    self.record_exit(symbol, current_date)
                     del self.positions[symbol]
 
             else:
                 if len(self.positions) >= self.MAX_POSITIONS:
+                    continue
+                allowed, _ = self.is_reentry_allowed(symbol, current_date)
+                if not allowed:
                     continue
 
                 if self.check_entry(indicators) if indicators is not None else False:
@@ -231,6 +239,7 @@ class LowBounceStrategy(BaseStrategy):
                             'entry_date': current_date,
                             'entry_price': current_price,
                         }
+                        self.record_entry(symbol)
 
                         rsi_val = indicators.get('rsi_14', None)
                         delta_val = indicators.get('bull_bear_delta', None)

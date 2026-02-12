@@ -33,6 +33,9 @@ import pandas as pd
 
 SIGNAL_COLUMNS = [
     'action', 'symbol', 'shares', 'price', 'strategy', 'reason', 'timestamp',
+    'stop_loss_pct', 'take_profit_pct', 'trailing_stop_pct',
+    'trailing_activation_pct', 'max_hold_days',
+    'instrument_type',
 ]
 
 
@@ -47,7 +50,10 @@ class SignalWriter:
         self.filepath = filepath
         self.signals = []
 
-    def add(self, action, symbol, shares=0, price=0.0, strategy="", reason=""):
+    def add(self, action, symbol, shares=0, price=0.0, strategy="", reason="",
+            stop_loss_pct=None, take_profit_pct=None, trailing_stop_pct=None,
+            trailing_activation_pct=None, max_hold_days=None,
+            instrument_type='stock'):
         """
         Add a trade signal.
 
@@ -58,6 +64,12 @@ class SignalWriter:
             price: Reference/signal price (0 = use live market price)
             strategy: Strategy name that generated this signal
             reason: Human-readable reason
+            stop_loss_pct: Stop loss as decimal (e.g. -0.07 for -7%)
+            take_profit_pct: Take profit as decimal (e.g. 0.12 for +12%)
+            trailing_stop_pct: Trailing stop as decimal (e.g. -0.08 for -8%)
+            trailing_activation_pct: Gain threshold to activate trailing (e.g. 0.03 for +3%)
+            max_hold_days: Maximum hold period in trading days
+            instrument_type: 'stock' or 'option' — controls execution routing
         """
         self.signals.append({
             'action': action.upper(),
@@ -67,10 +79,21 @@ class SignalWriter:
             'strategy': strategy,
             'reason': reason,
             'timestamp': datetime.now().isoformat(timespec='seconds'),
+            'stop_loss_pct': stop_loss_pct if stop_loss_pct is not None else '',
+            'take_profit_pct': take_profit_pct if take_profit_pct is not None else '',
+            'trailing_stop_pct': trailing_stop_pct if trailing_stop_pct is not None else '',
+            'trailing_activation_pct': trailing_activation_pct if trailing_activation_pct is not None else '',
+            'max_hold_days': max_hold_days if max_hold_days is not None else '',
+            'instrument_type': instrument_type,
         })
 
-    def save(self, filepath=None):
-        """Write signals to CSV.  Creates parent directories if needed."""
+    def save(self, filepath=None, append=False):
+        """Write signals to CSV atomically.  Creates parent dirs if needed.
+
+        Args:
+            filepath: Output path (uses self.filepath if None)
+            append: If True and file exists, append to existing signals
+        """
         path = filepath or self.filepath
         if not path:
             raise ValueError("No filepath specified")
@@ -80,8 +103,22 @@ class SignalWriter:
 
         os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
         df = pd.DataFrame(self.signals, columns=SIGNAL_COLUMNS)
-        df.to_csv(path, index=False)
-        print(f"Wrote {len(self.signals)} signal(s) to {path}")
+
+        # Append: read existing file and concatenate
+        if append and os.path.exists(path):
+            try:
+                existing = pd.read_csv(path)
+                df = pd.concat([existing, df], ignore_index=True)
+                print(f"Appending {len(self.signals)} signal(s) to {len(existing)} existing")
+            except Exception as e:
+                print(f"Warning: could not read existing {path}: {e}, overwriting")
+
+        # Atomic write: write to temp file then rename to prevent
+        # partial reads when execute_signals is in watch mode
+        tmp_path = path + '.tmp'
+        df.to_csv(tmp_path, index=False)
+        os.replace(tmp_path, path)
+        print(f"Wrote {len(df)} signal(s) to {path}")
 
     def clear(self):
         self.signals = []
@@ -114,5 +151,20 @@ def read_signals(filepath):
         df['reason'] = ''
     if 'timestamp' not in df.columns:
         df['timestamp'] = ''
+
+    # Exit param columns (backward compatible with old CSVs)
+    exit_cols = ['stop_loss_pct', 'take_profit_pct', 'trailing_stop_pct',
+                 'trailing_activation_pct', 'max_hold_days']
+    for col in exit_cols:
+        if col not in df.columns:
+            df[col] = ''
+
+    # Pandas reads empty CSV cells as NaN — convert back to '' for exit params
+    df[exit_cols] = df[exit_cols].fillna('')
+
+    # Instrument type column (backward compatible with old CSVs)
+    if 'instrument_type' not in df.columns:
+        df['instrument_type'] = 'stock'
+    df['instrument_type'] = df['instrument_type'].fillna('stock').replace('', 'stock')
 
     return df[SIGNAL_COLUMNS].to_dict('records')

@@ -163,6 +163,39 @@ class TradeExecutor:
         account = self.connection.get_account_summary()
         positions = self.position_manager.get_open_positions()
 
+        # Check bid-ask spread before validation
+        bid_ask = self.connection.get_bid_ask(signal.symbol)
+        if bid_ask is not None:
+            bid, ask, last = bid_ask
+            mid = (bid + ask) / 2
+            if mid > 0:
+                spread_pct = (ask - bid) / mid
+                if spread_pct > self.trading_config.max_spread_pct:
+                    logger.warning(
+                        f"Spread too wide for {signal.symbol}: "
+                        f"bid=${bid:.2f} ask=${ask:.2f} spread={spread_pct:.2%} "
+                        f"(max {self.trading_config.max_spread_pct:.2%})"
+                    )
+                    return TradeResult(
+                        signal=signal,
+                        validation=ValidationResult(
+                            status=ValidationStatus.REJECTED,
+                            signal=signal,
+                            messages=[
+                                f"Bid-ask spread {spread_pct:.2%} exceeds "
+                                f"{self.trading_config.max_spread_pct:.2%} limit "
+                                f"(bid=${bid:.2f}, ask=${ask:.2f})"
+                            ]
+                        ),
+                        success=False,
+                        error_message=f"Spread too wide: {spread_pct:.2%}"
+                    )
+                # Use ask for BUY cost calculations, bid for SELL
+                if signal.action == OrderAction.BUY:
+                    logger.info(f"Using ask price for {signal.symbol}: ${ask:.2f} (last=${last:.2f})")
+                else:
+                    logger.info(f"Using bid price for {signal.symbol}: ${bid:.2f} (last=${last:.2f})")
+
         # Validate signal
         validation = self.risk_manager.validate_trade(signal, account, positions)
 
@@ -178,11 +211,15 @@ class TradeExecutor:
         # Use adjusted shares if needed
         shares_to_trade = validation.adjusted_shares or signal.shares
 
+        # Determine order type: stocks default to market, options to limit
+        use_market = self.trading_config.use_market_orders or self.trading_config.stock_market_orders
+        order_type = OrderType.MARKET if use_market else OrderType.LIMIT
+
         # Submit order
         order_result = self.order_manager.submit_order(
             signal,
             shares=shares_to_trade,
-            order_type=OrderType.MARKET if self.trading_config.use_market_orders else OrderType.LIMIT
+            order_type=order_type
         )
 
         if order_result is None or order_result.status == OrderStatus.ERROR:

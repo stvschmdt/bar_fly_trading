@@ -41,6 +41,8 @@ class StockSequenceDataset(Dataset):
         bucket_edges: List of edges for bucket mode (in percent, e.g. [-2, 0, 2])
         group_col: Column to group by (default: "ticker")
         date_col: Column for dates (default: "date")
+        market_feature_cols: Optional list of market/sector feature columns
+            for cross-attention or other multi-input model types
     """
 
     def __init__(
@@ -54,6 +56,8 @@ class StockSequenceDataset(Dataset):
         group_col: str = "ticker",
         date_col: str = "date",
         market_feature_cols: Optional[List[str]] = None,
+        binary_threshold: float = 0.0,
+        min_return_threshold: float = 0.0,
     ):
         self.df = df.sort_values([group_col, date_col]).reset_index(drop=True)
         self.lookback = lookback
@@ -64,15 +68,21 @@ class StockSequenceDataset(Dataset):
         self.group_col = group_col
         self.date_col = date_col
         self.market_feature_cols = market_feature_cols
+        self.binary_threshold = binary_threshold
+        self.min_return_threshold = min_return_threshold
 
         # Clean feature columns: forward-fill within each ticker, then zero-fill
-        self.df[self.feature_cols] = (
-            self.df.groupby(group_col)[self.feature_cols]
+        all_feat_cols = list(self.feature_cols)
+        if self.market_feature_cols:
+            all_feat_cols += self.market_feature_cols
+
+        self.df[all_feat_cols] = (
+            self.df.groupby(group_col)[all_feat_cols]
             .ffill()
             .fillna(0.0)
         )
-        self.df[self.feature_cols] = (
-            self.df[self.feature_cols]
+        self.df[all_feat_cols] = (
+            self.df[all_feat_cols]
             .replace([np.inf, -np.inf], np.nan)
             .fillna(0.0)
         )
@@ -104,6 +114,18 @@ class StockSequenceDataset(Dataset):
             if not pd.isna(val):
                 valid_indices.append(idx)
         self.indices = valid_indices
+
+        # Noisy label filter: remove samples with tiny |return| that are
+        # essentially coin-flips for classification (near the 0% boundary)
+        if self.min_return_threshold > 0 and self.label_mode in ("binary", "buckets"):
+            filtered = [
+                idx for idx in self.indices
+                if abs(float(self.df.loc[idx, self.target_col])) >= self.min_return_threshold
+            ]
+            removed = len(self.indices) - len(filtered)
+            print(f"Noisy label filter: removed {removed} samples with "
+                  f"|return| < {self.min_return_threshold:.4f}")
+            self.indices = filtered
 
         if not self.indices:
             raise ValueError("No valid indices with non-NaN targets found.")
@@ -153,11 +175,17 @@ class StockSequenceDataset(Dataset):
         if self.label_mode == "regression":
             label = target_val
         elif self.label_mode == "binary":
-            label = int(target_val >= 0.0)
+            label = int(target_val >= self.binary_threshold)
         elif self.label_mode == "buckets":
             label = self._get_bucket_label(target_val)
         else:
             raise ValueError(f"Unknown label_mode: {self.label_mode}")
+
+        # For cross-attention models, return market features as third element
+        if self.market_feature_cols:
+            market_seq = seq_df[self.market_feature_cols].to_numpy(dtype="float32")
+            market_tensor = torch.from_numpy(market_seq)
+            return seq_tensor, label, market_tensor
 
         return seq_tensor, label
 
@@ -177,6 +205,55 @@ def apply_normalization(
     dataset.df[dataset.feature_cols] = feats
     dataset._norm_means = means
     dataset._norm_stds = stds
+
+
+def apply_per_ticker_normalization(
+    dataset: "StockSequenceDataset",
+    train_dates_cutoff: str,
+) -> None:
+    """
+    Per-ticker z-score normalization using each ticker's own training-period stats.
+
+    This handles scale differences between tickers ($5 biotech vs $500 mega-cap)
+    and keeps features stationary across time for each ticker.
+
+    Args:
+        dataset: StockSequenceDataset instance
+        train_dates_cutoff: Date string; stats computed from rows with date < cutoff
+    """
+    df = dataset.df
+    feat_cols = dataset.feature_cols
+    group_col = dataset.group_col
+    date_col = dataset.date_col
+
+    # Cast feature columns to float64 so z-scored values can be written back
+    for col in feat_cols:
+        if df[col].dtype != np.float64:
+            df[col] = df[col].astype(np.float64)
+
+    train_mask = df[date_col] < train_dates_cutoff
+
+    for ticker, group_idx in df.groupby(group_col).groups.items():
+        ticker_mask = df.index.isin(group_idx)
+        ticker_train_mask = ticker_mask & train_mask
+
+        if ticker_train_mask.sum() < 2:
+            # Not enough training data for this ticker — use global fallback
+            continue
+
+        train_feats = df.loc[ticker_train_mask, feat_cols].to_numpy(dtype="float64")
+        means = train_feats.mean(axis=0)
+        stds = train_feats.std(axis=0)
+        stds = np.where(stds < 1e-6, 1.0, stds)
+
+        # Normalize ALL rows for this ticker using training-period stats
+        feats = df.loc[ticker_mask, feat_cols].to_numpy(dtype="float64")
+        feats = (feats - means) / stds
+        df.loc[ticker_mask, feat_cols] = feats
+
+    # Store dummy global stats for compatibility
+    dataset._norm_means = np.zeros(len(feat_cols))
+    dataset._norm_stds = np.ones(len(feat_cols))
 
 
 # =============================================================================
@@ -220,17 +297,10 @@ def make_temporal_split(
         else:
             val_indices.append(i)
 
-    # Compute normalization stats on TRAINING data only
-    train_row_idxs = [dataset.indices[i] for i in train_indices]
-    train_feats = dataset.df.loc[train_row_idxs, dataset.feature_cols].to_numpy(
-        dtype="float32"
-    )
-    means = train_feats.mean(axis=0)
-    stds = train_feats.std(axis=0)
-    stds = np.where(stds < 1e-6, 1.0, stds)
-
-    # Apply normalization to ENTIRE dataset using training stats
-    apply_normalization(dataset, means, stds)
+    # Per-ticker normalization: each ticker gets z-scored using its own
+    # training-period stats. This handles scale differences across tickers
+    # and keeps features stationary within each ticker's history.
+    apply_per_ticker_normalization(dataset, cutoff_date)
 
     print(
         f"Temporal split: train={len(train_indices)} samples "
@@ -239,6 +309,33 @@ def make_temporal_split(
     )
 
     return Subset(dataset, train_indices), Subset(dataset, val_indices)
+
+
+# =============================================================================
+# Quantile Bucket Edges
+# =============================================================================
+
+def compute_quantile_edges(df, target_col, n_buckets=4, group_col="ticker"):
+    """
+    Compute bucket edges from quantiles of the target distribution.
+
+    Ensures roughly equal samples per bucket, eliminating class imbalance.
+
+    Args:
+        df: DataFrame with target column
+        target_col: Column name for the target variable
+        n_buckets: Number of buckets (edges = n_buckets - 1)
+        group_col: Grouping column (unused, kept for API consistency)
+
+    Returns:
+        List of bucket edges (in percent, matching bucket_edges convention)
+    """
+    vals = df[target_col].dropna()
+    quantiles = np.linspace(0, 1, n_buckets + 1)[1:-1]  # e.g. [0.25, 0.5, 0.75] for 4 buckets
+    edges = np.percentile(vals, quantiles * 100)
+    # Convert from decimal to percent (bucket_edges convention)
+    edges_pct = (edges * 100).tolist()
+    return edges_pct
 
 
 # Backward-compatible alias

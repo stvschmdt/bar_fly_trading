@@ -5,7 +5,8 @@ Uses Bollinger band crossover with RSI confirmation for mean-reversion entries.
 
 Entry Conditions (BUY):
     - Price crossed below lower band (prev_close > prev_bb_lower AND close <= bb_lower)
-    - RSI <= 40 (not overbought)
+    - RSI <= 30 (deeply oversold)
+    - Volume >= 500K (liquidity filter)
 
 Exit Conditions (SELL):
     - Price reaches middle band (mean reversion target)
@@ -44,12 +45,19 @@ class BollingerBandsStrategy(BaseStrategy):
     ]
 
     # Entry thresholds
-    RSI_BUY_MAX = 40       # RSI must be <= this for BUY entry
+    RSI_BUY_MAX = 30       # RSI must be <= this for BUY entry (textbook oversold)
     RSI_SELL_MIN = 60      # RSI must be >= this for SELL entry
+    MIN_VOLUME = 500_000   # Minimum daily volume to filter illiquid names
 
     # Exit thresholds
     MAX_HOLD_DAYS = 20
     MIN_HOLD_DAYS = 1
+
+    # Exit safety overrides
+    STOP_LOSS_PCT = -0.07       # -7%
+    TAKE_PROFIT_PCT = 0.12      # +12%
+    TRAILING_STOP_PCT = -0.05   # -5% from high-water mark
+    TRAILING_ACTIVATION_PCT = 0.03  # Start trailing after +3%
 
     def __init__(self, account, symbols, data=None, data_path=None,
                  position_size=0.05, max_hold_days=20, end_date=None):
@@ -114,6 +122,10 @@ class BollingerBandsStrategy(BaseStrategy):
         if pd.notna(rsi) and rsi > self.RSI_BUY_MAX:
             return False
 
+        volume = row.get('volume', None)
+        if pd.notna(volume) and volume < self.MIN_VOLUME:
+            return False
+
         return True
 
     def check_entry_crossover(self, symbol, indicators):
@@ -133,6 +145,10 @@ class BollingerBandsStrategy(BaseStrategy):
 
         rsi = indicators.get('rsi_14', None)
         if pd.notna(rsi) and rsi > self.RSI_BUY_MAX:
+            return False
+
+        volume = indicators.get('volume', None)
+        if pd.notna(volume) and volume < self.MIN_VOLUME:
             return False
 
         prev = self._prev_day.get(symbol)
@@ -178,7 +194,7 @@ class BollingerBandsStrategy(BaseStrategy):
     #  SIGNAL SCANNING (override for crossover detection)
     # ------------------------------------------------------------------ #
 
-    def find_signals(self, data=None, lookback_days=2):
+    def find_signals(self, data=None, lookback_days=2, require_today=False):
         """
         Scan for BB crossover signals.
 
@@ -190,8 +206,20 @@ class BollingerBandsStrategy(BaseStrategy):
             print(f"[{self.STRATEGY_NAME}] No data to scan")
             return []
 
+        today_str = pd.Timestamp.now().strftime('%Y-%m-%d')
+
         signals = []
+        skipped_stale = 0
         for symbol in self.symbols:
+            # Re-entry cooldown check
+            allowed, _ = self.is_reentry_allowed(symbol)
+            if not allowed:
+                continue
+
+            # Skip if already holding
+            if symbol in self.positions and self.positions[symbol].get('shares', 0) > 0:
+                continue
+
             sym_data = df[df['symbol'] == symbol].sort_values('date')
             if len(sym_data) < 2:
                 continue
@@ -204,7 +232,21 @@ class BollingerBandsStrategy(BaseStrategy):
                 today = recent.iloc[idx]
                 prev = recent.iloc[idx - 1]
 
+                # Guard: only emit signals from today's row
+                row_date = str(today['date'])[:10]
+                if require_today and row_date != today_str:
+                    skipped_stale += 1
+                    continue
+
                 close = today['adjusted_close']
+
+                # Liquidity filters
+                if pd.notna(close) and close < self.MIN_PRICE:
+                    continue
+                volume = today.get('volume', None)
+                if pd.notna(volume) and volume < self.MIN_VOLUME:
+                    continue
+
                 bb_lower = today.get('bbands_lower_20')
                 prev_close = prev['adjusted_close']
                 prev_bb_lower = prev.get('bbands_lower_20')
@@ -245,6 +287,9 @@ class BollingerBandsStrategy(BaseStrategy):
                         'date': str(today['date'])[:10],
                     })
 
+        if require_today and skipped_stale > 0:
+            print(f"  [{self.STRATEGY_NAME}] Skipped {skipped_stale} stale rows (not dated {today_str})")
+
         return signals
 
     # ------------------------------------------------------------------ #
@@ -270,12 +315,16 @@ class BollingerBandsStrategy(BaseStrategy):
 
             if has_position:
                 entry_date = self.positions[symbol]['entry_date']
+                entry_price = self.positions[symbol]['entry_price']
                 hold_days = (current_date - entry_date).days
 
-                should_exit, exit_reason = self.check_exit(indicators, hold_days)
+                should_exit, exit_reason = self.check_exit(indicators, hold_days, entry_price)
+                # Safety backstop: stop-loss, take-profit, trailing stop
+                if not should_exit:
+                    should_exit, exit_reason = self.check_exit_safety(
+                        symbol, current_price, entry_price)
                 if should_exit:
                     shares = self.positions[symbol]['shares']
-                    entry_price = self.positions[symbol]['entry_price']
                     pct_return = (current_price - entry_price) / entry_price * 100
 
                     orders.append(StockOrder(symbol, OrderOperation.SELL, shares,
@@ -291,13 +340,24 @@ class BollingerBandsStrategy(BaseStrategy):
                         'pnl': (current_price - entry_price) * shares,
                         'return_pct': pct_return,
                         'hold_days': hold_days,
+                        'exit_reason': exit_reason,
                     })
 
                     reason_str = f" ({exit_reason})" if exit_reason else ""
                     print(f"  EXIT {symbol}: held {hold_days}d, return: {pct_return:+.2f}%{reason_str}")
+                    self.record_exit(symbol, current_date)
                     del self.positions[symbol]
 
             else:
+                allowed, _ = self.is_reentry_allowed(symbol, current_date)
+                if not allowed:
+                    if indicators is not None:
+                        self._prev_day[symbol] = {
+                            'adjusted_close': indicators['adjusted_close'],
+                            'bbands_lower_20': indicators['bbands_lower_20'],
+                            'bbands_upper_20': indicators['bbands_upper_20'],
+                        }
+                    continue
                 if self.check_entry_crossover(symbol, indicators):
                     available_cash = self.account.account_values.cash_balance - cash_committed
                     shares = int(available_cash * self.position_size // current_price)
@@ -312,6 +372,7 @@ class BollingerBandsStrategy(BaseStrategy):
                             'entry_date': current_date,
                             'entry_price': current_price,
                         }
+                        self.record_entry(symbol)
 
                         rsi_val = indicators.get('rsi_14', None) if indicators is not None else None
                         rsi_str = f", RSI={rsi_val:.1f}" if pd.notna(rsi_val) else ""

@@ -31,7 +31,7 @@ sys.path.insert(0, parent_dir)
 from account.account_values import AccountValues
 from account.backtest_account import BacktestAccount
 from backtest import backtest
-from backtest_stats import compute_stats, print_stats, write_trade_log, write_symbols, read_symbols
+from backtest_stats import compute_stats, print_stats, write_trade_log, write_symbols, read_symbols, write_rankings
 from signal_writer import SignalWriter
 from ibkr.notifier import TradeNotifier
 from portfolio import (
@@ -101,6 +101,9 @@ class BaseRunner:
                             help="Send summary email only")
         parser.add_argument("--skip-live", action="store_true",
                             help="Skip IBKR Gateway connection (for testing)")
+        parser.add_argument("--instrument-type", type=str, default=None,
+                            choices=["stock", "option"],
+                            help="Override instrument type for signals (default: strategy class constant)")
 
         # --- Portfolio filters ---
         parser.add_argument("--watchlist", type=str, default=None,
@@ -125,6 +128,15 @@ class BaseRunner:
         parser.add_argument("--sort-sharpe", action="store_true",
                             help="Sort symbols by Sharpe ratio")
 
+        # --- Backtest rankings (portfolio filter) ---
+        parser.add_argument("--backtest-rankings", type=str, default=None,
+                            help="Path to backtest_rankings.csv for ranking/filtering symbols")
+        parser.add_argument("--rank-by", type=str, default="score",
+                            choices=["win_rate", "avg_return_pct", "total_pnl", "score", "trades"],
+                            help="Field to rank by from rankings CSV (default: score)")
+        parser.add_argument("--rank-top-k", type=int, default=None,
+                            help="Keep top K symbols from backtest rankings")
+
         # --- Output ---
         parser.add_argument("--output-trades", type=str, default=None,
                             help="Path to write trade log CSV")
@@ -132,6 +144,8 @@ class BaseRunner:
                             help="Path to write filtered symbol list CSV")
         parser.add_argument("--output-signals", type=str, default=None,
                             help="Path to write signal CSV (default: signals/pending_orders.csv for live mode)")
+        parser.add_argument("--output-rankings", type=str, default="backtest_rankings.csv",
+                            help="Path to write per-symbol rankings CSV (default: backtest_rankings.csv)")
 
         # Let subclass add strategy-specific args
         cls.add_strategy_args(parser)
@@ -224,6 +238,7 @@ class BaseRunner:
             args.watchlist, args.price_above is not None,
             args.price_below is not None, args.filter_field,
             args.top_k_sharpe is not None, args.sort_sharpe,
+            getattr(args, 'backtest_rankings', None),
         ])
 
         if has_filters:
@@ -244,6 +259,19 @@ class BaseRunner:
                     filter_below=args.filter_below,
                     top_k_sharpe=args.top_k_sharpe,
                     sort_sharpe=args.sort_sharpe,
+                    backtest_rankings=getattr(args, 'backtest_rankings', None),
+                    rank_by=getattr(args, 'rank_by', 'score'),
+                    rank_top_k=getattr(args, 'rank_top_k', None),
+                )
+                symbols = set(symbols_list)
+            elif getattr(args, 'backtest_rankings', None):
+                # Backtest rankings don't need price data — handle standalone
+                from portfolio import rank_by_backtest
+                symbols_list = rank_by_backtest(
+                    list(symbols),
+                    args.backtest_rankings,
+                    rank_field=args.rank_by,
+                    top_k=args.rank_top_k,
                 )
                 symbols = set(symbols_list)
             elif args.watchlist:
@@ -270,6 +298,12 @@ class BaseRunner:
             ranks_applied.append(f"sharpe ratio (top {args.top_k_sharpe})")
         elif args.sort_sharpe:
             ranks_applied.append("sharpe ratio (sorted)")
+        if getattr(args, 'backtest_rankings', None):
+            rank_label = getattr(args, 'rank_by', 'score')
+            if getattr(args, 'rank_top_k', None):
+                ranks_applied.append(f"backtest {rank_label} (top {args.rank_top_k})")
+            else:
+                ranks_applied.append(f"backtest {rank_label} (sorted)")
         if not ranks_applied:
             ranks_applied.append("symbol order")
 
@@ -296,6 +330,12 @@ class BaseRunner:
         """
         raise NotImplementedError("Subclass must implement create_strategy()")
 
+    @staticmethod
+    def _apply_cli_overrides(strategy, args):
+        """Apply CLI flag overrides to strategy instance."""
+        if getattr(args, 'instrument_type', None):
+            strategy.INSTRUMENT_TYPE = args.instrument_type
+
     # ================================================================== #
     #  MODE 1: BACKTEST
     # ================================================================== #
@@ -318,6 +358,7 @@ class BaseRunner:
 
         # Create strategy with data
         strategy = self.create_strategy(account, symbols, args, data)
+        self._apply_cli_overrides(strategy, args)
 
         # Print header
         print("\n" + "=" * 70)
@@ -354,6 +395,9 @@ class BaseRunner:
             write_trade_log(strategy.trade_log, args.output_trades)
         if args.output_symbols:
             write_symbols(symbols, args.output_symbols)
+        if stats['per_symbol']:
+            rankings_path = getattr(args, 'output_rankings', 'backtest_rankings.csv')
+            write_rankings(stats['per_symbol'], rankings_path)
 
         # Write pending signals for open positions at backtest end
         output_signals = args.output_signals
@@ -370,6 +414,12 @@ class BaseRunner:
                         price=pos['entry_price'],
                         strategy=self.STRATEGY_NAME,
                         reason=f"open position from {entry_str}",
+                        stop_loss_pct=strategy.STOP_LOSS_PCT,
+                        take_profit_pct=strategy.TAKE_PROFIT_PCT,
+                        trailing_stop_pct=strategy.TRAILING_STOP_PCT,
+                        trailing_activation_pct=strategy.TRAILING_ACTIVATION_PCT,
+                        max_hold_days=strategy.MAX_HOLD_DAYS,
+                        instrument_type=strategy.INSTRUMENT_TYPE,
                     )
                 writer.save()
                 print(f"  Wrote {len(open_positions)} pending signals to {output_signals}")
@@ -406,6 +456,7 @@ class BaseRunner:
         )
 
         strategy = self.create_strategy(account, symbols, args, data)
+        self._apply_cli_overrides(strategy, args)
 
         # Find signals
         signals = strategy.find_signals(lookback_days=args.lookback_days)
@@ -427,6 +478,12 @@ class BaseRunner:
                     action=sig['action'], symbol=sig['symbol'],
                     price=sig['price'], strategy=self.STRATEGY_NAME,
                     reason=sig.get('reason', ''),
+                    stop_loss_pct=strategy.STOP_LOSS_PCT,
+                    take_profit_pct=strategy.TAKE_PROFIT_PCT,
+                    trailing_stop_pct=strategy.TRAILING_STOP_PCT,
+                    trailing_activation_pct=strategy.TRAILING_ACTIVATION_PCT,
+                    max_hold_days=strategy.MAX_HOLD_DAYS,
+                    instrument_type=strategy.INSTRUMENT_TYPE,
                 )
             writer.save()
 
@@ -472,7 +529,20 @@ class BaseRunner:
             overnight_data = portfolio_load_data(data_path)
             print(f"  Loaded overnight data: {len(overnight_data):,} rows")
 
+            # HARD CHECK: live mode requires today's data — refuse stale CSV
+            if 'date' in overnight_data.columns:
+                latest_date = pd.to_datetime(overnight_data['date']).max()
+                today = pd.Timestamp.now().normalize()
+                days_old = (today - latest_date).days
+                if days_old > 0:
+                    print(f"  STALE DATA: latest date is {latest_date.strftime('%Y-%m-%d')} "
+                          f"({days_old}d old). Live mode requires today's data.")
+                    print(f"  Run: python -m api_data.pull_api_data_rt --bulk "
+                          f"to refresh before scanning.")
+                    return []
+
         strategy = self.create_strategy(account, symbols, args, overnight_data)
+        self._apply_cli_overrides(strategy, args)
 
         print(f"\n{'=' * 60}")
         print(f"  {self.STRATEGY_NAME.upper()} - LIVE MODE")
@@ -480,8 +550,12 @@ class BaseRunner:
         print(f"{'=' * 60}\n")
 
         # Fetch bulk realtime prices (1 API call per 100 symbols)
-        from api_data.rt_utils import get_realtime_quotes_bulk
-        bulk_prices = get_realtime_quotes_bulk(list(symbols))
+        bulk_prices = pd.DataFrame()
+        if not getattr(args, 'skip_live', False):
+            from api_data.rt_utils import get_realtime_quotes_bulk
+            bulk_prices = get_realtime_quotes_bulk(list(symbols))
+        else:
+            print("  --skip-live: skipping bulk quote fetch (using overnight data only)")
 
         # Merge: overnight data (technicals) + bulk prices (realtime)
         if strategy.overnight_data is not None and not bulk_prices.empty:
@@ -495,9 +569,10 @@ class BaseRunner:
             print("  No data available (no overnight data, no bulk prices).")
             scan_data = None
 
-        # Find signals on merged data
+        # Find signals on merged data (require_today=True: only trade on today's data)
         signals = strategy.find_signals(data=scan_data,
-                                        lookback_days=args.lookback_days)
+                                        lookback_days=args.lookback_days,
+                                        require_today=True)
 
         # Generate summary
         summary = strategy.generate_signal_summary(
@@ -508,6 +583,8 @@ class BaseRunner:
         print(summary)
 
         # Write signal CSV (default: signals/pending_orders.csv)
+        # Uses append=True so multiple strategies can accumulate signals
+        # in the same file during RT loop (executor de-dups before execution)
         output_signals = (args.output_signals or
                           os.path.join(parent_dir, "signals", "pending_orders.csv"))
         if signals:
@@ -517,8 +594,14 @@ class BaseRunner:
                     action=sig['action'], symbol=sig['symbol'],
                     price=sig['price'], strategy=self.STRATEGY_NAME,
                     reason=sig.get('reason', ''),
+                    stop_loss_pct=strategy.STOP_LOSS_PCT,
+                    take_profit_pct=strategy.TAKE_PROFIT_PCT,
+                    trailing_stop_pct=strategy.TRAILING_STOP_PCT,
+                    trailing_activation_pct=strategy.TRAILING_ACTIVATION_PCT,
+                    max_hold_days=strategy.MAX_HOLD_DAYS,
+                    instrument_type=strategy.INSTRUMENT_TYPE,
                 )
-            writer.save()
+            writer.save(append=True)
             print(f"\nSignal CSV written: {output_signals}")
             print(f"  {len(signals)} signal(s) ready for execution")
             print(f"\nTo execute (paper):  python -m ibkr.execute_signals "

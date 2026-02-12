@@ -58,29 +58,23 @@ DEFAULT_CONFIG = {
     # -------------------------------------------------------------------------
     # Sequence and label settings
     # -------------------------------------------------------------------------
-    "lookback": 20,           # Number of past days to feed into the model
+    "lookback": 60,           # Number of past days to feed into the model
     "horizon": 3,             # Prediction horizon in days (3, 10, or 30)
     "label_mode": "binary",   # Options: "regression", "binary", "buckets"
-    "bucket_edges": [-6, -4, -2, 0, 2, 4, 6],  # Bucket edges in percent for "buckets" mode
+    "bucket_edges": [-1, 1],  # Bucket edges in percent for "buckets" mode (3 classes: DOWN/FLAT/UP)
     "mode": "correlated",     # "single" = stock features only, "correlated" = include embeddings
 
     # -------------------------------------------------------------------------
     # Training hyperparameters
     # -------------------------------------------------------------------------
     "batch_size": 128,
-    "lr": 5e-4,               # Lowered from 1e-3 to prevent early majority-class collapse
-    "num_epochs": 30,
+    "lr": 5e-4,
+    "num_epochs": 50,
     "val_fraction": 0.2,
     "optimizer": "adamw",     # Options: "adam", "adamw", "sgd"
-
-    # -------------------------------------------------------------------------
-    # Loss function settings (anti-collapse)
-    # -------------------------------------------------------------------------
-    "loss_name": None,        # None = auto from label_mode (focal for cls, huber for reg)
-    "focal_gamma": 2.0,       # Focal loss focusing parameter (higher = more focus on hard examples)
-    "label_smoothing": 0.1,   # Smooth one-hot targets to prevent overconfident predictions
-    "class_weights": "auto",  # "auto" = inverse-frequency from training data, None = uniform
-    "entropy_weight": 0.1,    # Entropy regularization weight (encourages diverse predictions)
+    "weight_decay": 0.01,     # AdamW weight decay (0 = disabled)
+    "patience": 10,           # Early stopping patience
+    "warmup_epochs": 5,       # Linear warmup epochs
 
     # -------------------------------------------------------------------------
     # Model architecture
@@ -89,13 +83,23 @@ DEFAULT_CONFIG = {
     "nhead": 4,               # Number of attention heads
     "num_layers": 3,          # Number of transformer encoder layers
     "dim_feedforward": 256,   # Hidden dimension of feedforward network
-    "dropout": 0.15,          # Increased from 0.1 to reduce overfitting
+    "dropout": 0.2,
+    "layer_drop": 0.1,        # Stochastic depth: probability of skipping a layer (0 = disabled)
 
     # -------------------------------------------------------------------------
     # System / runtime
     # -------------------------------------------------------------------------
     "num_workers": 0,         # DataLoader workers (0 = main process)
     "device": None,           # None = auto-detect (cuda if available, else cpu)
+
+    # -------------------------------------------------------------------------
+    # Anti-collapse / loss settings
+    # -------------------------------------------------------------------------
+    "loss_name": None,            # Override loss: "focal", "label_smoothing", etc. (None = default for label_mode)
+    "entropy_reg_weight": 0.5,    # Entropy regularization weight (>0 penalizes collapsed predictions)
+    "binary_threshold": 0.015,    # Binary label: class 1 = return >= +1.5% (cleaner than 0.5%)
+    "min_return_threshold": 0.0025,  # Filter samples with |return| < 0.25% from classification training
+    "direction_weight": 3.0,      # DirectionalMSE penalty for wrong-sign predictions
 
     # -------------------------------------------------------------------------
     # Output paths
@@ -110,49 +114,36 @@ DEFAULT_CONFIG = {
 # Base Feature Columns
 # =============================================================================
 
-# These are the core features computed from price/volume data.
-# Edit this list to add or remove features.
-# Note: feature names must match what's computed in features.py
+# All features must be stationary (relative/pct/bounded).
+# No raw dollar amounts (close, sma_20, eps, market_cap, etc.) — these
+# break when the model sees future data at different price levels.
 
 BASE_FEATURE_COLUMNS = [
-    # Price & volume
-    "close",
-    "volume",
+    # Volume (relative)
     "volume_pct",
-    # Momentum / rate of change
+    # Momentum / rate of change (stationary)
     "close_1d_roc",
     "close_3d_roc",
     "close_10d_roc",
     "close_5d_vol",
     "vol_3d_mean",
     "vol_10d_mean",
-    # Moving averages
-    "sma_20",
-    "sma_50",
-    "sma_200",
-    "ema_20",
-    "ema_50",
+    # Moving average distance (pct from price — stationary)
     "sma_20_pct",
     "sma_50_pct",
     "sma_200_pct",
-    # Technical indicators
+    # Technical indicators (bounded/stationary by construction)
     "rsi_14",
-    "macd",
-    "macd_9_ema",
     "adx_14",
-    "atr_14",
     "cci_14",
-    "bbands_upper_20",
-    "bbands_middle_20",
-    "bbands_lower_20",
-    # Relative position
+    # Relative position (already pct-based)
     "52_week_high_pct",
     "52_week_low_pct",
     "high_pct",
     "low_pct",
     "open_pct",
     "adjusted_close_pct",
-    # Signals (screener composite)
+    # Signals (discrete, bounded)
     "macd_signal",
     "rsi_signal",
     "adx_signal",
@@ -162,13 +153,37 @@ BASE_FEATURE_COLUMNS = [
     "sma_cross_signal",
     "pe_ratio_signal",
     "bull_bear_delta",
-    # Fundamentals
+    # Fundamentals (ratios only — no dollar amounts)
     "pe_ratio",
     "forward_pe",
     "beta",
-    # Macro
+    "dividend_yield",
+    "price_to_book_ratio",
+    # Earnings (surprise is relative)
+    "surprise_percentage",
+    # Analyst ratings (counts — comparable across time)
+    "analyst_rating_strong_buy",
+    "analyst_rating_buy",
+    "analyst_rating_hold",
+    "analyst_rating_sell",
+    "analyst_rating_strong_sell",
+    # Calendar
+    "day_of_week_num",
+    "month",
+    # Macro (rates/pct — stationary)
     "treasury_yield_10year",
     "treasury_yield_2year",
+    "unemployment",
+    "nonfarm_payroll",
+    # Sector-relative features (added by sector_features.py)
+    "sector_etf_ret_1d",
+    "sector_etf_ret_5d",
+    "sector_etf_vol_5d",
+    "sector_rel_ret_1d",
+    # Market features (SPY)
+    "spy_ret_1d",
+    "spy_ret_5d",
+    "spy_vol_5d",
 ]
 
 

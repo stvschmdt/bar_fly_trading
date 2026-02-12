@@ -36,6 +36,7 @@ import shutil
 import sys
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -45,6 +46,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ibkr.config import IBKRConfig, TradingConfig
 from ibkr.trade_executor import TradeExecutor
 from ibkr.models import OrderAction
+from ibkr.options_executor import execute_option_signal
+from ibkr.position_ledger import PositionLedger
 
 # Use signal_writer's reader
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'strategies'))
@@ -58,6 +61,65 @@ logger = logging.getLogger(__name__)
 
 # Location of trading mode lock file
 TRADING_MODE_CONF = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'trading_mode.conf')
+
+# Daily rejection de-dup: only notify once per (symbol, reason_type) per day.
+# Prevents spamming when RT loop runs every 15 minutes and a symbol stays
+# in the same rejected state all day.
+_rejections_notified: dict[str, set[tuple[str, str]]] = {}  # {date_str: set((symbol, reason))}
+
+
+def _is_new_rejection(symbol: str, reason_type: str) -> bool:
+    """Check if this rejection is new today (not yet notified)."""
+    today = datetime.now().strftime('%Y-%m-%d')
+    # Reset on new day
+    if today not in _rejections_notified:
+        _rejections_notified.clear()
+        _rejections_notified[today] = set()
+    key = (symbol.upper(), reason_type)
+    if key in _rejections_notified[today]:
+        return False
+    _rejections_notified[today].add(key)
+    return True
+
+
+def _parse_exit_param(value, default=None, as_int=False):
+    """Parse an exit param from signal CSV (may be empty, NaN, or numeric)."""
+    if value is None or value == '' or (isinstance(value, float) and pd.isna(value)):
+        return default
+    try:
+        return int(float(value)) if as_int else float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _submit_exit_brackets(executor, symbol, shares, fill_price, sl_pct, tp_pct):
+    """Submit stop-loss and take-profit bracket orders after a BUY fill."""
+    try:
+        result = executor.order_manager.submit_bracket_order(
+            symbol=symbol,
+            shares=shares,
+            entry_price=fill_price,
+            stop_loss_pct=sl_pct,
+            take_profit_pct=tp_pct,
+        )
+        if result:
+            stop_result, profit_result = result
+            return stop_result, profit_result
+    except Exception as e:
+        logger.error(f"Failed to submit bracket orders for {symbol}: {e}")
+    return None
+
+
+def is_market_open() -> bool:
+    """Check if US stock market is currently open (9:30-16:00 ET, Mon-Fri)."""
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    # Weekend
+    if now_et.weekday() >= 5:
+        return False
+    # Before open or after close
+    market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+    return market_open <= now_et < market_close
 
 
 def check_live_trading_allowed():
@@ -149,7 +211,8 @@ def format_account_state_text(executor, label=""):
     return "\n".join(lines)
 
 
-def execute_signal_file(filepath, executor, dry_run=False):
+def execute_signal_file(filepath, executor, dry_run=False, default_shares=None,
+                        buy_only=False, options_mode=False):
     """
     Read and execute all signals in a CSV file.
 
@@ -157,6 +220,9 @@ def execute_signal_file(filepath, executor, dry_run=False):
         filepath: Path to signal CSV
         executor: TradeExecutor instance (None if dry_run)
         dry_run: If True, print signals but don't execute
+        default_shares: Override shares=0 with this fixed count
+        buy_only: If True, skip SELL signals for symbols we don't hold
+        options_mode: If True, default instrument_type for signals missing the field
 
     Returns:
         list of result dicts for the execution log
@@ -165,6 +231,65 @@ def execute_signal_file(filepath, executor, dry_run=False):
     if not signals:
         logger.info(f"No signals in {filepath}")
         return []
+
+    # Apply default shares override (e.g. --default-shares 1 for testing)
+    if default_shares is not None and default_shares > 0:
+        for sig in signals:
+            if int(sig.get('shares', 0)) == 0:
+                sig['shares'] = default_shares
+        unit = "contracts" if options_mode else "shares"
+        logger.info(f"Applied default {unit}={default_shares} to signals with {unit}=0")
+
+    # De-duplicate: if multiple strategies signal the same (symbol, action),
+    # keep only the first one to prevent double-buying
+    seen = set()
+    deduped = []
+    rejections = []  # Track all rejections for email
+    for sig in signals:
+        key = (sig['symbol'].upper(), sig['action'].upper())
+        if key in seen:
+            reason = f"duplicate signal (strategy={sig.get('strategy', 'unknown')})"
+            is_new = _is_new_rejection(sig['symbol'], 'duplicate')
+            if is_new:
+                logger.warning(f"REJECTED {sig['action']} {sig['symbol']}: {reason}")
+            else:
+                logger.debug(f"De-dup (already notified): {sig['action']} {sig['symbol']}")
+            rejections.append({
+                **sig,
+                'status': 'rejected',
+                'rejection_reason': reason,
+                'is_new': is_new,
+                'executed_at': datetime.now().isoformat(timespec='seconds'),
+            })
+            continue
+        seen.add(key)
+        deduped.append(sig)
+
+    if len(deduped) < len(signals):
+        logger.info(f"De-duplicated {len(signals)} signals down to {len(deduped)}")
+    signals = deduped
+
+    # Buy-only filter: skip SELL signals for symbols we don't actually hold
+    if buy_only and not dry_run and executor:
+        held_symbols = set()
+        try:
+            pos_summary = executor.get_position_summary()
+            held_symbols = set(pos_summary.get('positions', {}).keys())
+        except Exception as e:
+            logger.warning(f"Could not fetch positions for buy-only filter: {e}")
+
+        filtered = []
+        sell_skipped = 0
+        for sig in signals:
+            if sig['action'].upper() == 'SELL' and sig['symbol'].upper() not in held_symbols:
+                sell_skipped += 1
+                continue
+            filtered.append(sig)
+
+        if sell_skipped > 0:
+            logger.info(f"Buy-only filter: skipped {sell_skipped} SELL signals (no position held), "
+                        f"kept {len(filtered)} signals")
+        signals = filtered
 
     logger.info(f"Processing {len(signals)} signal(s) from {filepath}")
 
@@ -191,7 +316,13 @@ def execute_signal_file(filepath, executor, dry_run=False):
         if reason:
             label += f" ({reason})"
 
-        if dry_run:
+        # Determine instrument type: per-signal field overrides global flag
+        instrument_type = sig.get('instrument_type', 'stock')
+        if instrument_type in ('', 'stock') and options_mode:
+            instrument_type = 'option'
+        is_option = (instrument_type == 'option')
+
+        if dry_run and not is_option:
             logger.info(f"[DRY RUN] {label}")
             results.append({
                 **sig,
@@ -201,6 +332,127 @@ def execute_signal_file(filepath, executor, dry_run=False):
                 'error': '',
                 'executed_at': datetime.now().isoformat(timespec='seconds'),
             })
+            continue
+
+        # Options: route through options_executor
+        if is_option:
+            # Check position ledger for existing option position before executing
+            if action == 'BUY' and not dry_run:
+                try:
+                    ledger = PositionLedger()
+                    ledger.load()
+                    existing = ledger.get_all_positions()
+                    # Check if any open position matches this symbol
+                    already_held = any(
+                        pos.get('symbol', '').upper() == symbol
+                        and pos.get('instrument_type') == 'option'
+                        for pos in existing.values()
+                    )
+                    if already_held:
+                        reason_msg = f"Already have option position in {symbol}"
+                        is_new = _is_new_rejection(symbol, 'position')
+                        if is_new:
+                            logger.warning(f"REJECTED {action} {symbol}: {reason_msg}")
+                        rejections.append({
+                            **sig,
+                            'status': 'rejected',
+                            'rejection_reason': reason_msg,
+                            'is_new': is_new,
+                            'executed_at': datetime.now().isoformat(timespec='seconds'),
+                        })
+                        results.append({
+                            **sig,
+                            'status': 'failed',
+                            'fill_price': 0.0,
+                            'filled_shares': 0,
+                            'error': reason_msg,
+                            'executed_at': datetime.now().isoformat(timespec='seconds'),
+                        })
+                        continue
+                except Exception as e:
+                    logger.warning(f"Could not check ledger for {symbol}: {e}")
+
+            logger.info("-" * 50)
+            opt_label = f"[OPTIONS{'|DRY' if dry_run else ''}] {label}"
+            logger.info(f"Executing: {opt_label}")
+            use_mkt = executor.trading_config.use_market_orders if executor else False
+            opt_result = execute_option_signal(
+                executor, sig, dry_run=dry_run, use_market_orders=use_mkt
+            )
+            results.append(opt_result)
+
+            # Per-fill email notification for options
+            if opt_result.get('status') == 'filled' and executor and executor.notifier:
+                opt_fill = opt_result.get('fill_price', 0)
+                opt_qty = opt_result.get('filled_shares', 0)
+                opt_total = opt_fill * opt_qty * 100
+                opt_strike = opt_result.get('strike', '')
+                opt_exp = opt_result.get('expiration', '')
+                opt_ctype = opt_result.get('contract_type', '').upper()
+                executor.notifier._send_email(
+                    f"[FILL] BUY {opt_qty} {symbol} {opt_exp} {opt_strike} {opt_ctype} @ ${opt_fill:.2f}",
+                    f"OPTIONS FILL\n{'=' * 40}\n"
+                    f"Symbol:     {symbol}\n"
+                    f"Contract:   {opt_exp} {opt_strike} {opt_ctype}\n"
+                    f"Contracts:  {opt_qty}\n"
+                    f"Premium:    ${opt_fill:.2f} per share\n"
+                    f"Total cost: ${opt_total:,.2f}\n"
+                    f"Strategy:   {sig.get('strategy', '')}\n"
+                    f"Reason:     {sig.get('reason', '')}\n"
+                    f"Time:       {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                )
+
+            # Record options fill to position ledger (same as stocks)
+            if opt_result.get('status') == 'filled' and action == 'BUY':
+                opt_fill = opt_result.get('fill_price', 0)
+                opt_qty = opt_result.get('filled_shares', 0)
+                opt_strike_val = opt_result.get('strike', 0)
+                opt_exp_val = opt_result.get('expiration', '')
+                opt_ctype_val = opt_result.get('contract_type', '')
+
+                sl_pct = _parse_exit_param(sig.get('stop_loss_pct'), default=-0.08)
+                tp_pct = _parse_exit_param(sig.get('take_profit_pct'), default=0.15)
+                ts_pct = _parse_exit_param(sig.get('trailing_stop_pct'), default=None)
+                ta_pct = _parse_exit_param(sig.get('trailing_activation_pct'), default=0.0)
+                max_hold = _parse_exit_param(sig.get('max_hold_days'), default=20, as_int=True)
+
+                try:
+                    ledger = PositionLedger()
+                    ledger.load()
+                    ledger_key = ledger.add_position(
+                        symbol=symbol,
+                        entry_price=opt_fill,
+                        entry_date=datetime.now().strftime('%Y-%m-%d'),
+                        shares=opt_qty,
+                        strategy=sig.get('strategy', ''),
+                        stop_loss_pct=sl_pct,
+                        take_profit_pct=tp_pct,
+                        trailing_stop_pct=ts_pct,
+                        max_hold_days=max_hold,
+                        stop_order_id=-1,
+                        profit_order_id=-1,
+                        parent_order_id=-1,
+                        trailing_activation_pct=ta_pct,
+                        instrument_type='option',
+                        contract_type=opt_ctype_val,
+                        strike=float(opt_strike_val) if opt_strike_val else 0.0,
+                        expiration=str(opt_exp_val),
+                    )
+                    ledger.save()
+                    logger.info(f"  LEDGER: Options position recorded as {ledger_key}")
+                except Exception as e:
+                    logger.error(f"  Failed to save options position to ledger: {e}")
+
+            # Track rejections for email
+            if opt_result.get('status') == 'failed':
+                reason_type = 'options'
+                is_new = _is_new_rejection(symbol, reason_type)
+                opt_result['is_new'] = is_new
+                rejections.append({
+                    **opt_result,
+                    'rejection_reason': opt_result.get('error', 'unknown'),
+                    'is_new': is_new,
+                })
             continue
 
         logger.info("-" * 50)
@@ -233,8 +485,84 @@ def execute_signal_file(filepath, executor, dry_run=False):
             if result.success:
                 logger.info(f"  FILLED: {symbol} {filled_shares} shares @ ${fill_price:.2f} "
                            f"(total: ${filled_shares * fill_price:,.2f})")
+
+                # Place bracket orders (stop-loss + take-profit) after BUY fill
+                if action == 'BUY' and fill_price > 0 and filled_shares > 0:
+                    sl_pct = _parse_exit_param(sig.get('stop_loss_pct'), default=-0.08)
+                    tp_pct = _parse_exit_param(sig.get('take_profit_pct'), default=0.15)
+                    ts_pct = _parse_exit_param(sig.get('trailing_stop_pct'), default=None)
+                    ta_pct = _parse_exit_param(sig.get('trailing_activation_pct'), default=0.0)
+                    max_hold = _parse_exit_param(sig.get('max_hold_days'), default=20, as_int=True)
+
+                    bracket = _submit_exit_brackets(
+                        executor, symbol, filled_shares, fill_price, sl_pct, tp_pct)
+
+                    stop_oid = -1
+                    profit_oid = -1
+                    if bracket:
+                        stop_res, profit_res = bracket
+                        stop_oid = stop_res.order_id
+                        profit_oid = profit_res.order_id
+                        logger.info(
+                            f"  BRACKETS: {symbol} stop={stop_oid} "
+                            f"@ ${round(fill_price * (1 + sl_pct), 2)}, "
+                            f"profit={profit_oid} "
+                            f"@ ${round(fill_price * (1 + tp_pct), 2)}")
+                    else:
+                        logger.warning(f"  WARNING: No bracket orders for {symbol} "
+                                      f"— exit monitor will handle SL/TP")
+
+                    # Always record to position ledger (exit monitor handles
+                    # SL/TP via software polling if brackets failed)
+                    try:
+                        ledger = PositionLedger()
+                        ledger.load()
+                        ledger.add_position(
+                            symbol=symbol,
+                            entry_price=fill_price,
+                            entry_date=datetime.now().strftime('%Y-%m-%d'),
+                            shares=filled_shares,
+                            strategy=sig.get('strategy', ''),
+                            stop_loss_pct=sl_pct,
+                            take_profit_pct=tp_pct,
+                            trailing_stop_pct=ts_pct,
+                            max_hold_days=max_hold,
+                            stop_order_id=stop_oid,
+                            profit_order_id=profit_oid,
+                            parent_order_id=result.order.order_id if result.order else -1,
+                            trailing_activation_pct=ta_pct,
+                        )
+                        ledger.save()
+                        logger.info(f"  LEDGER: Stock position recorded for {symbol}")
+                    except Exception as e:
+                        logger.error(f"  Failed to save position ledger for {symbol}: {e}")
             else:
-                logger.warning(f"  FAILED: {symbol} - {error}")
+                # Classify rejection reason for daily de-dup
+                reason_type = 'failed'
+                if 'spread' in error.lower():
+                    reason_type = 'spread'
+                elif 'position' in error.lower() or 'already' in error.lower():
+                    reason_type = 'position'
+                elif 'exposure' in error.lower():
+                    reason_type = 'exposure'
+                elif 'funds' in error.lower():
+                    reason_type = 'funds'
+                elif 'daily' in error.lower():
+                    reason_type = 'daily_limit'
+
+                is_new = _is_new_rejection(symbol, reason_type)
+                if is_new:
+                    logger.warning(f"  REJECTED: {symbol} - {error}")
+                else:
+                    logger.debug(f"  REJECTED (already notified): {symbol} - {error}")
+
+                rejections.append({
+                    **sig,
+                    'status': 'rejected',
+                    'rejection_reason': error,
+                    'is_new': is_new,
+                    'executed_at': datetime.now().isoformat(timespec='seconds'),
+                })
 
             results.append({
                 **sig,
@@ -277,8 +605,18 @@ def execute_signal_file(filepath, executor, dry_run=False):
         if filled:
             logger.info(f"  Fills:")
             for r in filled:
-                logger.info(f"    {r['action']} {r['symbol']}: {r['filled_shares']} shares @ ${r['fill_price']:.2f} "
-                           f"= ${r['filled_shares'] * r['fill_price']:,.2f}")
+                is_option = bool(r.get('contract_type'))
+                unit = "contracts" if is_option else "shares"
+                multiplier = 100 if is_option else 1
+                fill = r['fill_price']
+                qty = r['filled_shares']
+                total = fill * qty * multiplier
+                sl_pct = _parse_exit_param(r.get('stop_loss_pct'), default=-0.08)
+                tp_pct = _parse_exit_param(r.get('take_profit_pct'), default=0.15)
+                tp_dollar = fill * tp_pct * qty * multiplier
+                sl_dollar = fill * sl_pct * qty * multiplier
+                logger.info(f"    {r['action']} {r['symbol']}: {qty} {unit} @ ${fill:.2f} "
+                           f"= ${total:,.2f}  PLR (+${tp_dollar:,.0f}, -${abs(sl_dollar):,.0f})")
         if failed:
             logger.info(f"  Failures:")
             for r in failed:
@@ -293,24 +631,29 @@ def execute_signal_file(filepath, executor, dry_run=False):
         import time
         time.sleep(2)
 
-        # Send batch execution summary email
-        _send_execution_summary_email(executor, results, pre_account, post_account)
+        # Send batch execution summary email (include new rejections only)
+        new_rejections = [r for r in rejections if r.get('is_new')]
+        _send_execution_summary_email(executor, results, pre_account, post_account,
+                                      rejections=new_rejections)
 
     return results
 
 
-def _send_execution_summary_email(executor, results, pre_account, post_account):
+def _send_execution_summary_email(executor, results, pre_account, post_account,
+                                   rejections=None):
     """Send a comprehensive execution summary email."""
     if not executor.notifier:
         return
 
+    rejections = rejections or []
     filled = [r for r in results if r['status'] == 'filled']
     failed = [r for r in results if r['status'] == 'failed']
     errors = [r for r in results if r['status'] == 'error']
     total_cost = sum(r['fill_price'] * r['filled_shares'] for r in filled)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    subject = f"[EXECUTION] {len(filled)}/{len(results)} filled | ${total_cost:,.2f} deployed"
+    rej_tag = f" | {len(rejections)} rejected" if rejections else ""
+    subject = f"[EXECUTION] {len(filled)}/{len(results)} filled | ${total_cost:,.2f} deployed{rej_tag}"
 
     body_lines = [
         "TRADE EXECUTION REPORT",
@@ -328,9 +671,27 @@ def _send_execution_summary_email(executor, results, pre_account, post_account):
         body_lines.append("FILLS")
         body_lines.append("-" * 50)
         for r in filled:
+            is_option = bool(r.get('contract_type'))
+            unit = "contracts" if is_option else "shares"
+            multiplier = 100 if is_option else 1
+            detail = ""
+            if is_option:
+                detail = f"  {r.get('expiration', '')} {r.get('strike', '')} {r['contract_type'].upper()}"
+            fill = r['fill_price']
+            qty = r['filled_shares']
+            total = fill * qty * multiplier
+
+            # PLR: profit/loss range from exit params
+            sl_pct = _parse_exit_param(r.get('stop_loss_pct'), default=-0.08)
+            tp_pct = _parse_exit_param(r.get('take_profit_pct'), default=0.15)
+            tp_dollar = fill * tp_pct * qty * multiplier
+            sl_dollar = fill * sl_pct * qty * multiplier
+            plr = f"PLR (+${tp_dollar:,.0f}, -${abs(sl_dollar):,.0f})"
+
             body_lines.append(
-                f"  {r['action']:4s} {r['symbol']:6s}  {r['filled_shares']:>4} shares "
-                f"@ ${r['fill_price']:>8.2f}  = ${r['filled_shares'] * r['fill_price']:>10,.2f}"
+                f"  {r['action']:4s} {r['symbol']:6s}  {qty:>4} {unit}"
+                f"{detail}"
+                f"  @ ${fill:>8.2f}  = ${total:>10,.2f}  {plr}"
             )
         body_lines.append("")
 
@@ -346,6 +707,16 @@ def _send_execution_summary_email(executor, results, pre_account, post_account):
         body_lines.append("-" * 50)
         for r in errors:
             body_lines.append(f"  {r['action']:4s} {r['symbol']:6s}  {r.get('error', 'unknown')}")
+        body_lines.append("")
+
+    if rejections:
+        body_lines.append(f"REJECTIONS ({len(rejections)} new today)")
+        body_lines.append("-" * 50)
+        for r in rejections:
+            body_lines.append(
+                f"  {r.get('action', '?'):4s} {r.get('symbol', '?'):6s}  "
+                f"{r.get('rejection_reason', 'unknown')}"
+            )
         body_lines.append("")
 
     # Pre-execution account state
@@ -391,10 +762,13 @@ def archive_signal_file(filepath, results, archive_dir):
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     base = os.path.splitext(os.path.basename(filepath))[0]
 
-    # Archive the original signal file
+    # Archive the original signal file (may already be removed by scan loop)
     archive_path = os.path.join(archive_dir, f"{base}_{ts}.csv")
-    shutil.move(filepath, archive_path)
-    logger.info(f"Archived signal file to {archive_path}")
+    if os.path.exists(filepath):
+        shutil.move(filepath, archive_path)
+        logger.info(f"Archived signal file to {archive_path}")
+    else:
+        logger.debug(f"Signal file already removed (archived by scan loop): {filepath}")
 
     # Write execution results alongside
     if results:
@@ -404,7 +778,8 @@ def archive_signal_file(filepath, results, archive_dir):
 
 
 def watch_directory(signals_dir, executor, archive_dir, interval_seconds=30,
-                    dry_run=False, pattern="pending_orders*.csv"):
+                    dry_run=False, pattern="pending_orders*.csv", default_shares=None,
+                    buy_only=False, options_mode=False):
     """
     Poll a directory for new signal files and execute them.
 
@@ -415,11 +790,15 @@ def watch_directory(signals_dir, executor, archive_dir, interval_seconds=30,
         interval_seconds: Seconds between polls
         dry_run: If True, print but don't execute
         pattern: Glob pattern for signal files
+        buy_only: If True, skip SELL signals for symbols we don't hold
+        options_mode: If True, execute as options
     """
     import glob
 
     logger.info(f"Watching {signals_dir} for signal files (every {interval_seconds}s)...")
     logger.info(f"Pattern: {pattern}")
+    if options_mode:
+        logger.info("OPTIONS MODE active")
     logger.info("Press Ctrl+C to stop.\n")
 
     try:
@@ -428,7 +807,10 @@ def watch_directory(signals_dir, executor, archive_dir, interval_seconds=30,
 
             for filepath in matches:
                 logger.info(f"\nFound signal file: {filepath}")
-                results = execute_signal_file(filepath, executor, dry_run=dry_run)
+                results = execute_signal_file(filepath, executor, dry_run=dry_run,
+                                              default_shares=default_shares,
+                                              buy_only=buy_only,
+                                              options_mode=options_mode)
                 archive_signal_file(filepath, results, archive_dir)
 
             if not matches:
@@ -483,12 +865,24 @@ Examples:
                         help="IBKR client ID (default: 10)")
 
     # Trading config
-    parser.add_argument("--position-size", type=float, default=0.10,
-                        help="Position size as fraction of portfolio (default: 0.10)")
-    parser.add_argument("--max-positions", type=int, default=10,
-                        help="Maximum concurrent positions (default: 10)")
+    parser.add_argument("--position-size", type=float, default=0.02,
+                        help="Position size as fraction of portfolio (default: 0.02)")
+    parser.add_argument("--max-positions", type=int, default=20,
+                        help="Maximum concurrent positions (default: 20)")
     parser.add_argument("--max-daily-loss", type=float, default=5000,
                         help="Maximum daily loss in dollars (default: 5000)")
+    parser.add_argument("--default-shares", type=int, default=None,
+                        help="Override shares=0 signals with this fixed share count (e.g. 1 for testing)")
+    parser.add_argument("--market-orders", action="store_true",
+                        help="Use market orders for all order types")
+    parser.add_argument("--stock-limit-orders", action="store_true",
+                        help="Use limit orders for stocks (overrides default market)")
+    parser.add_argument("--buy-only", action="store_true",
+                        help="Skip SELL signals for symbols we don't hold (still sell owned positions)")
+    parser.add_argument("--options", action="store_true",
+                        help="Execute as options: BUY signal -> buy call OTM, SELL signal -> buy put OTM")
+    parser.add_argument("--require-market-hours", action="store_true",
+                        help="Only execute during US market hours (9:30-16:00 ET, Mon-Fri)")
 
     args = parser.parse_args()
 
@@ -498,15 +892,29 @@ Examples:
 
     archive_dir = args.archive_dir or os.path.join(args.signals_dir, "executed")
 
-    # Dry run: no broker connection needed
+    # Market hours check
+    if args.require_market_hours and not is_market_open():
+        now_et = datetime.now(ZoneInfo("America/New_York"))
+        logger.warning(f"Market is CLOSED (ET: {now_et.strftime('%A %H:%M')}). "
+                       f"Use without --require-market-hours to execute anyway.")
+        sys.exit(0)
+
+    # Dry run: no broker connection needed (buy_only filter needs executor, so skipped in dry-run)
+    # Options dry-run also works without IBKR (fetches chain from AlphaVantage only)
     if args.dry_run:
         if args.signals:
-            results = execute_signal_file(args.signals, executor=None, dry_run=True)
+            results = execute_signal_file(args.signals, executor=None, dry_run=True,
+                                          default_shares=args.default_shares,
+                                          buy_only=args.buy_only,
+                                          options_mode=args.options)
             if results:
                 print(f"\n{len(results)} signal(s) would be executed.")
         elif args.watch:
             watch_directory(args.signals_dir, executor=None, archive_dir=archive_dir,
-                            interval_seconds=args.interval, dry_run=True)
+                            interval_seconds=args.interval, dry_run=True,
+                            default_shares=args.default_shares,
+                            buy_only=args.buy_only,
+                            options_mode=args.options)
         return
 
     # Configure IBKR connection
@@ -532,18 +940,29 @@ Examples:
         position_size=args.position_size,
         max_positions=args.max_positions,
         max_daily_loss=args.max_daily_loss,
+        use_market_orders=args.market_orders,
+        stock_market_orders=not args.stock_limit_orders,  # Stocks default to market
     )
+
+    if args.options:
+        logger.info("OPTIONS MODE: signals will be executed as option contracts")
 
     # Execute
     with TradeExecutor(ibkr_config, trading_config) as executor:
         if args.signals:
             # One-shot mode
-            results = execute_signal_file(args.signals, executor)
+            results = execute_signal_file(args.signals, executor,
+                                          default_shares=args.default_shares,
+                                          buy_only=args.buy_only,
+                                          options_mode=args.options)
             archive_signal_file(args.signals, results, archive_dir)
         elif args.watch:
             # Watch mode
             watch_directory(args.signals_dir, executor, archive_dir,
-                            interval_seconds=args.interval)
+                            interval_seconds=args.interval,
+                            default_shares=args.default_shares,
+                            buy_only=args.buy_only,
+                            options_mode=args.options)
 
 
 if __name__ == "__main__":

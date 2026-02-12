@@ -60,11 +60,17 @@ class OversoldReversalStrategy(BaseStrategy):
     # Entry thresholds
     RSI_ENTRY_THRESHOLD = 40
     DELTA_ENTRY_THRESHOLD = -2
-    PROB_UP_THRESHOLD = 0.50
+    PROB_UP_THRESHOLD = 0.55
     RSI_EXIT_THRESHOLD = 55
-    MAX_HOLD_DAYS = 3
+    MAX_HOLD_DAYS = 7
     MIN_HOLD_DAYS = 1
     MAX_POSITIONS = 10
+
+    # Exit safety overrides (tighter for short-term reversal plays)
+    STOP_LOSS_PCT = -0.05       # -5%
+    TAKE_PROFIT_PCT = 0.10      # +10%
+    TRAILING_STOP_PCT = -0.04   # -4% from high-water mark
+    TRAILING_ACTIVATION_PCT = 0.02  # Start trailing after +2%
 
     def __init__(self, account, symbols, data=None, predictions_path=None,
                  position_size=0.1):
@@ -135,6 +141,10 @@ class OversoldReversalStrategy(BaseStrategy):
         if pd.isna(rsi) or pd.isna(delta) or pd.isna(model_up):
             return False
 
+        prob_up = row.get('prob_up_3d', None)
+        if pd.notna(prob_up) and prob_up < self.PROB_UP_THRESHOLD:
+            return False
+
         return (rsi < self.RSI_ENTRY_THRESHOLD and
                 delta <= self.DELTA_ENTRY_THRESHOLD and
                 model_up == 1)
@@ -191,12 +201,16 @@ class OversoldReversalStrategy(BaseStrategy):
 
             if has_position:
                 entry_date = self.positions[symbol]['entry_date']
+                entry_price = self.positions[symbol]['entry_price']
                 hold_days = (current_date - entry_date).days
 
-                should_exit, exit_reason = self.check_exit(indicators, hold_days)
+                should_exit, exit_reason = self.check_exit(indicators, hold_days, entry_price)
+                # Safety backstop: stop-loss, take-profit, trailing stop
+                if not should_exit:
+                    should_exit, exit_reason = self.check_exit_safety(
+                        symbol, current_price, entry_price)
                 if should_exit:
                     shares = self.positions[symbol]['shares']
-                    entry_price = self.positions[symbol]['entry_price']
                     pct_return = (current_price - entry_price) / entry_price * 100
 
                     orders.append(StockOrder(symbol, OrderOperation.SELL, shares,
@@ -216,10 +230,14 @@ class OversoldReversalStrategy(BaseStrategy):
                     })
 
                     print(f"  EXIT {symbol}: held {hold_days}d, return: {pct_return:+.2f}% ({exit_reason})")
+                    self.record_exit(symbol, current_date)
                     del self.positions[symbol]
 
             else:
                 if len(self.positions) >= self.MAX_POSITIONS:
+                    continue
+                allowed, _ = self.is_reentry_allowed(symbol, current_date)
+                if not allowed:
                     continue
 
                 if self.check_entry(indicators):
@@ -237,6 +255,7 @@ class OversoldReversalStrategy(BaseStrategy):
                             'entry_date': current_date,
                             'entry_price': current_price,
                         }
+                        self.record_entry(symbol)
 
                         rsi_val = indicators.get('rsi_14', None)
                         delta_val = indicators.get('bull_bear_delta', None)

@@ -6,7 +6,9 @@ Classes:
     - StockTransformer: Transformer encoder for time-series classification/regression
 """
 
+import copy
 import math
+import random
 
 import torch
 import torch.nn as nn
@@ -35,6 +37,34 @@ class PositionalEncoding(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x + self.pe[:, : x.size(1)]
         return self.dropout(x)
+
+
+# =============================================================================
+# Stochastic Depth Encoder (LayerDrop)
+# =============================================================================
+
+class StochasticTransformerEncoder(nn.Module):
+    """
+    Transformer encoder with stochastic depth (LayerDrop).
+
+    Randomly skips layers during training with probability drop_prob.
+    All layers are used during evaluation.
+    """
+
+    def __init__(self, encoder_layer, num_layers, drop_prob=0.1):
+        super().__init__()
+        self.layers = nn.ModuleList(
+            [copy.deepcopy(encoder_layer) for _ in range(num_layers)]
+        )
+        self.drop_prob = drop_prob
+        self.norm = nn.LayerNorm(encoder_layer.self_attn.in_proj_weight.size(1))
+
+    def forward(self, x, mask=None, src_key_padding_mask=None):
+        for layer in self.layers:
+            if self.training and random.random() < self.drop_prob:
+                continue
+            x = layer(x, src_mask=mask, src_key_padding_mask=src_key_padding_mask)
+        return self.norm(x)
 
 
 # =============================================================================
@@ -82,6 +112,8 @@ class StockTransformer(nn.Module):
         dropout: float = 0.1,
         output_mode: str = "binary",
         num_buckets: int = 5,
+        layer_drop: float = 0.0,
+        use_coral: bool = False,
     ):
         super().__init__()
 
@@ -89,6 +121,7 @@ class StockTransformer(nn.Module):
         self.d_model = d_model
         self.output_mode = output_mode
         self.num_buckets = num_buckets
+        self.use_coral = use_coral
 
         # Project input features to model dimension
         self.input_proj = nn.Linear(feature_dim, d_model)
@@ -96,21 +129,24 @@ class StockTransformer(nn.Module):
         # Positional encoding
         self.pos_encoder = PositionalEncoding(d_model, dropout=dropout)
 
-        # Transformer encoder
+        # Transformer encoder (with optional stochastic depth)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             batch_first=True,
+            norm_first=True,
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        if layer_drop > 0:
+            self.encoder = StochasticTransformerEncoder(
+                encoder_layer, num_layers=num_layers, drop_prob=layer_drop
+            )
+        else:
+            self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         # Attention pooling
         self.attn_pool = nn.Linear(d_model, 1)
-
-        # Layer norm before output heads (stabilizes training)
-        self.output_norm = nn.LayerNorm(d_model)
 
         # MLP output heads (2-layer with GELU + dropout)
         self.reg_head = nn.Sequential(
@@ -131,10 +167,14 @@ class StockTransformer(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(d_model // 2, num_buckets),
         )
-
-        # Learnable temperature for classification logit scaling
-        # Initialized to 1.0 (no effect), model learns to calibrate
-        self.temperature = nn.Parameter(torch.ones(1))
+        # CORAL head: K-1 logits for ordinal classification
+        if use_coral and num_buckets > 1:
+            self.coral_head = nn.Sequential(
+                nn.Linear(d_model, d_model // 2),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(d_model // 2, num_buckets - 1),
+            )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -159,20 +199,17 @@ class StockTransformer(nn.Module):
         attn_weights = torch.softmax(self.attn_pool(enc).squeeze(-1), dim=1)  # [batch, seq_len]
         pooled = (enc * attn_weights.unsqueeze(-1)).sum(dim=1)  # [batch, d_model]
 
-        # Layer norm before output head
-        pooled = self.output_norm(pooled)
-
         # Apply appropriate output head
         if self.output_mode == "regression":
             return self.reg_head(pooled).squeeze(-1)  # [batch]
 
         elif self.output_mode == "binary":
-            logits = self.cls_head(pooled)  # [batch, 2]
-            return logits / self.temperature  # temperature-scaled logits
+            return self.cls_head(pooled)  # [batch, 2]
 
         elif self.output_mode == "buckets":
-            logits = self.bucket_head(pooled)  # [batch, num_buckets]
-            return logits / self.temperature  # temperature-scaled logits
+            if self.use_coral:
+                return self.coral_head(pooled)  # [batch, num_buckets - 1]
+            return self.bucket_head(pooled)  # [batch, num_buckets]
 
         else:
             raise ValueError(f"Unknown output_mode: {self.output_mode}")
@@ -191,7 +228,7 @@ def create_model(feature_dim, label_mode, bucket_edges, cfg, model_type="encoder
         label_mode: "regression", "binary", or "buckets"
         bucket_edges: List of bucket edges (only used for "buckets" mode)
         cfg: Config dict with model hyperparameters
-        model_type: Model type ("encoder" for standard, accepted for compatibility)
+        model_type: Model architecture type ("encoder", "cross_attention", etc.)
 
     Returns:
         StockTransformer model
@@ -211,6 +248,9 @@ def create_model(feature_dim, label_mode, bucket_edges, cfg, model_type="encoder
     else:
         raise ValueError(f"Unknown label_mode: {label_mode}")
 
+    # Check if CORAL loss is requested (requires special head)
+    use_coral = (cfg.get("loss_name") == "coral" and label_mode == "buckets")
+
     model = StockTransformer(
         feature_dim=feature_dim,
         d_model=cfg["d_model"],
@@ -220,6 +260,8 @@ def create_model(feature_dim, label_mode, bucket_edges, cfg, model_type="encoder
         dropout=cfg["dropout"],
         output_mode=output_mode,
         num_buckets=num_buckets,
+        layer_drop=cfg.get("layer_drop", 0.0),
+        use_coral=use_coral,
     )
 
     return model

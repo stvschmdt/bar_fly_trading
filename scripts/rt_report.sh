@@ -24,6 +24,7 @@ SYMBOLS=""
 EMAIL_FLAG=""
 NEWS_ONLY=""
 EXTRA_FLAGS=""
+DATA_DIR="${DATA_DIR:-/home/stvschmdt/data}"
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -70,6 +71,7 @@ for SYMBOL in "${SYMBOL_LIST[@]}"; do
 
     python -m api_data.rt_utils "$SYMBOL" \
         --news --summary \
+        --data-path "${DATA_DIR}/all_data_*.csv" \
         $NEWS_ONLY \
         $EMAIL_FLAG \
         $EXTRA_FLAGS \

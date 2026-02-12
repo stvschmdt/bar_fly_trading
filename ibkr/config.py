@@ -89,15 +89,23 @@ class TradingConfig:
         order_timeout: Seconds to wait for order fill before canceling
     """
     symbols: set[str] = field(default_factory=set)
-    position_size: float = 0.10  # 10% of portfolio per position
-    max_positions: int = 10
+    position_size: float = 0.01  # 1% of portfolio per position
+    max_positions: int = 20
     max_position_value: float = 50000.0  # Max $50k per position
     max_daily_trades: int = 20
     max_daily_loss: float = 5000.0  # Max $5k daily loss
     max_daily_loss_pct: float = 0.02  # Max 2% daily loss
-    use_market_orders: bool = True
-    limit_offset_pct: float = 0.001  # 0.1% limit offset
+    use_market_orders: bool = False  # Default to marketable limit orders (options)
+    stock_market_orders: bool = True  # Default stocks to market orders
+    limit_offset_pct: float = 0.002  # 0.2% marketable limit offset
     order_timeout: int = 60  # 60 second timeout
+    all_or_none: bool = True  # Reject partial fills (IBKR allOrNone flag)
+
+    # Buy-side safety
+    fee_buffer_pct: float = 0.005    # 0.5% cash buffer for fees + slippage
+    min_order_value: float = 2.0     # Minimum $2 per order
+    max_symbol_exposure_pct: float = 0.05  # Max 5% of portfolio in one symbol
+    max_spread_pct: float = 0.01     # Reject if bid-ask spread > 1%
 
     # Strategy-specific parameters (from RegressionMomentumStrategy)
     entry_reg_3d_threshold: float = 0.01   # 1% predicted return
@@ -133,7 +141,7 @@ class PredictionConfig:
     def default(cls) -> "PredictionConfig":
         """Create config with default stockformer output path."""
         default_dir = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), '..', 'mlr', 'stockformer', 'output', 'predictions')
+            os.path.join(os.path.dirname(__file__), '..', 'stockformer', 'output', 'predictions')
         )
         return cls(predictions_dir=default_dir)
 

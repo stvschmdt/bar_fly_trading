@@ -42,6 +42,10 @@ ONCE=false
 LIVE_FLAG=""
 CLIENT_ID=10
 GATEWAY_FLAG="--gateway"
+DEFAULT_SHARES=""      # --default-shares N: fixed share count for testing
+MARKET_ORDERS=""       # --market-orders: use market orders instead of limit
+BUY_ONLY=""            # --buy-only: skip SELL signals for symbols we don't hold
+OPTIONS=""             # --options: execute as options (call for BUY, put for SELL)
 
 # Market hours in ET (24h format) — only execute during market hours
 MARKET_OPEN_H=9
@@ -56,6 +60,10 @@ while [[ $# -gt 0 ]]; do
         --dry-run)     DRY_RUN=true; shift ;;
         --once)        ONCE=true; shift ;;
         --live)        LIVE_FLAG="--live"; GATEWAY_FLAG=""; shift ;;
+        --default-shares) DEFAULT_SHARES="--default-shares $2"; shift 2 ;;
+        --market-orders) MARKET_ORDERS="--market-orders"; shift ;;
+        --buy-only)    BUY_ONLY="--buy-only"; shift ;;
+        --options)     OPTIONS="--options"; shift ;;
         --client-id)   CLIENT_ID="$2"; shift 2 ;;
         *)             echo "Unknown arg: $1"; exit 1 ;;
     esac
@@ -83,7 +91,7 @@ is_market_hours() {
     local open_time=$(printf '%02d%02d' $MARKET_OPEN_H $MARKET_OPEN_M)
     local close_time=$(printf '%02d%02d' $MARKET_CLOSE_H $MARKET_CLOSE_M)
 
-    if [[ "$now_et" -ge "$open_time" && "$now_et" -lt "$close_time" ]]; then
+    if [[ "10#$now_et" -ge "10#$open_time" && "10#$now_et" -lt "10#$close_time" ]]; then
         return 0
     else
         return 1
@@ -140,6 +148,10 @@ execute_signals() {
         $GATEWAY_FLAG \
         --client-id "$CLIENT_ID" \
         $LIVE_FLAG \
+        $DEFAULT_SHARES \
+        $MARKET_ORDERS \
+        $BUY_ONLY \
+        $OPTIONS \
         >> "$LOG_FILE" 2>&1
 
     local exit_code=$?
@@ -168,6 +180,7 @@ log "  Mode:          ${LIVE_FLAG:-paper}"
 log "  Gateway:       ${GATEWAY_FLAG:-direct}"
 log "  Client ID:     ${CLIENT_ID}"
 log "  Dry run:       ${DRY_RUN}"
+log "  Options:       ${OPTIONS:-off}"
 log "  One-shot:      ${ONCE}"
 log "============================================"
 
@@ -190,16 +203,13 @@ last_status_time=$(date +%s)
 STATUS_INTERVAL=300  # print "still polling" every 5 min
 
 while true; do
+    if ! is_market_hours; then
+        log "Market closed. Shutting down executor loop."
+        exit 0
+    fi
+
     if has_signals; then
-        if is_market_hours; then
-            execute_signals || true  # don't exit on execution failure
-        else
-            log "WARNING: Signals found but market is closed — skipping execution"
-            log "  File: $SIGNAL_FILE"
-            log "  Holding signals until market opens (will check again in 60s)"
-            sleep 60
-            continue
-        fi
+        execute_signals || true  # don't exit on execution failure
     fi
 
     poll_count=$((poll_count + 1))
