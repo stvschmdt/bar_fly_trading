@@ -10,7 +10,6 @@ from sqlalchemy import create_engine, text
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from logging_config import setup_logging
-from visualizations.screener_v2 import StockScreenerV2
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -403,45 +402,57 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
 
     # Adjust open, high, low for stock splits
     df = adjust_for_stock_splits(df)
-    # get unique list of symbols
-    symbols = df["symbol"].unique()
-    # get the latest date in the df
-    latest_date = df["date"].max()
-    # change latest_date to a string
-    latest_date = latest_date.strftime("%Y-%m-%d")
-    # create a StockScreenerV2 object to use _check functions
-    stock_screener = StockScreenerV2(symbols, latest_date, df.head())
-    # for each row in the df, use each of the _check functions to create a new column for each
-    # the _check functions will build a list of -1,0,1 for each _check function
-    # append this list to the df as new columns
-    # the check functions are _check macd, adx, atr, pe_ratio, bollinger_bands, rsi, sma_cross
-    # the check functions take the df row as input and three lists, we will dummy the first two
-    # the finsl list 'signals' will be appended to for each row 
-    full_cols = []
-    for index, row in df.iterrows():
-        signals = []
-        # get the df for the row symbol and date
-        screen_df = df[(df.symbol == row['symbol']) & (df.date == row['date'])]
-        stock_screener._check_macd(screen_df, [], [], signals)
-        stock_screener._check_macd_zero(screen_df, [], [], signals)
-        stock_screener._check_adx(screen_df, [], [], signals)
-        stock_screener._check_atr(screen_df, [], [], signals)
-        stock_screener._check_pe_ratio(screen_df, [], [], signals)
-        stock_screener._check_bollinger_band(screen_df, [], [], signals)
-        stock_screener._check_rsi(screen_df, [], [], signals)
-        stock_screener._check_sma_cross(screen_df, [], [], signals)
-        stock_screener._check_cci(screen_df, [], [], signals)
-        stock_screener._check_pcr(screen_df, [], [], signals)
-        # append the row of signals, to the full_cols list
-        full_cols.append(signals)
+    # Vectorized screener signals — replaces O(N²) row-by-row loop
+    # Each signal: 1 = bullish, -1 = bearish, 0 = neutral
+    # Logic matches StockScreenerV2._check_* methods exactly
 
-    # create a dataframe from the full_cols list with the signals as columns
-    signals_df = pd.DataFrame(full_cols, columns=["macd_signal", "macd_zero_signal","adx_signal", "atr_signal", "pe_ratio_signal", "bollinger_bands_signal", "rsi_signal", "sma_cross_signal", "cci_signal", "pcr_signal"])
-    # concat the signals_df as new columns to the df
-    df = pd.concat([df, signals_df], axis=1)
-    
-    # create a new column for the sum of all the signals
-    df["bull_bear_delta"] = df["macd_signal"] + df["macd_zero_signal"] + df["adx_signal"] + df["atr_signal"] + df["pe_ratio_signal"] + df["bollinger_bands_signal"] + df["rsi_signal"] + df["sma_cross_signal"] + df["cci_signal"] + df["pcr_signal"]
+    # MACD signal: macd > macd_9_ema → bullish, macd < macd_9_ema → bearish
+    df["macd_signal"] = np.where(df["macd"] > df["macd_9_ema"], 1,
+                        np.where(df["macd"] < df["macd_9_ema"], -1, 0))
+
+    # MACD zero: macd > 0 → bullish, macd < 0 → bearish
+    df["macd_zero_signal"] = np.where(df["macd"] > 0, 1,
+                             np.where(df["macd"] < 0, -1, 0))
+
+    # ADX: > 25 → bullish (strong trend), < 20 → bearish (weak trend)
+    df["adx_signal"] = np.where(df["adx_14"] > 25, 1,
+                       np.where(df["adx_14"] < 20, -1, 0))
+
+    # ATR: close < atr*2 → bullish, close > atr*2 → bearish
+    df["atr_signal"] = np.where(df["adjusted_close"] < df["atr_14"] * 2, 1,
+                       np.where(df["adjusted_close"] > df["atr_14"] * 2, -1, 0))
+
+    # PE ratio: 0 < pe < 15 → bullish (value), pe > 35 → bearish (expensive)
+    df["pe_ratio_signal"] = np.where((df["pe_ratio"] < 15) & (df["pe_ratio"] > 0), 1,
+                            np.where(df["pe_ratio"] > 35, -1, 0))
+
+    # Bollinger bands: close > upper → bearish, close < lower → bullish
+    df["bollinger_bands_signal"] = np.where(df["adjusted_close"] > df["bbands_upper_20"], -1,
+                                   np.where(df["adjusted_close"] < df["bbands_lower_20"], 1, 0))
+
+    # RSI: > 70 → bearish (overbought), < 30 → bullish (oversold)
+    df["rsi_signal"] = np.where(df["rsi_14"] > 70, -1,
+                       np.where(df["rsi_14"] < 30, 1, 0))
+
+    # SMA cross: sma_20 > sma_50 → bullish, sma_20 < sma_50 → bearish
+    df["sma_cross_signal"] = np.where(df["sma_20"] > df["sma_50"], 1,
+                             np.where(df["sma_20"] < df["sma_50"], -1, 0))
+
+    # CCI: >= 100 → bearish (overbought), <= -100 → bullish (oversold)
+    df["cci_signal"] = np.where(df["cci_14"] >= 100, -1,
+                       np.where(df["cci_14"] <= -100, 1, 0))
+
+    # PCR: > 0.7 → bearish, <= 0.5 → bullish, NaN → 0
+    pcr_filled = df["pcr"].fillna(0)
+    df["pcr_signal"] = np.where(df["pcr"].isna(), 0,
+                       np.where(pcr_filled > 0.7, -1,
+                       np.where(pcr_filled <= 0.5, 1, 0)))
+
+    # Bull-bear delta: sum of all signals
+    signal_cols = ["macd_signal", "macd_zero_signal", "adx_signal", "atr_signal",
+                   "pe_ratio_signal", "bollinger_bands_signal", "rsi_signal",
+                   "sma_cross_signal", "cci_signal", "pcr_signal"]
+    df["bull_bear_delta"] = df[signal_cols].sum(axis=1)
 
     df.to_csv(f'all_data_{batch_num}.csv')
 

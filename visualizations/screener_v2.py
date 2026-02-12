@@ -117,7 +117,7 @@ class StockScreenerV2:
         previous_date = nearest_dates[1].strftime('%Y-%m-%d')
         day_before = nearest_dates[2].strftime('%Y-%m-%d')
 
-        output_dir = f'overnight_v2_{self.latest_date}'
+        output_dir = f'overnight_{self.latest_date}'
         os.makedirs(output_dir, exist_ok=True)
         self.output_dir = output_dir
         logger.info(f'V2 screener running for {len(self.symbols)} symbols on {self.latest_date}')
