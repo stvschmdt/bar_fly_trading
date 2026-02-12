@@ -7,6 +7,7 @@
 #   bash scripts/deploy_ec2.sh --frontend   # frontend only
 #   bash scripts/deploy_ec2.sh --backend    # backend restart only
 #   bash scripts/deploy_ec2.sh --data       # repopulate data only
+#   bash scripts/deploy_ec2.sh --setup      # first-time systemd + nginx setup
 
 set -e
 
@@ -16,6 +17,8 @@ FRONTEND_DIR="/var/www/bft/frontend"
 LOG_DIR="/var/log/bft"
 CSV_PATTERN="$REPO_DIR/all_data_*.csv"
 BRANCH="feature/website"
+SERVICE_NAME="bft-api"
+PYTHON_BIN="$(which python)"
 
 cd "$REPO_DIR"
 
@@ -27,6 +30,7 @@ DO_PULL=false
 DO_FRONTEND=false
 DO_BACKEND=false
 DO_DATA=false
+DO_SETUP=false
 
 if [[ $# -gt 0 ]]; then
     DO_ALL=false
@@ -36,6 +40,7 @@ if [[ $# -gt 0 ]]; then
             --backend)   DO_BACKEND=true; DO_PULL=true; shift ;;
             --data)      DO_DATA=true; shift ;;
             --pull)      DO_PULL=true; shift ;;
+            --setup)     DO_SETUP=true; shift ;;
             *)           echo "Unknown arg: $1"; exit 1 ;;
         esac
     done
@@ -44,6 +49,54 @@ fi
 # ── Ensure directories exist ─────────────────────────────────────
 sudo mkdir -p "$DATA_DIR" "$FRONTEND_DIR" "$LOG_DIR"
 sudo chown -R "$USER:$USER" /var/www/bft "$LOG_DIR" 2>/dev/null || true
+
+# ── First-time setup: systemd service + nginx ─────────────────────
+if $DO_SETUP; then
+    log "Setting up systemd service..."
+
+    # Generate JWT secret if not already set
+    if [ ! -f "$DATA_DIR/.jwt_secret" ]; then
+        python3 -c "import secrets; print(secrets.token_urlsafe(32))" > "$DATA_DIR/.jwt_secret"
+        chmod 600 "$DATA_DIR/.jwt_secret"
+        log "Generated JWT secret at $DATA_DIR/.jwt_secret"
+    fi
+    JWT_SECRET=$(cat "$DATA_DIR/.jwt_secret")
+
+    sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null << EOF
+[Unit]
+Description=BFT FastAPI Backend
+After=network.target
+
+[Service]
+User=$USER
+WorkingDirectory=$REPO_DIR
+ExecStart=$PYTHON_BIN -m uvicorn webapp.backend.api:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+Environment=BFT_DATA_DIR=$DATA_DIR
+Environment=BFT_JWT_SECRET=$JWT_SECRET
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Kill any nohup uvicorn still running
+    pkill -f "uvicorn webapp.backend.api:app" 2>/dev/null || true
+    sleep 1
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$SERVICE_NAME"
+    sudo systemctl start "$SERVICE_NAME"
+    log "Systemd service '$SERVICE_NAME' created and started"
+
+    # Nginx config
+    if [ ! -f /etc/nginx/conf.d/barflytrading.com.conf ] || ! grep -q proxy_pass /etc/nginx/conf.d/barflytrading.com.conf; then
+        log "Nginx config needs API proxy — check /etc/nginx/conf.d/barflytrading.com.conf"
+    fi
+
+    sudo systemctl status "$SERVICE_NAME" --no-pager
+    exit 0
+fi
 
 # ── Pull latest code ─────────────────────────────────────────────
 if $DO_ALL || $DO_PULL; then
@@ -83,25 +136,23 @@ if $DO_ALL || $DO_DATA; then
     fi
 fi
 
-# ── Backend ───────────────────────────────────────────────────────
+# ── Backend (restart via systemd) ─────────────────────────────────
 if $DO_ALL || $DO_BACKEND; then
-    log "Restarting backend..."
-
-    # Kill existing uvicorn if running
-    pkill -f "uvicorn webapp.backend.api:app" 2>/dev/null || true
-    sleep 1
-
-    BFT_DATA_DIR="$DATA_DIR" nohup python -m uvicorn webapp.backend.api:app \
-        --host 127.0.0.1 --port 8000 >> "$LOG_DIR/api.log" 2>&1 &
+    if systemctl is-active "$SERVICE_NAME" > /dev/null 2>&1; then
+        log "Restarting backend via systemd..."
+        sudo systemctl restart "$SERVICE_NAME"
+    else
+        log "Starting backend via systemd..."
+        sudo systemctl start "$SERVICE_NAME"
+    fi
 
     sleep 2
 
-    # Verify
     if curl -sf http://localhost:8000/api/health > /dev/null; then
-        log "Backend running (PID $!)"
+        log "Backend running"
     else
-        log "ERROR: Backend failed to start. Check $LOG_DIR/api.log"
-        tail -10 "$LOG_DIR/api.log"
+        log "ERROR: Backend failed to start"
+        sudo journalctl -u "$SERVICE_NAME" --no-pager -n 15
         exit 1
     fi
 fi
