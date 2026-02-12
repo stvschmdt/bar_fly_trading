@@ -8,13 +8,13 @@ export default function LoginPage() {
   const { user, login } = useAuth()
   const navigate = useNavigate()
   const [mode, setMode] = useState('login')
-
-  if (user) return <Navigate to="/" replace />
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [inviteCode, setInviteCode] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  if (user) return <Navigate to="/" replace />
 
   async function handleSubmit(e) {
     e.preventDefault()
