@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { getSymbol, getSector } from '../api/client'
+import StockChart from './StockChart'
 
 function changeColor(pct) {
   if (pct > 0) return 'text-green-600 dark:text-green-400'
@@ -49,7 +50,7 @@ export default function StockDetail() {
   const news = report?.news
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
+    <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
       {/* Back nav */}
       <div className="flex items-center gap-3">
         <Link
@@ -79,6 +80,11 @@ export default function StockDetail() {
         >
           {flipped ? 'Technical' : 'News'}
         </button>
+      </div>
+
+      {/* Price chart */}
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-4">
+        <StockChart symbol={symbol} />
       </div>
 
       {/* Card with flip */}

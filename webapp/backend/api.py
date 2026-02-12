@@ -136,6 +136,16 @@ def get_symbol(symbol: str):
     return data
 
 
+@app.get("/api/symbol/{symbol}/history")
+def get_symbol_history(symbol: str):
+    """Return historical price data for charting."""
+    symbol = symbol.upper()
+    data = _read_json(f"{symbol}_history.json")
+    if data is None:
+        raise HTTPException(404, f"{symbol}_history.json not found — run generate_history.py")
+    return data
+
+
 @app.get("/api/signals/today")
 def get_signals():
     """Return today's trading signals."""

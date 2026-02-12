@@ -38,6 +38,10 @@ export function getSymbol(symbol) {
   return fetchJson(`/symbol/${symbol}`)
 }
 
+export function getSymbolHistory(symbol) {
+  return fetchJson(`/symbol/${symbol}/history`)
+}
+
 export function getBigBoard() {
   return fetchJson('/bigboard')
 }
