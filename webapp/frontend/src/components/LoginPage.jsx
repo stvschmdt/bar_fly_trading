@@ -1,11 +1,15 @@
 import { useState } from 'react'
+import { Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 
 const BASE = '/api'
 
 export default function LoginPage() {
-  const { login } = useAuth()
+  const { user, login } = useAuth()
+  const navigate = useNavigate()
   const [mode, setMode] = useState('login')
+
+  if (user) return <Navigate to="/" replace />
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [inviteCode, setInviteCode] = useState('')
@@ -34,6 +38,7 @@ export default function LoginPage() {
         return
       }
       login(data.token, data.email)
+      navigate('/')
     } catch {
       setError('Network error')
     } finally {
