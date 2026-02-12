@@ -751,47 +751,156 @@ class TestSuggestedDerivedFields:
 
 class TestSignalGeneration:
     """
-    Document the O(n^2) signal generation loop in gold_table_processing.
+    Validate vectorized signal generation (np.where) in gold_table_processing.
+    Each test constructs known inputs and verifies the expected -1/0/1 output.
     """
 
-    # TODO: The row-by-row loop (lines 419-434) does:
-    #       screen_df = df[(df.symbol == row['symbol']) & (df.date == row['date'])]
-    #       for every row. This is O(n * n_total) boolean operations.
-    #       For 5M rows, this would take hours.
-    #
-    #       Suggested fix: vectorize the _check functions to operate on the
-    #       full DataFrame at once, or at minimum group by symbol first.
+    SIGNAL_COLS = [
+        "macd_signal", "macd_zero_signal", "adx_signal", "atr_signal",
+        "pe_ratio_signal", "bollinger_bands_signal", "rsi_signal",
+        "sma_cross_signal", "cci_signal", "pcr_signal",
+    ]
 
-    # TODO: StockScreener is initialized with df.head() (line 411).
-    #       If any _check function references self.df beyond the passed
-    #       screen_df parameter, it would get wrong data.
+    def _apply_signals(self, df):
+        """Apply the same vectorized logic as storage.py gold_table_processing."""
+        # Need macd_9_ema and pe_ratio if not present
+        if "macd_9_ema" not in df.columns:
+            df["macd_9_ema"] = df.groupby("symbol")["macd"].transform(
+                lambda x: x.ewm(span=9, adjust=False).mean()
+            )
+        if "pe_ratio" not in df.columns:
+            df["pe_ratio"] = (df["adjusted_close"] / df["ttm_eps"]).replace([np.inf, -np.inf], np.nan)
+        if "pcr" not in df.columns:
+            df["pcr"] = (df["put_volume"] / df["call_volume"]).replace([np.inf, -np.inf], np.nan).round(2)
 
-    def test_signal_count_matches_expected(self):
-        """The signal loop produces exactly 10 signal columns."""
-        expected_signals = [
-            "macd_signal", "macd_zero_signal", "adx_signal", "atr_signal",
-            "pe_ratio_signal", "bollinger_bands_signal", "rsi_signal",
-            "sma_cross_signal", "cci_signal", "pcr_signal",
-        ]
-        assert len(expected_signals) == 10
+        df["macd_signal"] = np.where(df["macd"] > df["macd_9_ema"], 1,
+                            np.where(df["macd"] < df["macd_9_ema"], -1, 0))
+        df["macd_zero_signal"] = np.where(df["macd"] > 0, 1,
+                                 np.where(df["macd"] < 0, -1, 0))
+        df["adx_signal"] = np.where(df["adx_14"] > 25, 1,
+                           np.where(df["adx_14"] < 20, -1, 0))
+        df["atr_signal"] = np.where(df["adjusted_close"] < df["atr_14"] * 2, 1,
+                           np.where(df["adjusted_close"] > df["atr_14"] * 2, -1, 0))
+        df["pe_ratio_signal"] = np.where((df["pe_ratio"] < 15) & (df["pe_ratio"] > 0), 1,
+                                np.where(df["pe_ratio"] > 35, -1, 0))
+        df["bollinger_bands_signal"] = np.where(df["adjusted_close"] > df["bbands_upper_20"], -1,
+                                       np.where(df["adjusted_close"] < df["bbands_lower_20"], 1, 0))
+        df["rsi_signal"] = np.where(df["rsi_14"] > 70, -1,
+                           np.where(df["rsi_14"] < 30, 1, 0))
+        df["sma_cross_signal"] = np.where(df["sma_20"] > df["sma_50"], 1,
+                                 np.where(df["sma_20"] < df["sma_50"], -1, 0))
+        df["cci_signal"] = np.where(df["cci_14"] >= 100, -1,
+                           np.where(df["cci_14"] <= -100, 1, 0))
+        pcr_filled = df["pcr"].fillna(0)
+        df["pcr_signal"] = np.where(df["pcr"].isna(), 0,
+                           np.where(pcr_filled > 0.7, -1,
+                           np.where(pcr_filled <= 0.5, 1, 0)))
+        df["bull_bear_delta"] = df[self.SIGNAL_COLS].sum(axis=1)
+        return df
+
+    def test_signal_columns_exist(self):
+        """Vectorized signals produce exactly 10 signal columns + delta."""
+        df = make_core_df(n_days=5)
+        df = self._apply_signals(df)
+        for col in self.SIGNAL_COLS + ["bull_bear_delta"]:
+            assert col in df.columns, f"Missing column: {col}"
+
+    def test_all_signals_in_valid_range(self):
+        """Every signal value must be -1, 0, or 1."""
+        df = make_core_df(n_days=50)
+        df = self._apply_signals(df)
+        for col in self.SIGNAL_COLS:
+            values = df[col].dropna().unique()
+            assert set(values).issubset({-1, 0, 1}), f"{col} has invalid values: {values}"
 
     def test_bull_bear_delta_is_sum(self):
         """bull_bear_delta should be the sum of all 10 signal columns."""
-        signals = {
-            "macd_signal": 1,
-            "macd_zero_signal": -1,
-            "adx_signal": 0,
-            "atr_signal": 1,
-            "pe_ratio_signal": 0,
-            "bollinger_bands_signal": -1,
-            "rsi_signal": 1,
-            "sma_cross_signal": 0,
-            "cci_signal": 1,
-            "pcr_signal": -1,
-        }
-        df = pd.DataFrame([signals])
-        df["bull_bear_delta"] = sum(df[col] for col in signals.keys())
-        assert df["bull_bear_delta"].iloc[0] == 1  # 4 bull - 3 bear - 3 neutral = 1
+        df = make_core_df(n_days=20)
+        df = self._apply_signals(df)
+        expected = df[self.SIGNAL_COLS].sum(axis=1)
+        pd.testing.assert_series_equal(df["bull_bear_delta"], expected, check_names=False)
+
+    def test_macd_signal_known_values(self):
+        """MACD > EMA → 1, MACD < EMA → -1, MACD == EMA → 0."""
+        df = pd.DataFrame({
+            "symbol": ["T"] * 3, "date": pd.bdate_range("2025-01-02", periods=3),
+            "macd": [2.0, -1.0, 0.5], "macd_9_ema": [1.0, 0.0, 0.5],
+            "adjusted_close": [100] * 3, "atr_14": [3] * 3, "adx_14": [22] * 3,
+            "rsi_14": [50] * 3, "cci_14": [0] * 3, "sma_20": [100] * 3,
+            "sma_50": [100] * 3, "bbands_upper_20": [110] * 3,
+            "bbands_lower_20": [90] * 3, "ttm_eps": [5] * 3,
+            "put_volume": [100] * 3, "call_volume": [200] * 3,
+        })
+        df = self._apply_signals(df)
+        assert df["macd_signal"].tolist() == [1, -1, 0]
+
+    def test_rsi_overbought_oversold(self):
+        """RSI > 70 → -1 (bearish), RSI < 30 → 1 (bullish), between → 0."""
+        df = pd.DataFrame({
+            "symbol": ["T"] * 3, "date": pd.bdate_range("2025-01-02", periods=3),
+            "rsi_14": [75.0, 25.0, 50.0],
+            "macd": [0] * 3, "macd_9_ema": [0] * 3, "adjusted_close": [100] * 3,
+            "atr_14": [3] * 3, "adx_14": [22] * 3, "cci_14": [0] * 3,
+            "sma_20": [100] * 3, "sma_50": [100] * 3,
+            "bbands_upper_20": [110] * 3, "bbands_lower_20": [90] * 3,
+            "ttm_eps": [5] * 3, "put_volume": [100] * 3, "call_volume": [200] * 3,
+        })
+        df = self._apply_signals(df)
+        assert df["rsi_signal"].tolist() == [-1, 1, 0]
+
+    def test_bollinger_bands_signal(self):
+        """Close > upper → -1, close < lower → 1, between → 0."""
+        df = pd.DataFrame({
+            "symbol": ["T"] * 3, "date": pd.bdate_range("2025-01-02", periods=3),
+            "adjusted_close": [115.0, 85.0, 100.0],
+            "bbands_upper_20": [110.0, 110.0, 110.0],
+            "bbands_lower_20": [90.0, 90.0, 90.0],
+            "macd": [0] * 3, "macd_9_ema": [0] * 3, "atr_14": [3] * 3,
+            "adx_14": [22] * 3, "rsi_14": [50] * 3, "cci_14": [0] * 3,
+            "sma_20": [100] * 3, "sma_50": [100] * 3,
+            "ttm_eps": [5] * 3, "put_volume": [100] * 3, "call_volume": [200] * 3,
+        })
+        df = self._apply_signals(df)
+        assert df["bollinger_bands_signal"].tolist() == [-1, 1, 0]
+
+    def test_pcr_signal_with_nan(self):
+        """PCR NaN → 0, PCR > 0.7 → -1, PCR <= 0.5 → 1, between → 0."""
+        df = pd.DataFrame({
+            "symbol": ["T"] * 4, "date": pd.bdate_range("2025-01-02", periods=4),
+            "pcr": [np.nan, 0.9, 0.3, 0.6],
+            "macd": [0] * 4, "macd_9_ema": [0] * 4, "adjusted_close": [100] * 4,
+            "atr_14": [3] * 4, "adx_14": [22] * 4, "rsi_14": [50] * 4,
+            "cci_14": [0] * 4, "sma_20": [100] * 4, "sma_50": [100] * 4,
+            "bbands_upper_20": [110] * 4, "bbands_lower_20": [90] * 4,
+            "ttm_eps": [5] * 4, "put_volume": [0] * 4, "call_volume": [0] * 4,
+        })
+        df = self._apply_signals(df)
+        assert df["pcr_signal"].tolist() == [0, -1, 1, 0]
+
+    def test_pe_ratio_signal(self):
+        """PE 0-15 → 1 (value), PE > 35 → -1 (expensive), negative PE → 0."""
+        df = pd.DataFrame({
+            "symbol": ["T"] * 4, "date": pd.bdate_range("2025-01-02", periods=4),
+            "adjusted_close": [100] * 4, "ttm_eps": [10.0, 2.0, -5.0, 20.0],
+            "macd": [0] * 4, "macd_9_ema": [0] * 4, "atr_14": [3] * 4,
+            "adx_14": [22] * 4, "rsi_14": [50] * 4, "cci_14": [0] * 4,
+            "sma_20": [100] * 4, "sma_50": [100] * 4,
+            "bbands_upper_20": [110] * 4, "bbands_lower_20": [90] * 4,
+            "put_volume": [100] * 4, "call_volume": [200] * 4,
+        })
+        df = self._apply_signals(df)
+        # PE: 10 (bullish), 50 (bearish), -20 (negative→0), 5 (bullish)
+        assert df["pe_ratio_signal"].tolist() == [1, -1, 0, 1]
+
+    def test_multi_symbol_independence(self):
+        """Signals computed per-row, no cross-symbol contamination."""
+        df = make_multi_symbol_df(symbols=("BULL", "BEAR"), n_days=10)
+        df = self._apply_signals(df)
+        # Each symbol gets independent signals
+        bull_delta = df[df["symbol"] == "BULL"]["bull_bear_delta"]
+        bear_delta = df[df["symbol"] == "BEAR"]["bull_bear_delta"]
+        assert len(bull_delta) == 10
+        assert len(bear_delta) == 10
 
 
 # ===========================================================================

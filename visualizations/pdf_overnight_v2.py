@@ -5,7 +5,7 @@ Replaces the plain black/white PIL table with a color-coded heatmap.
 Replaces blank section title pages with clean dividers.
 
 Usage (standalone):
-  python visualizations/pdf_overnight_v2.py -d overnight_v2_2026-02-05
+  python visualizations/pdf_overnight_v2.py -d overnight_2026-02-05
 """
 
 import argparse
@@ -284,7 +284,7 @@ class SectionedPDFConverterV2:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PDF Overnight V2 — Heatmap table + improved sections')
     parser.add_argument('-d', '--directory',
-                        default='overnight_v2_' + get_closest_trading_date(pd.Timestamp.now().strftime('%Y-%m-%d')),
+                        default='overnight_' + get_closest_trading_date(pd.Timestamp.now().strftime('%Y-%m-%d')),
                         help='Directory containing JPG charts')
     args = parser.parse_args()
     output_date = get_closest_trading_date(args.directory.split('_')[-1])
