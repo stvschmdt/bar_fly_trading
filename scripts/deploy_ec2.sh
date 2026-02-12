@@ -18,7 +18,7 @@ LOG_DIR="/var/log/bft"
 CSV_PATTERN="$REPO_DIR/all_data_*.csv"
 BRANCH="feature/website"
 SERVICE_NAME="bft-api"
-PYTHON_BIN="$(which python)"
+PYTHON_BIN="${CONDA_PREFIX:-$(dirname $(which python))/..}/bin/python"
 
 cd "$REPO_DIR"
 
@@ -62,6 +62,27 @@ if $DO_SETUP; then
     fi
     JWT_SECRET=$(cat "$DATA_DIR/.jwt_secret")
 
+    # Create env file for secrets (only if it doesn't exist — preserves SMTP vars)
+    ENV_FILE="$DATA_DIR/.bft-api.env"
+    if [ ! -f "$ENV_FILE" ]; then
+        cat > "$ENV_FILE" << ENVEOF
+BFT_DATA_DIR=$DATA_DIR
+BFT_JWT_SECRET=$JWT_SECRET
+# Uncomment and set these for welcome emails:
+#IBKR_SMTP_SERVER=smtp.gmail.com
+#IBKR_SMTP_PORT=587
+#IBKR_SMTP_USER=your@gmail.com
+#IBKR_SMTP_PASSWORD=your-app-password
+ENVEOF
+        chmod 600 "$ENV_FILE"
+        log "Created env file at $ENV_FILE — edit to add SMTP credentials"
+    else
+        # Always update non-secret vars
+        sed -i "s|^BFT_DATA_DIR=.*|BFT_DATA_DIR=$DATA_DIR|" "$ENV_FILE"
+        sed -i "s|^BFT_JWT_SECRET=.*|BFT_JWT_SECRET=$JWT_SECRET|" "$ENV_FILE"
+        log "Env file already exists at $ENV_FILE — SMTP vars preserved"
+    fi
+
     sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null << EOF
 [Unit]
 Description=BFT FastAPI Backend
@@ -73,8 +94,7 @@ WorkingDirectory=$REPO_DIR
 ExecStart=$PYTHON_BIN -m uvicorn webapp.backend.api:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=5
-Environment=BFT_DATA_DIR=$DATA_DIR
-Environment=BFT_JWT_SECRET=$JWT_SECRET
+EnvironmentFile=$ENV_FILE
 
 [Install]
 WantedBy=multi-user.target

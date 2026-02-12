@@ -38,6 +38,10 @@ export function getSymbol(symbol) {
   return fetchJson(`/symbol/${symbol}`)
 }
 
+export function getBigBoard() {
+  return fetchJson('/bigboard')
+}
+
 export function getSignals() {
   return fetchJson('/signals/today')
 }

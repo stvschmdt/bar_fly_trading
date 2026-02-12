@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .auth import router as auth_router, get_current_user, SECRET_KEY
+from .build_sector_map import SECTOR_ORDER, ETF_TO_NAME
 from .database import (
     init_db,
     get_user_by_email,
@@ -106,6 +107,23 @@ def get_sector(sector_id: str):
     if data is None:
         raise HTTPException(404, f"sector_{sector_id}.json not found")
     return data
+
+
+@app.get("/api/bigboard")
+def get_bigboard():
+    """Return all stocks across all sectors for the Big Board view."""
+    all_stocks = []
+    sectors = []
+    for etf in SECTOR_ORDER:
+        data = _read_json(f"sector_{etf}.json")
+        if data is None:
+            continue
+        sectors.append({"id": etf, "name": ETF_TO_NAME.get(etf, etf)})
+        for stock in data.get("stocks", []):
+            stock["sector_id"] = etf
+            all_stocks.append(stock)
+    all_stocks.sort(key=lambda s: s["symbol"])
+    return {"stocks": all_stocks, "sectors": sectors}
 
 
 @app.get("/api/symbol/{symbol}")
