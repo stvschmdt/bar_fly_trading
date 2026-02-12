@@ -149,6 +149,9 @@ if $DO_ALL || $DO_DATA; then
     log "Populating symbol data from CSVs..."
     BFT_DATA_DIR="$DATA_DIR" python -m webapp.backend.populate_all --csv-pattern "$CSV_PATTERN"
 
+    log "Generating chart history data..."
+    BFT_DATA_DIR="$DATA_DIR" python -m webapp.backend.generate_history --csv-pattern "$CSV_PATTERN"
+
     # Create default invite code if DB doesn't exist yet
     if [ ! -f "$DATA_DIR/bft_auth.db" ]; then
         log "Creating invite code BETA2026..."
