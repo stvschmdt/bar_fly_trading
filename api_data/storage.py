@@ -3,6 +3,7 @@ import os
 import sys
 from enum import Enum
 
+import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine, text
 
@@ -208,7 +209,7 @@ def adjust_for_stock_splits(df):
 
         # Adjust open values for the given symbol and dates less than or equal to the effective_date
         # Note: fractional pennies included in adjusted prices
-        mask = (df['symbol'] == symbol) & (df['date'] <= effective_date)
+        mask = (df['symbol'] == symbol) & (df['date'] < effective_date)
         df.loc[mask, 'adjusted_open'] = df.loc[mask, 'adjusted_open'] / split_factor
         df.loc[mask, 'adjusted_high'] = df.loc[mask, 'adjusted_high'] / split_factor
         df.loc[mask, 'adjusted_low'] = df.loc[mask, 'adjusted_low'] / split_factor
@@ -334,7 +335,7 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
 
     # Options mean, std volume
     df[['options_14_mean', 'options_14_std']] = df.groupby('symbol')['total_volume'].rolling(window=14, min_periods=1).agg(['mean', 'std']).reset_index(level=0, drop=True)
-    df['pcr'] = (df['put_volume'] / df['call_volume']).round(2)
+    df['pcr'] = (df['put_volume'] / df['call_volume']).replace([np.inf, -np.inf], np.nan).round(2)
     df['pcr_14_mean'] = df.groupby('symbol')['pcr'].rolling(window=14, min_periods=1).agg(['mean']).reset_index(level=0, drop=True)
 
 
@@ -352,8 +353,8 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
     df['52_week_high'] = df.groupby('symbol')['52_week_high'].ffill()
     df['52_week_low'] = df.groupby('symbol')['52_week_low'].ffill()
 
-    df['pe_ratio'] = df['adjusted_close'] / df['ttm_eps']
-    df['price_to_book_ratio'] = df['adjusted_close'] / df['book_value']
+    df['pe_ratio'] = (df['adjusted_close'] / df['ttm_eps']).replace([np.inf, -np.inf], np.nan)
+    df['price_to_book_ratio'] = (df['adjusted_close'] / df['book_value']).replace([np.inf, -np.inf], np.nan)
 
     # economic_indicators filldown
     df['treasury_yield_2year'] = df['treasury_yield_2year'].ffill()
@@ -364,6 +365,7 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
     df['durables'] = df['durables'].ffill()
     df['unemployment'] = df['unemployment'].ffill()
     df['nonfarm_payroll'] = df['nonfarm_payroll'].ffill()
+    df['inflation'] = df['inflation'].ffill()
 
     # add day of week number column based on date
     df['day_of_week_num'] = df['date'].dt.dayofweek

@@ -200,16 +200,15 @@ class TestOptionsDerived:
     # TODO: Test pcr when call_volume == 0 → should be inf or NaN
     # BUG FOUND: storage.py doesn't handle division by zero for pcr
     def test_pcr_division_by_zero(self):
-        """When call_volume = 0, pcr should be inf (current behavior) — flag for fix."""
+        """When call_volume = 0, pcr should be NaN (inf replaced)."""
         df = pd.DataFrame({
             "symbol": ["X"] * 3,
             "put_volume": [100.0, 200.0, 0.0],
             "call_volume": [0.0, 100.0, 0.0],
         })
-        df["pcr"] = (df["put_volume"] / df["call_volume"]).round(2)
-        assert np.isinf(df["pcr"].iloc[0]), "put/0 should be inf"
-        assert np.isnan(df["pcr"].iloc[2]), "0/0 should be NaN"
-        # TODO: storage.py should clip inf to a max (e.g., 10.0) or replace with NaN
+        df["pcr"] = (df["put_volume"] / df["call_volume"]).replace([np.inf, -np.inf], np.nan).round(2)
+        assert pd.isna(df["pcr"].iloc[0]), "put/0 should be NaN (inf replaced)"
+        assert pd.isna(df["pcr"].iloc[2]), "0/0 should be NaN"
 
     def test_pcr_14_mean_window_size(self):
         """Rolling 14 with min_periods=1 should compute from row 0."""
@@ -246,19 +245,16 @@ class TestFfill:
         assert df["treasury_yield_2year"].iloc[15] == 4.1  # carried forward
 
     # TODO: BUG — inflation is NOT ffilled in storage.py (missing from lines 359-366)
-    def test_inflation_not_ffilled_bug(self):
+    def test_inflation_ffilled(self):
         """
-        BUG: inflation is selected from SQL but NOT forward-filled.
-        Only row 0 has a value; rows 1-19 are NaN.
+        FIXED: inflation is now forward-filled like other economic indicators.
+        Only row 0 has a raw value; ffill propagates to all subsequent rows.
         """
         df = self.df.copy()
-        # Replicate storage.py behavior (no ffill on inflation)
+        df["inflation"] = df["inflation"].ffill()
         assert df["inflation"].iloc[0] == 3.1
-        assert pd.isna(df["inflation"].iloc[1])
-        assert pd.isna(df["inflation"].iloc[19])
-        # After fix (uncomment when storage.py is patched):
-        # df["inflation"] = df["inflation"].ffill()
-        # assert df["inflation"].iloc[19] == 3.1
+        assert df["inflation"].iloc[1] == 3.1
+        assert df["inflation"].iloc[19] == 3.1
 
     def test_52_week_high_from_overview_is_constant(self):
         """
@@ -280,11 +276,11 @@ class TestSplitAdjustment:
     """
     Validate adjust_for_stock_splits logic.
 
-    BUG FOUND: The mask uses `df['date'] <= effective_date` but effective_date
-    is the first day of post-split trading. Should be `<` (strictly less than).
+    FIXED: The mask now uses `df['date'] < effective_date` (strictly less than).
+    effective_date is the first day of post-split trading, so it should NOT be divided.
     """
 
-    def _build_split_scenario(self, use_lte=True):
+    def _build_split_scenario(self):
         """
         Build a scenario with a known split:
         - Days 0-4: pre-split at ~$1000
@@ -312,12 +308,8 @@ class TestSplitAdjustment:
 
         split_factor = 10.0
 
-        if use_lte:
-            # Current (buggy) behavior: date <= effective_date
-            mask = (df["symbol"] == "NVDA") & (df["date"] <= effective_date)
-        else:
-            # Correct behavior: date < effective_date
-            mask = (df["symbol"] == "NVDA") & (df["date"] < effective_date)
+        # Correct behavior: date < effective_date (strict less than)
+        mask = (df["symbol"] == "NVDA") & (df["date"] < effective_date)
 
         df.loc[mask, "adjusted_open"] /= split_factor
         df.loc[mask, "adjusted_high"] /= split_factor
@@ -325,30 +317,25 @@ class TestSplitAdjustment:
 
         return df, effective_date
 
-    # TODO: OFF-BY-ONE BUG in storage.py line 211
-    def test_split_off_by_one_current_behavior(self):
+    def test_effective_date_not_divided(self):
         """
-        Current behavior (<=): effective_date row gets divided.
-        Day 5 open is $101 (post-split), divided by 10 → $10.1.
-        This is WRONG — the price is already post-split.
+        effective_date is the first post-split trading day.
+        Day 5 open is $101 (already post-split) — must NOT be divided.
         """
-        df, effective_date = self._build_split_scenario(use_lte=True)
-        day5 = df[df["date"] == effective_date]
-        # Bug: $101 / 10 = $10.1 instead of correct $101
-        assert pytest.approx(day5["adjusted_open"].values[0], rel=1e-6) == 10.1
-
-    def test_split_correct_behavior(self):
-        """
-        Correct behavior (<): effective_date row is NOT divided.
-        Day 5 open stays $101 (already post-split).
-        """
-        df, effective_date = self._build_split_scenario(use_lte=False)
+        df, effective_date = self._build_split_scenario()
         day5 = df[df["date"] == effective_date]
         assert pytest.approx(day5["adjusted_open"].values[0], rel=1e-6) == 101.0
 
+    def test_effective_date_high_low_not_divided(self):
+        """High and low on effective_date should also not be divided."""
+        df, effective_date = self._build_split_scenario()
+        day5 = df[df["date"] == effective_date]
+        assert pytest.approx(day5["adjusted_high"].values[0], rel=1e-6) == 111.0
+        assert pytest.approx(day5["adjusted_low"].values[0], rel=1e-6) == 91.0
+
     def test_pre_split_rows_adjusted(self):
         """Pre-split rows should all be divided by split factor."""
-        df, effective_date = self._build_split_scenario(use_lte=False)
+        df, effective_date = self._build_split_scenario()
         pre_split = df[df["date"] < effective_date]
         # Original opens: 1000, 1010, 990, 1005, 1015
         expected_adjusted = [100.0, 101.0, 99.0, 100.5, 101.5]
@@ -357,7 +344,7 @@ class TestSplitAdjustment:
 
     def test_post_split_rows_unchanged(self):
         """Post-split rows (after effective_date) should NOT be adjusted."""
-        df, effective_date = self._build_split_scenario(use_lte=False)
+        df, effective_date = self._build_split_scenario()
         post_split = df[df["date"] > effective_date]
         # Original opens: 102, 99, 103, 100
         expected = [102, 99, 103, 100]
@@ -383,14 +370,13 @@ class TestDerivedRatios:
         assert df["pe_ratio"].iloc[1] == 40.0
 
     def test_pe_ratio_zero_eps(self):
-        """pe_ratio with ttm_eps=0 should produce inf."""
+        """pe_ratio with ttm_eps=0 should produce NaN (inf replaced)."""
         df = pd.DataFrame({
             "adjusted_close": [150.0],
             "ttm_eps": [0.0],
         })
-        df["pe_ratio"] = df["adjusted_close"] / df["ttm_eps"]
-        assert np.isinf(df["pe_ratio"].iloc[0])
-        # TODO: storage.py should handle this — clip to NaN or a max
+        df["pe_ratio"] = (df["adjusted_close"] / df["ttm_eps"]).replace([np.inf, -np.inf], np.nan)
+        assert pd.isna(df["pe_ratio"].iloc[0])
 
     def test_pe_ratio_nan_eps(self):
         """pe_ratio with NaN ttm_eps should produce NaN."""
@@ -402,14 +388,13 @@ class TestDerivedRatios:
         assert pd.isna(df["pe_ratio"].iloc[0])
 
     def test_price_to_book_zero_book_value(self):
-        """price_to_book_ratio with book_value=0 should produce inf."""
+        """price_to_book_ratio with book_value=0 should produce NaN (inf replaced)."""
         df = pd.DataFrame({
             "adjusted_close": [150.0],
             "book_value": [0.0],
         })
-        df["price_to_book_ratio"] = df["adjusted_close"] / df["book_value"]
-        assert np.isinf(df["price_to_book_ratio"].iloc[0])
-        # TODO: storage.py should handle this — clip or replace
+        df["price_to_book_ratio"] = (df["adjusted_close"] / df["book_value"]).replace([np.inf, -np.inf], np.nan)
+        assert pd.isna(df["price_to_book_ratio"].iloc[0])
 
 
 # ===========================================================================
@@ -807,3 +792,47 @@ class TestSignalGeneration:
         df = pd.DataFrame([signals])
         df["bull_bear_delta"] = sum(df[col] for col in signals.keys())
         assert df["bull_bear_delta"].iloc[0] == 1  # 4 bull - 3 bear - 3 neutral = 1
+
+
+# ===========================================================================
+# 13. Holiday-aware previous trading day
+# ===========================================================================
+
+class TestPreviousTradingDay:
+    """Validate get_previous_trading_day() skips weekends and US holidays."""
+
+    def test_normal_tuesday(self):
+        """Tuesday → Monday (no holiday)."""
+        from api_data.pull_api_data_rt import get_previous_trading_day
+        result = get_previous_trading_day(pd.Timestamp("2026-01-13"))
+        assert result == pd.Timestamp("2026-01-12")
+
+    def test_normal_monday(self):
+        """Monday → Friday (skip weekend)."""
+        from api_data.pull_api_data_rt import get_previous_trading_day
+        result = get_previous_trading_day(pd.Timestamp("2026-01-12"))
+        assert result == pd.Timestamp("2026-01-09")
+
+    def test_normal_friday(self):
+        """Friday → Thursday."""
+        from api_data.pull_api_data_rt import get_previous_trading_day
+        result = get_previous_trading_day(pd.Timestamp("2026-01-16"))
+        assert result == pd.Timestamp("2026-01-15")
+
+    def test_post_mlk_day(self):
+        """Tuesday after MLK Day (Mon Jan 19 2026) → Friday Jan 16."""
+        from api_data.pull_api_data_rt import get_previous_trading_day
+        result = get_previous_trading_day(pd.Timestamp("2026-01-20"))
+        assert result == pd.Timestamp("2026-01-16")
+
+    def test_post_thanksgiving(self):
+        """Friday after Thanksgiving (Thu Nov 27 2025) → Wednesday Nov 26."""
+        from api_data.pull_api_data_rt import get_previous_trading_day
+        result = get_previous_trading_day(pd.Timestamp("2025-11-28"))
+        assert result == pd.Timestamp("2025-11-26")
+
+    def test_post_independence_day(self):
+        """Monday Jul 6 2026 after July 4th (Sat, observed Fri Jul 3) → Thursday Jul 2."""
+        from api_data.pull_api_data_rt import get_previous_trading_day
+        result = get_previous_trading_day(pd.Timestamp("2026-07-06"))
+        assert result == pd.Timestamp("2026-07-02")

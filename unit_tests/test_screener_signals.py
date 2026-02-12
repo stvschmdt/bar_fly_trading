@@ -361,12 +361,9 @@ class TestADX:
 
 class TestCCI:
     """CCI check.
-    Bearish: cci >= 100 (INCLUSIVE — note: different from other checks!)
-    Bullish: cci <= -100 (INCLUSIVE)
-    Neutral: -100 < cci < 100
-
-    INCONSISTENCY: All other checks use strict > / <, but CCI uses >= / <=.
-    This means cci == 100 triggers bearish, while rsi == 70 does NOT trigger.
+    Bearish: cci > 100 (strict >)
+    Bullish: cci < -100 (strict <)
+    Neutral: -100 <= cci <= 100
     """
     def setup_method(self):
         self.s = make_screener()
@@ -388,29 +385,29 @@ class TestCCI:
         b, br, sig = run_check(self.s._check_cci, row)
         assert sig == [0]
 
-    def test_bearish_at_exact_100(self):
-        """cci == 100 IS bearish (>= is used, unlike other checks with strict >)."""
+    def test_neutral_at_exact_100(self):
+        """cci == 100 is neutral (strict > required for bearish)."""
         row = make_row(cci_14=100.0)
         b, br, sig = run_check(self.s._check_cci, row)
-        assert sig == [-1], "CCI uses >= 100 (inclusive) — exact 100 should be bearish"
+        assert sig == [0]
 
-    def test_bullish_at_exact_neg100(self):
-        """cci == -100 IS bullish (<= is used, unlike other checks with strict <)."""
+    def test_neutral_at_exact_neg100(self):
+        """cci == -100 is neutral (strict < required for bullish)."""
         row = make_row(cci_14=-100.0)
         b, br, sig = run_check(self.s._check_cci, row)
-        assert sig == [1], "CCI uses <= -100 (inclusive) — exact -100 should be bullish"
-
-    def test_neutral_at_99_99(self):
-        """cci = 99.99 should be neutral."""
-        row = make_row(cci_14=99.99)
-        b, br, sig = run_check(self.s._check_cci, row)
         assert sig == [0]
 
-    def test_neutral_at_neg99_99(self):
-        """cci = -99.99 should be neutral."""
-        row = make_row(cci_14=-99.99)
+    def test_bearish_at_100_01(self):
+        """cci = 100.01 should be bearish."""
+        row = make_row(cci_14=100.01)
         b, br, sig = run_check(self.s._check_cci, row)
-        assert sig == [0]
+        assert sig == [-1]
+
+    def test_bullish_at_neg100_01(self):
+        """cci = -100.01 should be bullish."""
+        row = make_row(cci_14=-100.01)
+        b, br, sig = run_check(self.s._check_cci, row)
+        assert sig == [1]
 
 
 # ---------------------------------------------------------------------------
@@ -418,51 +415,59 @@ class TestCCI:
 # ---------------------------------------------------------------------------
 
 class TestATR:
-    """ATR check.
-    Bearish: close > atr * 2 (strict >)
-    Bullish: close < atr * 2 (strict <)
-    Neutral: close == atr * 2
-
-    BUG: This compares absolute price to absolute volatility.
-    For any normal stock (e.g., $150 with ATR $3), close >> atr*2, so it's
-    ALWAYS bearish. The check only produces non-bearish for penny stocks or
-    extreme volatility.
+    """ATR check (ATR as percentage of price).
+    Bearish: atr/close > 4% (high volatility)
+    Bullish: atr/close < 1.5% (low volatility)
+    Neutral: 1.5% <= atr/close <= 4%
     """
     def setup_method(self):
         self.s = make_screener()
 
-    def test_bearish_normal_stock(self):
-        """Normal stock: $150 close, $3 ATR → 150 > 6 → bearish always."""
-        row = make_row(adjusted_close=150.0, atr_14=3.0)
+    def test_bearish_high_volatility(self):
+        """ATR 5% of price → bearish (high volatility)."""
+        row = make_row(adjusted_close=100.0, atr_14=5.0)  # 5%
         b, br, sig = run_check(self.s._check_atr, row)
         assert br == ["bearish_atr"]
         assert sig == [-1]
 
-    def test_bullish_extreme_volatility(self):
-        """Only bullish if close < 2*ATR, e.g., $5 stock with ATR $4."""
-        row = make_row(adjusted_close=5.0, atr_14=4.0)
+    def test_bullish_low_volatility(self):
+        """ATR 1% of price → bullish (low volatility)."""
+        row = make_row(adjusted_close=100.0, atr_14=1.0)  # 1%
         b, br, sig = run_check(self.s._check_atr, row)
         assert b == ["bullish_atr"]
         assert sig == [1]
 
-    def test_neutral_exact_double(self):
-        """close == atr * 2 should be neutral."""
-        row = make_row(adjusted_close=10.0, atr_14=5.0)
+    def test_neutral_moderate_volatility(self):
+        """ATR 2.5% of price → neutral."""
+        row = make_row(adjusted_close=100.0, atr_14=2.5)  # 2.5%
         b, br, sig = run_check(self.s._check_atr, row)
         assert sig == [0]
 
-    def test_always_bearish_for_real_stocks(self):
-        """Demonstrate the bug: multiple real-world price/ATR combos are always bearish."""
-        test_cases = [
-            (150.0, 3.0),   # AAPL-like
-            (500.0, 10.0),  # NVDA-like
-            (50.0, 2.0),    # Mid-cap
-            (20.0, 1.0),    # Small-cap
-        ]
-        for close, atr in test_cases:
+    def test_neutral_at_exact_4_pct(self):
+        """atr_pct == 4% is neutral (strict > required for bearish)."""
+        row = make_row(adjusted_close=100.0, atr_14=4.0)  # exactly 4%
+        b, br, sig = run_check(self.s._check_atr, row)
+        assert sig == [0]
+
+    def test_neutral_at_exact_1_5_pct(self):
+        """atr_pct == 1.5% is neutral (strict < required for bullish)."""
+        row = make_row(adjusted_close=100.0, atr_14=1.5)  # exactly 1.5%
+        b, br, sig = run_check(self.s._check_atr, row)
+        assert sig == [0]
+
+    def test_works_across_price_levels(self):
+        """Same ATR% should produce same signal regardless of absolute price."""
+        # All have 2% ATR → neutral
+        for close, atr in [(20.0, 0.4), (100.0, 2.0), (500.0, 10.0)]:
             row = make_row(adjusted_close=close, atr_14=atr)
             _, _, sig = run_check(self.s._check_atr, row)
-            assert sig == [-1], f"close={close}, atr={atr}: always bearish due to close >> atr*2"
+            assert sig == [0], f"close={close}, atr={atr} (2%): should be neutral"
+
+    def test_zero_close_is_neutral(self):
+        """Edge case: close == 0 should not crash."""
+        row = make_row(adjusted_close=0.0, atr_14=1.0)
+        _, _, sig = run_check(self.s._check_atr, row)
+        assert sig == [0]
 
 
 # ---------------------------------------------------------------------------
@@ -543,11 +548,8 @@ class TestPERatio:
 class TestPCR:
     """Put-call ratio check.
     Bearish: pcr > 0.7 (strict >)
-    Bullish: pcr <= 0.5 (INCLUSIVE — inconsistent with upper bound!)
-    Neutral: 0.5 < pcr <= 0.7
-
-    INCONSISTENCY: Upper bound uses strict >, lower uses <=.
-    pcr == 0.5 → bullish, but pcr == 0.7 → neutral.
+    Bullish: pcr < 0.5 (strict <)
+    Neutral: 0.5 <= pcr <= 0.7
     """
     def setup_method(self):
         self.s = make_screener()
@@ -575,24 +577,22 @@ class TestPCR:
         b, br, sig = run_check(self.s._check_pcr, row)
         assert sig == [0]
 
-    def test_bullish_at_exact_0_5(self):
-        """pcr == 0.5 IS bullish (<= is used — inclusive lower bound).
-        This is INCONSISTENT with the upper bound which uses strict >.
-        """
+    def test_neutral_at_exact_0_5(self):
+        """pcr == 0.5 is neutral (strict < required for bullish)."""
         row = make_row(pcr=0.5)
         b, br, sig = run_check(self.s._check_pcr, row)
-        assert sig == [1], "pcr uses <= 0.5 (inclusive) — exact 0.5 should be bullish"
+        assert sig == [0]
 
     def test_bearish_at_0_71(self):
         row = make_row(pcr=0.71)
         b, br, sig = run_check(self.s._check_pcr, row)
         assert sig == [-1]
 
-    def test_neutral_at_0_51(self):
-        """pcr = 0.51 is in the neutral gap."""
-        row = make_row(pcr=0.51)
+    def test_bullish_at_0_49(self):
+        """pcr = 0.49 should be bullish."""
+        row = make_row(pcr=0.49)
         b, br, sig = run_check(self.s._check_pcr, row)
-        assert sig == [0]
+        assert sig == [1]
 
 
 # ---------------------------------------------------------------------------
@@ -644,33 +644,41 @@ class TestOptionVol:
 
 class TestPriceToBook:
     """Price to book check (NOT CALLED in _check_signals).
-    Computes: adjusted_close / price_to_book_ratio
-    Bullish: result < 0.99
-    Bearish: result > 1.25
-    Neutral: 0.99 <= result <= 1.25
-
-    NOTE: If price_to_book_ratio column is already P/B, then
-    close / (P/B) = close * B / P = B (book value). This would check
-    if book value is < $0.99 or > $1.25, which is nonsensical.
+    Uses price_to_book_ratio directly (P/B = price / book_value).
+    Bullish: P/B < 1.0 and > 0 (trading below book value)
+    Bearish: P/B > 5.0 (richly valued vs assets)
+    Neutral: 1.0 <= P/B <= 5.0 or P/B <= 0
     """
     def setup_method(self):
         self.s = make_screener()
 
-    def test_bullish(self):
-        # adjusted_close=50, price_to_book_ratio=100 → 50/100 = 0.5 < 0.99 → bullish
-        row = make_row(adjusted_close=50.0, price_to_book_ratio=100.0)
+    def test_bullish_below_book(self):
+        """P/B = 0.8 — trading below book value → bullish."""
+        row = make_row(price_to_book_ratio=0.8)
         b, br, sig = run_check(self.s._check_price_to_book, row)
         assert sig == [1]
 
-    def test_bearish(self):
-        # adjusted_close=150, price_to_book_ratio=100 → 150/100 = 1.5 > 1.25 → bearish
-        row = make_row(adjusted_close=150.0, price_to_book_ratio=100.0)
+    def test_bearish_high_pb(self):
+        """P/B = 7.0 — very richly valued → bearish."""
+        row = make_row(price_to_book_ratio=7.0)
         b, br, sig = run_check(self.s._check_price_to_book, row)
         assert sig == [-1]
 
-    def test_neutral(self):
-        # 100/100 = 1.0, between 0.99 and 1.25 → neutral
-        row = make_row(adjusted_close=100.0, price_to_book_ratio=100.0)
+    def test_neutral_moderate(self):
+        """P/B = 3.0 — fairly valued → neutral."""
+        row = make_row(price_to_book_ratio=3.0)
+        b, br, sig = run_check(self.s._check_price_to_book, row)
+        assert sig == [0]
+
+    def test_neutral_at_exact_1(self):
+        """P/B == 1.0 is neutral (strict < required for bullish)."""
+        row = make_row(price_to_book_ratio=1.0)
+        b, br, sig = run_check(self.s._check_price_to_book, row)
+        assert sig == [0]
+
+    def test_neutral_negative_pb(self):
+        """Negative P/B (negative book value) → neutral."""
+        row = make_row(price_to_book_ratio=-2.0)
         b, br, sig = run_check(self.s._check_price_to_book, row)
         assert sig == [0]
 
@@ -680,12 +688,11 @@ class TestPriceToBook:
 # ---------------------------------------------------------------------------
 
 class TestCheckSignals:
-    """_check_signals(symbol_data, selected_date_data) orchestrator.
+    """_check_signals(current_date_data, previous_date_data) orchestrator.
 
-    IMPORTANT naming: despite param names, all _check_* functions receive
-    `selected_date_data` (the 2nd param), which in run_screen() is the
-    PREVIOUS day's data. The first param `symbol_data` is the CURRENT day
-    but is not used by any _check_* functions directly.
+    The first param is the date being analyzed — all _check_* functions
+    receive it. The second param (previous day) is available for future
+    cross-day comparisons but not currently used by individual checks.
 
     When indicators='all', all 10 active checks run, producing a signals
     list of length 10.
@@ -726,10 +733,10 @@ class TestCheckSignals:
             rsi_14=25.0,                        # bullish: < 30
             macd=2.0, macd_9_ema=1.0,           # bullish: macd > ema
             adx_14=30.0,                        # bullish: > 25
-            cci_14=-150.0,                      # bullish: <= -100
-            atr_14=50.0,                        # bullish: 85 < 50*2=100
+            cci_14=-150.0,                      # bullish: < -100
+            atr_14=1.0,                         # bullish: 1/85=1.2% < 1.5%
             pe_ratio=10.0,                      # bullish: < 15 and > 0
-            pcr=0.3,                            # bullish: <= 0.5
+            pcr=0.3,                            # bullish: < 0.5
         )
         b, br, sig = self.s._check_signals(row, row)
         assert all(s == 1 for s in sig), f"Expected all bullish, got {sig}"
@@ -745,8 +752,8 @@ class TestCheckSignals:
             rsi_14=75.0,                        # bearish: > 70
             macd=-1.0, macd_9_ema=0.5,          # bearish: macd < ema
             adx_14=15.0,                        # bearish: < 20
-            cci_14=150.0,                       # bearish: >= 100
-            atr_14=3.0,                         # bearish: 105 > 3*2=6
+            cci_14=150.0,                       # bearish: > 100
+            atr_14=5.0,                         # bearish: 5/105=4.8% > 4%
             pe_ratio=40.0,                      # bearish: > 35
             pcr=0.9,                            # bearish: > 0.7
         )
@@ -789,16 +796,15 @@ class TestDateFinding:
         for d in result:
             assert d <= pd.Timestamp("2026-01-21")
 
-    def test_two_dates_may_include_future(self):
-        """find_nearest_two_dates does NOT exclude future dates.
-        This is a known difference from find_nearest_three_dates.
-        """
+    def test_two_dates_excludes_future(self):
+        """find_nearest_two_dates now filters to <= target (no future leak)."""
         result = self.s.find_nearest_two_dates("2026-01-21")
-        # Uses absolute difference, so Jan 22 (1 day after) and Jan 21 (0 days)
-        # could both appear
         assert len(result) == 2
-        # The nearest two by absolute distance to Jan 21 are Jan 21 and Jan 20 or Jan 22
-        assert pd.Timestamp("2026-01-21") in result
+        # Should be [Jan 21, Jan 20] — no future dates
+        assert result[0] == pd.Timestamp("2026-01-21")
+        assert result[1] == pd.Timestamp("2026-01-20")
+        for d in result:
+            assert d <= pd.Timestamp("2026-01-21")
 
     def test_three_dates_at_start_of_data(self):
         """If target date is at the start, return as many as available."""
@@ -897,26 +903,33 @@ class TestWithSampleData:
             b, br, sig = run_check(self.s._check_rsi, row)
             assert sig[0] in (-1, 0, 1)
 
-    def test_atr_almost_always_bearish_on_real_data(self):
-        """Demonstrate that _check_atr produces bearish for nearly all real rows.
-        This confirms the logic bug described in the analysis.
+    def test_atr_distribution_on_real_data(self):
+        """With fixed ATR% logic, most stocks should be neutral (1.5%-4% ATR).
+        Only high-vol names hit bearish (>4%) and very calm names hit bullish (<1.5%).
         """
         bearish_count = 0
+        bullish_count = 0
+        neutral_count = 0
         total = 0
         for _, row_series in self.df.iterrows():
             if pd.isna(row_series.get("atr_14")) or pd.isna(row_series.get("adjusted_close")):
                 continue
             row = pd.DataFrame([row_series])
-            _, _, sig = run_check(self.s._check_atr, row)
+            bull, bear, sig = run_check(self.s._check_atr, row)
             total += 1
             if sig[0] == -1:
                 bearish_count += 1
+            elif sig[0] == 1:
+                bullish_count += 1
+            else:
+                neutral_count += 1
 
         if total > 0:
+            # With percentage-based ATR, we expect a reasonable distribution
+            # — NOT the old bug where >90% were bearish
             bearish_pct = bearish_count / total
-            # We expect > 95% bearish due to close >> atr*2 for normal stocks
-            assert bearish_pct > 0.90, (
-                f"ATR bug: expected >90% bearish on real data, got {bearish_pct:.1%} "
+            assert bearish_pct < 0.50, (
+                f"ATR: expected <50% bearish with fixed logic, got {bearish_pct:.1%} "
                 f"({bearish_count}/{total})"
             )
 

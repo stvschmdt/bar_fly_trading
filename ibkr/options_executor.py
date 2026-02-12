@@ -106,7 +106,12 @@ def select_option_contract(symbol: str, action: str, stock_price: float,
     otm_spread = _spread(otm_row)
     itm_spread = _spread(itm_row)
 
-    if otm_row is not None and itm_row is not None:
+    if otm_row is None:
+        # No OTM strike available — reject rather than silently opening ITM
+        logger.warning(f"No OTM {option_type} strike for {symbol} (price=${current_price:.2f})")
+        return None, quote, options_df
+
+    if itm_row is not None:
         if itm_spread < otm_spread:
             target = itm_row
             tag = "ITM (tighter spread)"
@@ -117,9 +122,8 @@ def select_option_contract(symbol: str, action: str, stock_price: float,
                     f"OTM ${otm_row['strike']} spread=${otm_spread:.2f}, "
                     f"ITM ${itm_row['strike']} spread=${itm_spread:.2f} → chose {tag}")
     else:
-        target = otm_row if otm_row is not None else itm_row
-        tag = "OTM (only)" if otm_row is not None else "ITM (only)"
-        logger.info(f"  Strike selection: {symbol} → {tag} ${target['strike']}")
+        target = otm_row
+        logger.info(f"  Strike selection: {symbol} → OTM (only) ${target['strike']}")
 
     return target.to_dict(), quote, options_df
 
