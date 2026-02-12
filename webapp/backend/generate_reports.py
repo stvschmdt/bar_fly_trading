@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Generate per-symbol JSON reports using existing bar_fly_trading utilities.
 

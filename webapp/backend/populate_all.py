@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 One-time bulk population of all symbol JSONs from existing CSV data + yfinance.
 

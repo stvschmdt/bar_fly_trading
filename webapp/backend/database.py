@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 SQLite database for BFT auth: users, invite codes, per-user watchlists.
 
