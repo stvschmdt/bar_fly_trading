@@ -1,5 +1,5 @@
 """
-52-Week Low Bounce Strategy (M6) for bar_fly_trading backtest framework.
+52-Week Low Bounce Strategy (M6) for bar_fly_trading.
 
 Pure technical strategy — no ML predictions required.
 Uses 52-week low proximity, RSI, and bull_bear_delta for entries.
@@ -14,7 +14,8 @@ Exit Conditions (SELL):
     - OR early exit: hold >= 3 days AND RSI > 60 (strong recovery)
     - OR early exit: return > 15% (take profit)
 
-Data source: raw CSV data (all_data_*.csv). No predictions needed.
+Data: overnight CSV (merged_predictions or all_data) + live AlphaVantage
+Live API: GLOBAL_QUOTE only (1 call per symbol, or bulk)
 """
 
 import os
@@ -28,7 +29,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from order import Order, StockOrder, OrderOperation
 from base_strategy import BaseStrategy
-from signal_writer import SignalWriter
 
 
 class LowBounceStrategy(BaseStrategy):
@@ -40,16 +40,20 @@ class LowBounceStrategy(BaseStrategy):
     """
 
     STRATEGY_NAME = "low_bounce"
+    REQUIRED_COLUMNS = [
+        'date', 'symbol', 'adjusted_close',
+        'rsi_14', 'bull_bear_delta', '52_week_low',
+    ]
 
     # Entry thresholds
-    LOW_PROXIMITY = 1.10         # within 10% of 52-week low
-    RSI_ENTRY_MAX = 40           # RSI must be < this
-    DELTA_ENTRY_MAX = 0          # bull_bear_delta must be <= this
-    MAX_HOLD_DAYS = 30           # Fixed 30-day hold
-    MIN_HOLD_DAYS = 3            # Must hold at least 3 days
-    RSI_EXIT_THRESHOLD = 60      # Early exit if RSI recovers above this
-    TAKE_PROFIT_PCT = 15.0       # Take profit at 15% return
-    MAX_POSITIONS = 10           # Max concurrent positions
+    LOW_PROXIMITY = 1.10
+    RSI_ENTRY_MAX = 40
+    DELTA_ENTRY_MAX = 0
+    MAX_HOLD_DAYS = 30
+    MIN_HOLD_DAYS = 3
+    RSI_EXIT_THRESHOLD = 60
+    TAKE_PROFIT_PCT = 15.0
+    MAX_POSITIONS = 10
 
     def __init__(self, account, symbols, data=None, data_path=None,
                  position_size=0.1, max_hold_days=30):
@@ -57,77 +61,55 @@ class LowBounceStrategy(BaseStrategy):
         self.position_size = position_size
         self.MAX_HOLD_DAYS = max_hold_days
 
-        self.positions = {}
-        self.trade_log = []
-
-        self.indicator_data = None
         if data is not None:
-            self._load_indicator_data(data)
+            self._load_from_df(data)
         elif data_path:
-            self._load_from_path(data_path)
+            self.load_overnight_data(data_path)
 
-    def _load_from_path(self, data_path):
-        """Load indicator data from CSV path (supports globs)."""
-        import glob as glob_mod
-        if '*' in data_path:
-            files = glob_mod.glob(data_path)
-            if not files:
-                print(f"[{self.STRATEGY_NAME}] Warning: No files matching {data_path}")
-                return
-            dfs = [pd.read_csv(f) for f in files]
-            df = pd.concat(dfs, ignore_index=True)
-        else:
-            df = pd.read_csv(data_path)
-        self._load_indicator_data(df)
-
-    def _load_indicator_data(self, df):
-        """Load and index indicator data for fast lookup."""
-        # Normalize column names
-        if 'ticker' in df.columns and 'symbol' not in df.columns:
-            df = df.rename(columns={'ticker': 'symbol'})
-        if 'close' in df.columns and 'adjusted_close' not in df.columns:
-            df = df.rename(columns={'close': 'adjusted_close'})
-
-        df = df[df['symbol'].isin(self.symbols)].copy()
-        df['date'] = pd.to_datetime(df['date'])
-
-        required = ['date', 'symbol', 'adjusted_close', 'rsi_14', 'bull_bear_delta', '52_week_low']
-        missing = [c for c in required if c not in df.columns]
+    def _load_from_df(self, df):
+        """Load from pre-loaded DataFrame."""
+        df = self._normalize_columns(df.copy())
+        if self.symbols:
+            df = df[df['symbol'].isin(self.symbols)].copy()
+        missing = [c for c in self.REQUIRED_COLUMNS if c not in df.columns]
         if missing:
             print(f"[{self.STRATEGY_NAME}] Warning: Missing columns: {missing}")
             return
-
-        self.indicator_data = df
-        print(f"[{self.STRATEGY_NAME}] Loaded indicator data: {len(df):,} rows, "
+        self.overnight_data = df
+        print(f"[{self.STRATEGY_NAME}] Loaded data: {len(df):,} rows, "
               f"{df['symbol'].nunique()} symbols, "
               f"{df['date'].min().date()} to {df['date'].max().date()}")
 
-    def _get_indicators(self, symbol, date):
-        """Get indicator values for a symbol on a specific date."""
-        if self.indicator_data is None:
-            return None
+    # ------------------------------------------------------------------ #
+    #  REALTIME API
+    # ------------------------------------------------------------------ #
 
-        date_ts = pd.to_datetime(date)
-        mask = (self.indicator_data['symbol'] == symbol) & (self.indicator_data['date'] == date_ts)
-        rows = self.indicator_data[mask]
+    def fetch_realtime(self, symbol):
+        """Fetch live quote from AlphaVantage (1 API call)."""
+        from api_data.rt_utils import get_realtime_quote
+        quote = get_realtime_quote(symbol)
+        return pd.DataFrame([{
+            'symbol': quote['symbol'],
+            'adjusted_close': quote['price'],
+            'date': pd.to_datetime(quote['latest_trading_day']),
+        }])
 
-        if len(rows) == 0:
-            return None
-        return rows.iloc[0]
+    # ------------------------------------------------------------------ #
+    #  ENTRY / EXIT LOGIC
+    # ------------------------------------------------------------------ #
 
-    def _check_entry(self, indicators):
-        """Check if entry conditions are met (all three required)."""
-        if indicators is None:
+    def check_entry(self, row):
+        """Close < 52w_low * 1.10 AND RSI < 40 AND delta <= 0."""
+        if row is None:
             return False
 
-        close = indicators['adjusted_close']
-        low_52w = indicators.get('52_week_low', None)
-        rsi = indicators.get('rsi_14', None)
-        delta = indicators.get('bull_bear_delta', None)
+        close = row.get('adjusted_close')
+        low_52w = row.get('52_week_low', None)
+        rsi = row.get('rsi_14', None)
+        delta = row.get('bull_bear_delta', None)
 
         if pd.isna(low_52w) or pd.isna(rsi) or pd.isna(delta):
             return False
-
         if low_52w <= 0:
             return False
 
@@ -135,33 +117,51 @@ class LowBounceStrategy(BaseStrategy):
                 rsi < self.RSI_ENTRY_MAX and
                 delta <= self.DELTA_ENTRY_MAX)
 
-    def _check_exit(self, indicators, hold_days, entry_price, current_price):
-        """Check if exit conditions are met."""
+    def check_exit(self, row, hold_days, entry_price=None):
+        """Exit: max hold 30d OR RSI > 60 OR take profit 15%."""
         if hold_days < self.MIN_HOLD_DAYS:
             return False, ""
-
-        # Max hold reached
         if hold_days >= self.MAX_HOLD_DAYS:
             return True, f"max hold {self.MAX_HOLD_DAYS}d"
 
         # Take profit
-        if entry_price > 0:
-            pct_return = (current_price - entry_price) / entry_price * 100
-            if pct_return >= self.TAKE_PROFIT_PCT:
-                return True, f"take profit ({pct_return:.1f}%)"
+        if entry_price and entry_price > 0 and row is not None:
+            current_price = row.get('adjusted_close', 0)
+            if current_price > 0:
+                pct_return = (current_price - entry_price) / entry_price * 100
+                if pct_return >= self.TAKE_PROFIT_PCT:
+                    return True, f"take profit ({pct_return:.1f}%)"
 
-        if indicators is None:
+        if row is None:
             return False, ""
 
-        # Early exit: RSI strong recovery
-        rsi = indicators.get('rsi_14', None)
+        rsi = row.get('rsi_14', None) if hasattr(row, 'get') else None
         if pd.notna(rsi) and rsi > self.RSI_EXIT_THRESHOLD:
             return True, f"RSI recovered ({rsi:.1f})"
 
         return False, ""
 
+    def entry_reason(self, row):
+        """Generate entry reason string."""
+        low_52w = row.get('52_week_low', None)
+        rsi = row.get('rsi_14', None)
+        delta = row.get('bull_bear_delta', None)
+        parts = []
+        if pd.notna(low_52w):
+            parts.append(f"near 52w low (${low_52w:.2f})")
+        if pd.notna(rsi):
+            parts.append(f"RSI={rsi:.1f}")
+        if pd.notna(delta):
+            parts.append(f"delta={delta:.0f}")
+        return ", ".join(parts)
+
+    # ------------------------------------------------------------------ #
+    #  BACKTEST INTERFACE
+    # ------------------------------------------------------------------ #
+
     def evaluate(self, date: datetime.date, current_prices: pd.DataFrame,
                  options_data: pd.DataFrame) -> list[Order]:
+        """Evaluate trading signals for a single backtest day."""
         orders = []
         date_str = date.strftime('%Y-%m-%d') if hasattr(date, 'strftime') else str(date)[:10]
         current_date = pd.to_datetime(date)
@@ -173,7 +173,7 @@ class LowBounceStrategy(BaseStrategy):
                 continue
             current_price = float(price_row['open'].iloc[0])
 
-            indicators = self._get_indicators(symbol, date)
+            indicators = self.get_indicators(symbol, date)
             has_position = symbol in self.positions and self.positions[symbol]['shares'] > 0
 
             if has_position:
@@ -181,7 +181,15 @@ class LowBounceStrategy(BaseStrategy):
                 entry_price = self.positions[symbol]['entry_price']
                 hold_days = (current_date - entry_date).days
 
-                should_exit, exit_reason = self._check_exit(indicators, hold_days, entry_price, current_price)
+                should_exit, exit_reason = self.check_exit(
+                    indicators, hold_days, entry_price)
+                # Also check take profit using current_price directly
+                if not should_exit and hold_days >= self.MIN_HOLD_DAYS and entry_price > 0:
+                    pct_return = (current_price - entry_price) / entry_price * 100
+                    if pct_return >= self.TAKE_PROFIT_PCT:
+                        should_exit = True
+                        exit_reason = f"take profit ({pct_return:.1f}%)"
+
                 if should_exit:
                     shares = self.positions[symbol]['shares']
                     pct_return = (current_price - entry_price) / entry_price * 100
@@ -206,11 +214,10 @@ class LowBounceStrategy(BaseStrategy):
                     del self.positions[symbol]
 
             else:
-                # Check entry conditions + position limits
                 if len(self.positions) >= self.MAX_POSITIONS:
                     continue
 
-                if self._check_entry(indicators):
+                if self.check_entry(indicators) if indicators is not None else False:
                     available_cash = self.account.account_values.cash_balance - cash_committed
                     shares = int(available_cash * self.position_size // current_price)
                     order_cost = shares * current_price
@@ -225,83 +232,10 @@ class LowBounceStrategy(BaseStrategy):
                             'entry_price': current_price,
                         }
 
-                        rsi_val = indicators.get('rsi_14', None) if indicators is not None else None
-                        delta_val = indicators.get('bull_bear_delta', None) if indicators is not None else None
+                        rsi_val = indicators.get('rsi_14', None)
+                        delta_val = indicators.get('bull_bear_delta', None)
                         rsi_str = f", RSI={rsi_val:.1f}" if pd.notna(rsi_val) else ""
                         delta_str = f", delta={delta_val:.0f}" if pd.notna(delta_val) else ""
                         print(f"  ENTRY {symbol}: near 52w low{rsi_str}{delta_str}")
 
         return orders
-
-    def get_open_positions(self):
-        """Return current open positions."""
-        return self.positions.copy()
-
-    def run_signals(self, current_prices, trade_date=None, output_path=None):
-        """
-        One-shot signal evaluation. Checks for 52-week low bounce conditions
-        in the loaded indicator_data for the most recent date.
-
-        Args:
-            current_prices: DataFrame with [symbol, open] at minimum
-            trade_date: Date to evaluate (defaults to today)
-            output_path: Where to write signal CSV (None = print only)
-
-        Returns:
-            list of signal dicts (may be empty)
-        """
-        from datetime import datetime as dt
-        trade_date = trade_date or dt.now()
-        date_str = (trade_date.strftime('%Y-%m-%d')
-                    if hasattr(trade_date, 'strftime') else str(trade_date)[:10])
-
-        writer = SignalWriter(output_path) if output_path else None
-        signals = []
-
-        if self.indicator_data is None:
-            print(f"[{self.STRATEGY_NAME}] No indicator data loaded")
-            return signals
-
-        for symbol in self.symbols:
-            sym_data = self.indicator_data[
-                self.indicator_data['symbol'] == symbol
-            ].sort_values('date')
-
-            if len(sym_data) == 0:
-                continue
-
-            latest = sym_data.iloc[-1]
-
-            close = latest['adjusted_close']
-            low_52w = latest.get('52_week_low', None)
-            rsi = latest.get('rsi_14', None)
-            delta = latest.get('bull_bear_delta', None)
-
-            if pd.isna(low_52w) or pd.isna(rsi) or pd.isna(delta):
-                continue
-
-            if low_52w <= 0:
-                continue
-
-            if close < low_52w * self.LOW_PROXIMITY and rsi < self.RSI_ENTRY_MAX and delta <= self.DELTA_ENTRY_MAX:
-                reason = f"near 52w low (${low_52w:.2f}), RSI={rsi:.1f}, delta={delta:.0f}"
-
-                price_row = current_prices[current_prices['symbol'] == symbol]
-                current_price = float(price_row['open'].iloc[0]) if len(price_row) > 0 else close
-
-                sig = {'action': 'BUY', 'symbol': symbol, 'shares': 0,
-                       'price': current_price, 'reason': reason}
-                signals.append(sig)
-
-                if writer:
-                    writer.add('BUY', symbol, shares=0, price=current_price,
-                               strategy=self.STRATEGY_NAME, reason=reason)
-
-                print(f"  SIGNAL BUY {symbol} @ ${current_price:.2f}: {reason}")
-
-        if writer and signals:
-            writer.save()
-        elif not signals:
-            print(f"[{self.STRATEGY_NAME}] {date_str}: No signals (hold/do nothing)")
-
-        return signals
