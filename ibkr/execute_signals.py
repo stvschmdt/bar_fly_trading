@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+from __future__ import annotations
+
 """
 Execute trade signals from a CSV file via IBKR.
 

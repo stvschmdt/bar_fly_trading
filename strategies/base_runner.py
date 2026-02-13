@@ -36,6 +36,7 @@ from signal_writer import SignalWriter
 from ibkr.notifier import TradeNotifier
 from portfolio import (
     load_data as portfolio_load_data,
+    load_data_recent as portfolio_load_data_recent,
     load_watchlist,
     apply_watchlist,
     run_pipeline as portfolio_pipeline,
@@ -526,8 +527,9 @@ class BaseRunner:
         overnight_data = None
         data_path = args.predictions or args.data_path
         if data_path:
-            overnight_data = portfolio_load_data(data_path)
-            print(f"  Loaded overnight data: {len(overnight_data):,} rows")
+            n_tail = max(args.lookback_days + 3, 5)
+            overnight_data = portfolio_load_data_recent(data_path, n_rows=n_tail)
+            print(f"  Loaded overnight data: {len(overnight_data):,} rows (slim: last {n_tail}/symbol)")
 
             # HARD CHECK: live mode requires today's data — refuse stale CSV
             if 'date' in overnight_data.columns:
@@ -722,8 +724,13 @@ class BaseRunner:
         data = None
         data_source = args.predictions or args.data_path
         if data_source:
-            data = portfolio_load_data(data_source)
-            print(f"Loaded {len(data):,} rows from {data_source}")
+            if args.mode == "live":
+                n_tail = max(args.lookback_days + 3, 5)
+                data = portfolio_load_data_recent(data_source, n_rows=n_tail)
+                print(f"Loaded {len(data):,} rows from {data_source} (slim: last {n_tail}/symbol)")
+            else:
+                data = portfolio_load_data(data_source)
+                print(f"Loaded {len(data):,} rows from {data_source}")
 
         # Resolve symbols
         symbols = cls.resolve_symbols(args, data)

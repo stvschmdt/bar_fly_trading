@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Exit monitor for live IBKR positions.
 

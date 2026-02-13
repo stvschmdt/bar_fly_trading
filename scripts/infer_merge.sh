@@ -36,6 +36,7 @@ SECTOR_PATH="./sector_embeddings.csv"
 INFER_START="2025-07-01"
 BATCH_SIZE=64
 WORKERS=0
+D_MODEL=128          # Default; inference auto-detects from checkpoint
 MODEL_DIR="stockformer/output/models"
 PRED_DIR="stockformer/output/predictions"
 
@@ -91,6 +92,7 @@ for LABEL_MODE in regression binary buckets; do
                 --infer-start-date $INFER_START \
                 --batch-size $BATCH_SIZE \
                 --num-workers $WORKERS \
+                --d-model $D_MODEL \
                 $EMBEDDING_ARGS \
                 $BUCKET_ARGS \
                 --horizon $H \

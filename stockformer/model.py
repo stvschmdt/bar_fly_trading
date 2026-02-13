@@ -216,6 +216,75 @@ class StockTransformer(nn.Module):
 
 
 # =============================================================================
+# Architecture Auto-Detection from Checkpoint
+# =============================================================================
+
+def infer_arch_from_state_dict(state_dict, model_path=None):
+    """
+    Infer model architecture hyperparameters from a saved state_dict.
+
+    This allows inference to automatically match the architecture used during
+    training, regardless of what the current config defaults are.
+
+    Args:
+        state_dict: Model state dict loaded from a .pt checkpoint
+        model_path: Optional path to the .pt file; used to find .meta sidecar
+
+    Returns:
+        dict with keys: d_model, num_layers, dim_feedforward, nhead, num_buckets
+    """
+    arch = {}
+
+    # d_model: from input_proj (Linear(feature_dim, d_model) -> weight is [d_model, feature_dim])
+    if "input_proj.weight" in state_dict:
+        arch["d_model"] = state_dict["input_proj.weight"].shape[0]
+
+    # num_layers: count unique encoder.layers.N prefixes
+    layer_indices = set()
+    for key in state_dict:
+        if key.startswith("encoder.layers."):
+            idx = int(key.split(".")[2])
+            layer_indices.add(idx)
+    if layer_indices:
+        arch["num_layers"] = max(layer_indices) + 1
+
+    # dim_feedforward: from encoder.layers.0.linear1 (Linear(d_model, dim_ff) -> weight is [dim_ff, d_model])
+    if "encoder.layers.0.linear1.weight" in state_dict:
+        arch["dim_feedforward"] = state_dict["encoder.layers.0.linear1.weight"].shape[0]
+
+    # nhead: read from .meta sidecar if available (exact value saved during training)
+    nhead_from_meta = None
+    if model_path:
+        meta_path = str(model_path) + ".meta"
+        try:
+            import json as _json
+            with open(meta_path) as mf:
+                meta = _json.load(mf)
+            if "nhead" in meta:
+                nhead_from_meta = meta["nhead"]
+        except (FileNotFoundError, ValueError, KeyError):
+            pass
+
+    if nhead_from_meta is not None:
+        arch["nhead"] = nhead_from_meta
+    elif "d_model" in arch:
+        # Fallback heuristic for legacy checkpoints without .meta
+        # nhead is not directly inferable from weight shapes in nn.MultiheadAttention,
+        # so we pick the largest common divisor from likely training values
+        d = arch["d_model"]
+        for candidate in [4, 8, 2, 1]:
+            if d % candidate == 0:
+                arch["nhead"] = candidate
+                break
+
+    # num_buckets: from bucket_head final linear layer
+    if "bucket_head.3.weight" in state_dict:
+        arch["num_buckets"] = state_dict["bucket_head.3.weight"].shape[0]
+
+    return arch
+
+
+# =============================================================================
 # Model Creation Helper
 # =============================================================================
 
@@ -244,7 +313,8 @@ def create_model(feature_dim, label_mode, bucket_edges, cfg, model_type="encoder
         if not bucket_edges:
             raise ValueError("bucket_edges must be provided for 'buckets' label_mode.")
         output_mode = "buckets"
-        num_buckets = len(bucket_edges) + 1
+        # Use checkpoint-detected bucket count if available (inference auto-detection)
+        num_buckets = cfg.get("_num_buckets_override", len(bucket_edges) + 1)
     else:
         raise ValueError(f"Unknown label_mode: {label_mode}")
 

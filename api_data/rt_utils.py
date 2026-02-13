@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Real-Time Quote, Options, News/Sentiment & LLM Summary Utilities
 
@@ -688,18 +690,21 @@ def get_technical_data(symbol: str, data_path: str) -> dict | None:
     return result
 
 
-def summarize_technical_with_llm(symbol: str, tech_data: dict, model: str = 'llama3.1:8b') -> dict:
+def summarize_technical_with_llm(symbol: str, tech_data: dict, model: str = None) -> dict:
     """
     Use local ollama LLM to generate a 3-bullet technical outlook.
 
     Args:
         symbol: Stock ticker symbol
         tech_data: Dict from get_technical_data()
-        model: Ollama model name
+        model: Ollama model name (default: BFT_OLLAMA_MODEL env var or 'llama3.2:3b')
 
     Returns:
         Dict with 'bullets' (list[str], max 3, each under 150 chars)
     """
+    if model is None:
+        model = os.environ.get('BFT_OLLAMA_MODEL', 'llama3.2:3b')
+
     try:
         import ollama
     except ImportError:
@@ -762,7 +767,7 @@ Format:
 
 
 def summarize_90day_with_llm(symbol: str, tech_data: dict, news_data: list[dict],
-                              model: str = 'llama3.1:8b') -> dict:
+                              model: str = None) -> dict:
     """
     Use local ollama LLM to generate a 3-bullet 90-day forward outlook.
 
@@ -773,11 +778,14 @@ def summarize_90day_with_llm(symbol: str, tech_data: dict, news_data: list[dict]
         symbol: Stock ticker symbol
         tech_data: Dict from get_technical_data()
         news_data: List of article dicts from get_news_sentiment()
-        model: Ollama model name
+        model: Ollama model name (default: BFT_OLLAMA_MODEL env var or 'llama3.2:3b')
 
     Returns:
         Dict with 'bullets' (list[str], max 3, each under 150 chars)
     """
+    if model is None:
+        model = os.environ.get('BFT_OLLAMA_MODEL', 'llama3.2:3b')
+
     try:
         import ollama
     except ImportError:
@@ -851,7 +859,7 @@ Format:
     return {'bullets': bullets[:3]}
 
 
-def summarize_with_llm(symbol: str, news_data: list[dict], earnings_data: dict, model: str = 'llama3.1:8b') -> dict:
+def summarize_with_llm(symbol: str, news_data: list[dict], earnings_data: dict, model: str = None) -> dict:
     """
     Use local ollama LLM to summarize earnings + news into a condensed output.
 
@@ -861,11 +869,14 @@ def summarize_with_llm(symbol: str, news_data: list[dict], earnings_data: dict, 
         symbol: Stock ticker symbol
         news_data: List of article dicts from get_news_sentiment()
         earnings_data: Dict from get_earnings_overview()
-        model: Ollama model name (default: llama3.1:8b)
+        model: Ollama model name (default: BFT_OLLAMA_MODEL env var or 'llama3.2:3b')
 
     Returns:
         Dict with 'summary' (str) and 'bullets' (list[str])
     """
+    if model is None:
+        model = os.environ.get('BFT_OLLAMA_MODEL', 'llama3.2:3b')
+
     try:
         import ollama
     except ImportError:
@@ -990,18 +1001,21 @@ def _build_earnings_context(symbol: str, earnings_data: dict) -> str:
     return ctx
 
 
-def summarize_earnings_with_llm(symbol: str, earnings_data: dict, model: str = 'llama3.1:8b') -> dict:
+def summarize_earnings_with_llm(symbol: str, earnings_data: dict, model: str = None) -> dict:
     """
     Use local ollama LLM to summarize earnings and significant figures only (no news).
 
     Args:
         symbol: Stock ticker symbol
         earnings_data: Dict from get_earnings_overview()
-        model: Ollama model name (default: llama3.1:8b)
+        model: Ollama model name (default: BFT_OLLAMA_MODEL env var or 'llama3.2:3b')
 
     Returns:
         Dict with 'summary' (str) and 'bullets' (list[str])
     """
+    if model is None:
+        model = os.environ.get('BFT_OLLAMA_MODEL', 'llama3.2:3b')
+
     try:
         import ollama
     except ImportError:
@@ -1126,7 +1140,7 @@ def get_sector_etf(symbol: str, data_path: str = None) -> dict:
 
 
 def summarize_sector_with_llm(sector: str, etf: str, articles: list[dict],
-                               model: str = 'llama3.1:8b') -> dict:
+                               model: str = None) -> dict:
     """
     Use local ollama LLM to generate a sector synopsis (<=500 chars).
 
@@ -1134,11 +1148,14 @@ def summarize_sector_with_llm(sector: str, etf: str, articles: list[dict],
         sector: Sector name (e.g. "CONSUMER CYCLICAL")
         etf: Sector ETF symbol (e.g. "XLY")
         articles: News articles from get_news_sentiment(etf)
-        model: Ollama model name
+        model: Ollama model name (default: BFT_OLLAMA_MODEL env var or 'llama3.2:3b')
 
     Returns:
         Dict with 'synopsis' (str, <=500 chars) and 'etf' (str)
     """
+    if model is None:
+        model = os.environ.get('BFT_OLLAMA_MODEL', 'llama3.2:3b')
+
     try:
         import ollama
     except ImportError:

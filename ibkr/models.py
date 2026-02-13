@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Data models for IBKR trading module.
 

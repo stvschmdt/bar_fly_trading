@@ -26,7 +26,8 @@
 
 set -e
 
-cd ~/proj/bar_fly_trading
+REPO_DIR="${REPO_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+cd "$REPO_DIR"
 
 # ── Config ──────────────────────────────────────────────────────────
 INTERVAL_MIN=15
@@ -48,7 +49,7 @@ OPTIONS=""             # --options: execute as options (call for BUY, put for SE
 
 # Data sources
 PREDICTIONS="${PREDICTIONS:-merged_predictions.csv}"
-DATA_DIR="${DATA_DIR:-/home/stvschmdt/data}"
+DATA_DIR="${DATA_DIR:-$REPO_DIR}"
 DATA_PATH="$DATA_DIR/all_data_*.csv"
 
 # Default: 4 active strategies (regression_momentum disabled — missing 10d model, 0 trades)
@@ -155,7 +156,7 @@ get_runner_cmd() {
             echo "python strategies/run_oversold_bounce.py --data-path '$DATA_PATH' --watchlist api_data/watchlist.csv --watchlist-mode filter --mode live --skip-live --lookback-days 1 --summary-only $NO_NOTIFY --instrument-type option --output-signals $output"
             ;;
         oversold_reversal)
-            echo "python strategies/run_oversold_reversal.py --predictions $PREDICTIONS --watchlist api_data/watchlist.csv --watchlist-mode filter --mode live --skip-live --lookback-days 1 --summary-only $NO_NOTIFY --output-signals $output"
+            echo "python strategies/run_oversold_reversal.py --data-path '$DATA_PATH' --watchlist api_data/watchlist.csv --watchlist-mode filter --mode live --skip-live --lookback-days 1 --summary-only $NO_NOTIFY --output-signals $output"
             ;;
         low_bounce)
             echo "python strategies/run_low_bounce.py --data-path '$DATA_PATH' --watchlist api_data/watchlist.csv --watchlist-mode filter --mode live --skip-live --lookback-days 1 --summary-only $NO_NOTIFY --output-signals $output"

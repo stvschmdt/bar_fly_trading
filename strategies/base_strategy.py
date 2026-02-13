@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Base strategy class for bar_fly_trading.
 

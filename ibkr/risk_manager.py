@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Risk management and pre-trade validation for IBKR trading.
 

@@ -23,3 +23,11 @@ training_log_reg_*_config.json
 
 # Scripts logs
 scripts/*.log
+
+# Webapp generated data (populated from CSVs at runtime)
+webapp/data/*.json
+webapp/data/
+
+# Webapp frontend build output
+webapp/frontend/dist/
+webapp/frontend/node_modules/
