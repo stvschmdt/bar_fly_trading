@@ -106,7 +106,31 @@ def update_quotes():
 
     logger.info(f"Got quotes for {len(quotes)}/{len(all_symbols)} symbols")
 
+    # IBKR fallback for missing symbols
+    missing = all_symbols - set(quotes.keys())
+    if missing:
+        logger.info(f"{len(missing)} symbols missing from AV — trying IBKR fallback...")
+        try:
+            from ibkr.connection import IBKRConnection
+            ib = IBKRConnection(port=4002)  # paper/delayed port
+            if ib.connect():
+                ibkr_prices = ib.get_current_prices(missing)
+                for sym, price in ibkr_prices.items():
+                    if price and price > 0:
+                        quotes[sym] = {
+                            "price": round(price, 2),
+                            "change_pct": 0.0,
+                            "volume": 0,
+                        }
+                ib.disconnect()
+                logger.info(f"IBKR fallback filled {len(ibkr_prices)} of {len(missing)} missing symbols")
+            else:
+                logger.warning("IBKR Gateway not reachable — skipping fallback")
+        except Exception as e:
+            logger.warning(f"IBKR fallback failed: {e}")
+
     # Update sector files
+    now = datetime.now().isoformat(timespec="seconds")
     for etf, syms in sector_symbols.items():
         sector_file = DATA_DIR / f"sector_{etf}.json"
         with open(sector_file) as f:
@@ -119,6 +143,7 @@ def update_quotes():
                 stock["price"] = quotes[sym]["price"]
                 stock["change_pct"] = quotes[sym]["change_pct"]
                 stock["volume"] = quotes[sym].get("volume", 0)
+                stock["last_updated"] = now
                 changes.append(quotes[sym]["change_pct"])
 
         sd["change_pct"] = round(sum(changes) / len(changes), 2) if changes else 0.0
@@ -147,7 +172,6 @@ def update_quotes():
 
     # Patch quote section in each symbol JSON
     patched = 0
-    now = datetime.now().isoformat(timespec="seconds")
     for sym, q in quotes.items():
         sym_file = DATA_DIR / f"{sym}.json"
         if not sym_file.exists():

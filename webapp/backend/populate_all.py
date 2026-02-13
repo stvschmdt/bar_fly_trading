@@ -232,6 +232,7 @@ def _update_sector_prices(latest: pd.DataFrame, quotes: dict):
         with open(sf) as f:
             sd = json.load(f)
 
+        now = datetime.now().isoformat(timespec="seconds")
         changes = []
         for stock in sd["stocks"]:
             sym = stock["symbol"]
@@ -239,11 +240,13 @@ def _update_sector_prices(latest: pd.DataFrame, quotes: dict):
                 stock["price"] = quotes[sym]["price"]
                 stock["change_pct"] = quotes[sym]["change_pct"]
                 stock["volume"] = quotes[sym].get("volume", 0)
+                stock["last_updated"] = now
             else:
                 row = latest[latest["symbol"] == sym]
                 if not row.empty:
                     r = row.iloc[0]
                     stock["price"] = round(float(r.get("adjusted_close", 0) or 0), 2)
+                    stock["last_updated"] = now
             changes.append(stock.get("change_pct", 0))
 
         sd["change_pct"] = round(sum(changes) / len(changes), 2) if changes else 0

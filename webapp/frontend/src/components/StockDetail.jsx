@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { getSymbol, getSector } from '../api/client'
 import StockChart from './StockChart'
+import { isStale } from '../utils/freshness'
 
 function changeColor(pct) {
   if (pct > 0) return 'text-green-600 dark:text-green-400'
@@ -65,7 +66,7 @@ export default function StockDetail() {
           <h1 className="text-xl font-bold">
             {symbol.toUpperCase()}
             {stockInfo && (
-              <span className={`ml-3 text-lg ${changeColor(stockInfo.change_pct)}`}>
+              <span className={`ml-3 text-lg ${isStale(stockInfo.last_updated) ? 'text-gray-400 dark:text-gray-500' : changeColor(stockInfo.change_pct)}`}>
                 ${stockInfo.price}
                 <span className="ml-2 text-sm">
                   {stockInfo.change_pct > 0 ? '+' : ''}{stockInfo.change_pct.toFixed(2)}%
@@ -73,6 +74,9 @@ export default function StockDetail() {
               </span>
             )}
           </h1>
+          {stockInfo && isStale(stockInfo.last_updated) && (
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Data may be outdated</p>
+          )}
         </div>
         <button
           onClick={() => setFlipped(!flipped)}

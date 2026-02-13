@@ -104,6 +104,7 @@ export default function StockGrid() {
             price={stock.price}
             change_pct={stock.change_pct}
             sectorId={sectorId}
+            last_updated={stock.last_updated}
           />
         ))}
       </div>

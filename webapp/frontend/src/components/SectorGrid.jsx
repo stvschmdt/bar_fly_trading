@@ -3,6 +3,7 @@ import { getSectors, getSignals, getWatchlist } from '../api/client'
 import SectorCard from './SectorCard'
 import WatchlistCard from './WatchlistCard'
 import SignalsBanner from './SignalsBanner'
+import { isStale } from '../utils/freshness'
 
 export default function SectorGrid() {
   const [data, setData] = useState(null)
@@ -82,8 +83,9 @@ export default function SectorGrid() {
 
       {/* Footer info */}
       {data.last_updated && (
-        <p className="text-center text-xs text-gray-400 dark:text-gray-500">
+        <p className={`text-center text-xs ${isStale(data.last_updated) ? 'text-amber-500 dark:text-amber-400' : 'text-gray-400 dark:text-gray-500'}`}>
           Last updated: {new Date(data.last_updated).toLocaleString()}
+          {isStale(data.last_updated) && ' — data may be stale'}
         </p>
       )}
     </div>

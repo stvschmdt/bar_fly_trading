@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { getBigBoard } from '../api/client'
 import SECTOR_COLORS from '../constants/sectorColors'
+import { isStale } from '../utils/freshness'
 
-function changeBg(pct) {
+function changeBg(pct, stale) {
+  if (stale) return 'rgba(156, 163, 175, 0.18)'
   if (pct > 0) {
     const intensity = Math.min(pct / 4, 1)
     return `rgba(34, 197, 94, ${0.15 + intensity * 0.55})`
@@ -15,7 +17,8 @@ function changeBg(pct) {
   return 'rgba(156, 163, 175, 0.15)'
 }
 
-function changeText(pct) {
+function changeText(pct, stale) {
+  if (stale) return 'text-gray-400 dark:text-gray-500'
   if (pct > 0) return 'text-green-700 dark:text-green-300'
   if (pct < 0) return 'text-red-700 dark:text-red-300'
   return 'text-gray-500 dark:text-gray-400'
@@ -51,20 +54,21 @@ export default function BigBoard() {
       <div className="grid grid-cols-7 md:grid-cols-10 lg:grid-cols-14 gap-1">
         {stocks.map((s) => {
           const sector = SECTOR_COLORS[s.sector_id] || { color: '#6b7280' }
+          const stale = isStale(s.last_updated)
           return (
             <Link
               key={s.symbol}
               to={`/sector/${s.sector_id}/${s.symbol}`}
               className="block rounded text-center px-1 py-2 hover:opacity-80 transition-opacity"
               style={{
-                backgroundColor: changeBg(s.change_pct),
-                border: `2px solid ${sector.color}`,
+                backgroundColor: changeBg(s.change_pct, stale),
+                border: `2px solid ${stale ? '#9ca3af' : sector.color}`,
               }}
             >
-              <div className="text-[11px] font-semibold truncate dark:text-gray-100">
+              <div className={`text-[11px] font-semibold truncate ${stale ? 'text-gray-400 dark:text-gray-500' : 'dark:text-gray-100'}`}>
                 {s.symbol}
               </div>
-              <div className={`text-[10px] font-mono ${changeText(s.change_pct)}`}>
+              <div className={`text-[10px] font-mono ${changeText(s.change_pct, stale)}`}>
                 {s.change_pct > 0 ? '+' : ''}
                 {s.change_pct.toFixed(1)}%
               </div>
