@@ -6,7 +6,7 @@ const THEME_ICONS = { light: 'L', dark: 'D', system: 'A' }
 const THEME_CYCLE = ['system', 'light', 'dark']
 
 const NAV_ITEMS = [
-  { to: '/home', label: 'Home' },
+  { to: '/', label: 'Home' },
   { to: '/bigboard', label: 'The Big Board' },
   { to: '/about', label: 'About' },
   { to: '/contact', label: 'Contact' },
@@ -36,7 +36,7 @@ export default function Header({ lastUpdated }) {
           </a>
           <nav className="hidden md:flex items-center gap-4">
             {NAV_ITEMS.map((item) => (
-              <NavLink key={item.to} to={item.to} className={navClass}>
+              <NavLink key={item.to} to={item.to} end={item.to === '/'} className={navClass}>
                 {item.label}
               </NavLink>
             ))}

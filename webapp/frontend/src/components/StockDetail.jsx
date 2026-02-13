@@ -31,7 +31,7 @@ export default function StockDetail() {
   const { sectorId, symbol } = useParams()
   const [report, setReport] = useState(null)
   const [stockInfo, setStockInfo] = useState(null)
-  const [flipped, setFlipped] = useState(false)
+  const [activePanel, setActivePanel] = useState('technical')
   const [error, setError] = useState(null)
   const { has, toggle } = useWorkbench()
   const inBench = has(symbol.toUpperCase())
@@ -91,12 +91,6 @@ export default function StockDetail() {
         >
           {inBench ? 'In Workbench' : '+ Workbench'}
         </button>
-        <button
-          onClick={() => setFlipped(!flipped)}
-          className="px-3 py-1.5 text-xs rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-        >
-          {flipped ? 'Technical' : 'News'}
-        </button>
       </div>
 
       {/* Price chart */}
@@ -104,108 +98,180 @@ export default function StockDetail() {
         <StockChart symbol={symbol} />
       </div>
 
-      {/* Card with flip */}
-      <div className="perspective">
-        <div className={`relative preserve-3d transition-transform duration-500 ${flipped ? 'rotate-y-180' : ''}`}
-          style={{ minHeight: '400px' }}>
+      {/* Three panels side by side */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 
-          {/* Front: Technical */}
-          <div className="absolute inset-0 backface-hidden">
-            <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-6 space-y-4">
-              <h2 className="font-semibold text-base border-b border-gray-200 dark:border-gray-700 pb-2">
-                BFT Technical Outlook
-                {report?.report_date && (
-                  <span className="ml-2 text-xs text-gray-400 font-normal">as of {report.report_date}</span>
-                )}
-              </h2>
+        {/* Technical panel */}
+        <div
+          onClick={() => setActivePanel('technical')}
+          className={`bg-white dark:bg-gray-900 border-2 rounded-xl p-5 space-y-3 cursor-pointer transition-colors ${
+            activePanel === 'technical'
+              ? 'border-blue-500 dark:border-blue-400'
+              : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+          }`}
+        >
+          <h2 className={`font-semibold text-sm pb-2 border-b ${
+            activePanel === 'technical'
+              ? 'text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800'
+              : 'border-gray-200 dark:border-gray-700'
+          }`}>
+            Technical
+            {report?.report_date && (
+              <span className="ml-1 text-xs text-gray-400 font-normal">{report.report_date}</span>
+            )}
+          </h2>
 
-              {error && <p className="text-gray-400 text-sm">No report available. Run generate_reports.py.</p>}
+          {error && <p className="text-gray-400 text-xs">No report available.</p>}
 
-              {tech && (
-                <div className="space-y-0">
-                  <Indicator label="RSI (14)" value={tech.rsi} bullish={tech.rsi < 30} bearish={tech.rsi > 70} />
-                  <Indicator label="MACD" value={tech.macd} bullish={tech.macd > tech.macd_signal} bearish={tech.macd < tech.macd_signal} />
-                  <Indicator label="MACD Signal" value={tech.macd_signal} />
-                  <Indicator label="ADX" value={tech.adx} bullish={tech.adx > 25} bearish={tech.adx < 20} />
-                  <Indicator label="CCI (14)" value={tech.cci} bullish={tech.cci < -100} bearish={tech.cci > 100} />
-                  <Indicator label="ATR (14)" value={tech.atr} />
-                  <Indicator label="SMA 20" value={tech.sma_20} />
-                  <Indicator label="SMA 50" value={tech.sma_50} bullish={tech.sma_20 > tech.sma_50} bearish={tech.sma_20 < tech.sma_50} />
-                  <Indicator label="BB Upper" value={tech.bbands_upper} />
-                  <Indicator label="BB Lower" value={tech.bbands_lower} />
-                  <Indicator label="P/E Ratio" value={tech.pe_ratio} bullish={tech.pe_ratio > 0 && tech.pe_ratio < 15} bearish={tech.pe_ratio > 35} />
+          {tech && (
+            <div className="space-y-0">
+              <Indicator label="RSI (14)" value={tech.rsi} bullish={tech.rsi < 30} bearish={tech.rsi > 70} />
+              <Indicator label="MACD" value={tech.macd} bullish={tech.macd > tech.macd_signal} bearish={tech.macd < tech.macd_signal} />
+              <Indicator label="MACD Signal" value={tech.macd_signal} />
+              <Indicator label="ADX" value={tech.adx} bullish={tech.adx > 25} bearish={tech.adx < 20} />
+              <Indicator label="CCI (14)" value={tech.cci} bullish={tech.cci < -100} bearish={tech.cci > 100} />
+              <Indicator label="ATR (14)" value={tech.atr} />
+              <Indicator label="SMA 20" value={tech.sma_20} />
+              <Indicator label="SMA 50" value={tech.sma_50} bullish={tech.sma_20 > tech.sma_50} bearish={tech.sma_20 < tech.sma_50} />
+              <Indicator label="BB Upper" value={tech.bbands_upper} />
+              <Indicator label="BB Lower" value={tech.bbands_lower} />
+              <Indicator label="P/E Ratio" value={tech.pe_ratio} bullish={tech.pe_ratio > 0 && tech.pe_ratio < 15} bearish={tech.pe_ratio > 35} />
+            </div>
+          )}
+
+          {!tech && !error && (
+            <p className="text-gray-400 text-xs">Loading...</p>
+          )}
+        </div>
+
+        {/* News / AI Outlook panel */}
+        <div
+          onClick={() => setActivePanel('news')}
+          className={`bg-white dark:bg-gray-900 border-2 rounded-xl p-5 space-y-3 cursor-pointer transition-colors ${
+            activePanel === 'news'
+              ? 'border-blue-500 dark:border-blue-400'
+              : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+          }`}
+        >
+          <h2 className={`font-semibold text-sm pb-2 border-b ${
+            activePanel === 'news'
+              ? 'text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800'
+              : 'border-gray-200 dark:border-gray-700'
+          }`}>
+            News & Sentiment
+          </h2>
+
+          {news ? (
+            <div className="space-y-3">
+              {news.sentiment != null && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-gray-500">Sentiment:</span>
+                  <span className={`font-semibold ${
+                    news.sentiment > 0.6 ? 'text-green-600 dark:text-green-400' :
+                    news.sentiment < 0.4 ? 'text-red-600 dark:text-red-400' :
+                    'text-yellow-600 dark:text-yellow-400'
+                  }`}>
+                    {news.sentiment > 0.6 ? 'Bullish' : news.sentiment < 0.4 ? 'Bearish' : 'Neutral'}
+                    ({(news.sentiment * 100).toFixed(0)}%)
+                  </span>
                 </div>
               )}
-
-              {tech?.summary && (
-                <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg text-sm leading-relaxed">
-                  {tech.summary}
-                </div>
+              {news.bullets && (
+                <ul className="text-xs space-y-1.5 ml-4">
+                  {news.bullets.map((b, i) => (
+                    <li key={i} className="list-disc text-gray-600 dark:text-gray-300">{b}</li>
+                  ))}
+                </ul>
               )}
-
-              {!tech && !error && (
-                <p className="text-gray-400 text-sm">Loading technical data...</p>
+              {news.summary && (
+                <p className="text-xs leading-relaxed text-gray-600 dark:text-gray-300">{news.summary}</p>
               )}
             </div>
-          </div>
+          ) : (
+            <p className="text-gray-400 text-xs">No news data available.</p>
+          )}
 
-          {/* Back: News */}
-          <div className="absolute inset-0 backface-hidden rotate-y-180">
-            <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-6 space-y-4">
-              <h2 className="font-semibold text-base border-b border-gray-200 dark:border-gray-700 pb-2">
-                BFT AI Current Outlook
-              </h2>
+          {/* Signal */}
+          {report?.signal && (
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
+              <div className="flex items-center gap-2">
+                <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                  report.signal.type === 'BUY'
+                    ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300'
+                    : 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300'
+                }`}>
+                  {report.signal.type}
+                </span>
+                <span className="text-xs text-gray-500">{report.signal.strategy}</span>
+              </div>
+              {report.signal.reason && (
+                <p className="text-xs text-gray-500 mt-1">{report.signal.reason}</p>
+              )}
+            </div>
+          )}
+        </div>
 
-              {news ? (
-                <div className="space-y-3">
-                  {news.summary && (
-                    <p className="text-sm leading-relaxed">{news.summary}</p>
-                  )}
-                  {news.sentiment != null && (
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="text-gray-500">Sentiment:</span>
-                      <span className={`font-semibold ${
-                        news.sentiment > 0.6 ? 'text-green-600 dark:text-green-400' :
-                        news.sentiment < 0.4 ? 'text-red-600 dark:text-red-400' :
-                        'text-yellow-600 dark:text-yellow-400'
-                      }`}>
-                        {news.sentiment > 0.6 ? 'Bullish' : news.sentiment < 0.4 ? 'Bearish' : 'Neutral'}
-                        ({(news.sentiment * 100).toFixed(0)}%)
-                      </span>
-                    </div>
-                  )}
-                  {news.bullets && (
-                    <ul className="text-sm space-y-1.5 ml-4">
-                      {news.bullets.map((b, i) => (
-                        <li key={i} className="list-disc text-gray-600 dark:text-gray-300">{b}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+        {/* AI Summary panel */}
+        <div
+          onClick={() => setActivePanel('summary')}
+          className={`bg-white dark:bg-gray-900 border-2 rounded-xl p-5 space-y-3 cursor-pointer transition-colors ${
+            activePanel === 'summary'
+              ? 'border-blue-500 dark:border-blue-400'
+              : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+          }`}
+        >
+          <h2 className={`font-semibold text-sm pb-2 border-b ${
+            activePanel === 'summary'
+              ? 'text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800'
+              : 'border-gray-200 dark:border-gray-700'
+          }`}>
+            BFT AI Summary
+          </h2>
+
+          {tech?.summary ? (
+            <div className="text-xs leading-relaxed text-gray-700 dark:text-gray-300">
+              {typeof tech.summary === 'string' ? (
+                <p>{tech.summary}</p>
+              ) : tech.summary.bullets ? (
+                <ul className="space-y-2 ml-4">
+                  {tech.summary.bullets.map((b, i) => (
+                    <li key={i} className="list-disc">{b}</li>
+                  ))}
+                </ul>
               ) : (
-                <p className="text-gray-400 text-sm">No news data available.</p>
+                <p>{JSON.stringify(tech.summary)}</p>
               )}
+            </div>
+          ) : (
+            <p className="text-gray-400 text-xs">
+              {error ? 'No AI summary available.' : 'No AI summary yet. Requires ollama.'}
+            </p>
+          )}
 
-              {/* Signal section */}
-              {report?.signal && (
-                <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
-                  <div className="flex items-center gap-2">
-                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-                      report.signal.type === 'BUY'
-                        ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300'
-                        : 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300'
-                    }`}>
-                      {report.signal.type}
-                    </span>
-                    <span className="text-sm text-gray-500">{report.signal.strategy}</span>
-                  </div>
-                  {report.signal.reason && (
-                    <p className="text-xs text-gray-500 mt-1">{report.signal.reason}</p>
-                  )}
+          {/* Earnings data if available */}
+          {report?.earnings && (
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3 space-y-1">
+              <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400">Earnings</h3>
+              {report.earnings.eps_estimate && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">EPS Est.</span>
+                  <span className="font-mono">{report.earnings.eps_estimate}</span>
+                </div>
+              )}
+              {report.earnings.eps_actual && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">EPS Actual</span>
+                  <span className="font-mono">{report.earnings.eps_actual}</span>
+                </div>
+              )}
+              {report.earnings.next_date && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">Next</span>
+                  <span>{report.earnings.next_date}</span>
                 </div>
               )}
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

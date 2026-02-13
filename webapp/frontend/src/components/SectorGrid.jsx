@@ -48,6 +48,13 @@ export default function SectorGrid() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      {/* Welcome banner */}
+      <div className="text-center py-3 px-4 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
+        <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+          Welcome BETA TESTERS! Explore the site and give us feedback!
+        </p>
+      </div>
+
       {/* Top row: SPY + QQQ + Custom Watchlist */}
       <div className="grid grid-cols-3 gap-4 max-w-2xl mx-auto">
         {data.indices.map(idx => (
