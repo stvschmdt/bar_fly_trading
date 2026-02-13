@@ -26,7 +26,7 @@ from ibkr.models import OrderAction, OrderType, TradeSignal
 
 
 # Configuration - can be overridden with environment variables
-# Default to 127.0.0.1 (use SSH tunnel: ssh -L 4001:127.0.0.1:4001 sschmidt@54.90.246.184 -N)
+# Default to 127.0.0.1 (use SSH tunnel: ssh -L 4001:127.0.0.1:4001 $EC2_USER@$EC2_IP -N)
 GATEWAY_HOST = os.environ.get("IBKR_GATEWAY_HOST", "127.0.0.1")
 GATEWAY_PORT = int(os.environ.get("IBKR_GATEWAY_PORT", "4001"))
 CLIENT_ID = int(os.environ.get("IBKR_CLIENT_ID", "1"))

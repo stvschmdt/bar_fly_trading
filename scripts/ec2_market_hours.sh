@@ -12,7 +12,7 @@
 #   bash scripts/ec2_market_hours.sh --once              # single scan, then exit
 #
 # Cron (start at market open, loop handles close):
-#   30 9 * * 1-5 cd /home/sschmidt/bar_fly_trading && bash scripts/ec2_market_hours.sh >> /var/log/bft/market_hours.log 2>&1
+#   30 9 * * 1-5 cd ~/bar_fly_trading && bash scripts/ec2_market_hours.sh >> /var/log/bft/market_hours.log 2>&1
 #
 # Monitor:
 #   tail -f /var/log/bft/market_hours.log

@@ -6,7 +6,7 @@ Outputs: unit_tests/sample_data_1month.csv
 import glob
 import pandas as pd
 
-DATA_GLOB = "/home/stvschmdt/data/all_data_*.csv"
+DATA_GLOB = "./all_data_*.csv"
 OUTPUT_PATH = "unit_tests/sample_data_1month.csv"
 CUTOFF_DATE = "2026-01-03"  # Keep only data from this date onward (~1 month)
 

@@ -22,7 +22,7 @@
 #   bash scripts/ec2_nightly.sh --step scp-back # just SCP predictions from DGX
 #
 # Cron (6pm ET weekdays):
-#   0 18 * * 1-5 cd /home/sschmidt/bar_fly_trading && bash scripts/ec2_nightly.sh >> /var/log/bft/nightly.log 2>&1
+#   0 18 * * 1-5 cd ~/bar_fly_trading && bash scripts/ec2_nightly.sh >> /var/log/bft/nightly.log 2>&1
 
 set -o pipefail
 
@@ -32,8 +32,8 @@ CSV_PATTERN="${REPO_DIR}/all_data_*.csv"
 LOG_DIR="/var/log/bft"
 LOCK_FILE="/tmp/ec2_nightly.lock"
 
-# DGX connection (Tailscale)
-DGX_HOST="stvschmdt@100.115.147.21"
+# DGX connection (Tailscale) — set DGX_HOST env var or edit here
+DGX_HOST="${DGX_HOST:?Set DGX_HOST env var (e.g. user@ip)}"
 DGX_REPO="~/proj/bar_fly_trading"
 DGX_SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=30"
 

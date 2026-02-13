@@ -851,7 +851,7 @@ def main():
     )
     parser.add_argument(
         '--data-dir', type=str,
-        default=os.environ.get('DATA_DIR', '/home/stvschmdt/data'),
+        default=os.environ.get('DATA_DIR', '.'),
         help='Directory containing all_data_*.csv files',
     )
     parser.add_argument(

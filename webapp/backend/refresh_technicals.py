@@ -131,7 +131,7 @@ def refresh_technicals(csv_pattern: str, with_summaries: bool = False):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--csv-pattern", default="/home/stvschmdt/data/all_data_*.csv")
+    parser.add_argument("--csv-pattern", default="./all_data_*.csv")
     parser.add_argument("--with-summaries", action="store_true",
                         help="Also regenerate LLM technical summaries (slow)")
     args = parser.parse_args()

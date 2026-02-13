@@ -5,8 +5,8 @@ Ad-hoc Gateway Test Script
 Test IB Gateway connectivity and trading operations.
 
 Remote Access (SSH Tunnel):
-    # Set up SSH tunnel to AWS Gateway server:
-    ssh -L 4001:127.0.0.1:4001 sschmidt@54.90.246.184 -N &
+    # Set up SSH tunnel to Gateway server:
+    ssh -L 4001:127.0.0.1:4001 $EC2_USER@$EC2_IP -N &
 
     # Then run tests (defaults to 127.0.0.1:4001)
     python test_gateway.py --balance

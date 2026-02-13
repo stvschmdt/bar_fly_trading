@@ -154,7 +154,7 @@ def generate_reports(csv_pattern: str, symbols: list[str] = None):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--csv-pattern", default="/home/stvschmdt/data/all_data_*.csv")
+    parser.add_argument("--csv-pattern", default="./all_data_*.csv")
     parser.add_argument("--symbols", help="Comma-separated symbols (default: all)")
     args = parser.parse_args()
 

@@ -13,17 +13,17 @@ The system runs across two machines connected via Tailscale VPN:
 
 Tailscale IPs (stable, won't change):
 ```
-EC2:  100.96.238.58   (sschmidt@100.96.238.58)
-DGX:  100.x.x.x       (stvschmdt@dgx)
+EC2:  $EC2_IP   ($EC2_USER@$EC2_IP)
+DGX:  $DGX_IP   ($DGX_USER@$DGX_IP)
 ```
 
 SCP between machines:
 ```bash
 # DGX -> EC2
-scp ~/proj/bar_fly_trading/merged_predictions.csv sschmidt@100.96.238.58:~/bar_fly_trading/
+scp ~/proj/bar_fly_trading/merged_predictions.csv $EC2_USER@$EC2_IP:~/bar_fly_trading/
 
 # EC2 -> DGX
-scp sschmidt@100.96.238.58:~/bar_fly_trading/all_data_*.csv ~/proj/bar_fly_trading/
+scp $EC2_USER@$EC2_IP:~/bar_fly_trading/all_data_*.csv ~/proj/bar_fly_trading/
 ```
 
 #### 1.2 Database (EC2)
@@ -31,7 +31,7 @@ scp sschmidt@100.96.238.58:~/bar_fly_trading/all_data_*.csv ~/proj/bar_fly_tradi
 Option A: Docker MySQL
 ```bash
 docker pull mysql:latest
-docker run --name mysql -e MYSQL_ROOT_PASSWORD=my-secret-pw -e MYSQL_DATABASE=bar_fly_trading -p 3306:3306 -d mysql:latest
+docker run --name mysql -e MYSQL_ROOT_PASSWORD=YOUR_PASSWORD -e MYSQL_DATABASE=bar_fly_trading -p 3306:3306 -d mysql:latest
 ```
 
 Option B: Native MySQL
@@ -40,7 +40,7 @@ Option B: Native MySQL
 sudo apt install mysql-server
 sudo systemctl start mysql
 sudo systemctl enable mysqld   # auto-start on reboot
-sudo mysql -u root -e "CREATE DATABASE bar_fly_trading; ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'my-secret-pw'; FLUSH PRIVILEGES;"
+sudo mysql -u root -e "CREATE DATABASE bar_fly_trading; ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'YOUR_PASSWORD'; FLUSH PRIVILEGES;"
 ```
 
 Option C: Clone an existing database
@@ -50,14 +50,14 @@ mysqldump -u root -p bar_fly_trading > bar_fly_trading_dump.sql
 
 # Copy and import
 scp user@source-server:bar_fly_trading_dump.sql .
-mysql -u root -pmy-secret-pw bar_fly_trading < bar_fly_trading_dump.sql
+mysql -u root -pYOUR_PASSWORD bar_fly_trading < bar_fly_trading_dump.sql
 ```
 
 #### 1.3 Environment Variables
 
 ```bash
-export MYSQL_PASSWORD=my-secret-pw
-export ALPHAVANTAGE_API_KEY=your_key_here
+export MYSQL_PASSWORD=YOUR_PASSWORD
+export ALPHAVANTAGE_API_KEY=YOUR_API_KEY
 ```
 
 For email notifications (optional):
@@ -110,17 +110,20 @@ pip install ollama
 │           ▼                                   │                          │
 │  ┌──────────────────┐    ┌──────────────┐     │                          │
 │  │  ec2_nightly.sh   │───>│   MySQL DB   │     │                          │
-│  │  Step 1: data pull│    │              │     │                          │
-│  │  Step 2: screener │    │ core_stock   │     │                          │
-│  │  Step 3: web data │    │ gold_table   │     │                          │
-│  └──────────────────┘    └──────┬───────┘     │                          │
-│                                  │             │                          │
-│                                  ▼             │                          │
-│  ┌──────────────────┐    ┌──────────────┐     │                          │
-│  │  rt_scan_loop.sh  │───>│all_data_*.csv│     │                          │
-│  │  (market hours)   │    └──────────────┘     │                          │
+│  │  6-step chain:    │    │              │     │                          │
+│  │  1. data pull     │    │ core_stock   │     │                          │
+│  │  2. screener PDF  │    │ gold_table   │     │                          │
+│  │  3. SCP → DGX     │    └──────┬───────┘     │                          │
+│  │  4. SSH inference │           │             │                          │
+│  │  5. SCP ← DGX    │           ▼             │                          │
+│  │  6. web refresh   │    ┌──────────────┐     │                          │
+│  └──────────────────┘    │all_data_*.csv│     │                          │
+│                           └──────────────┘     │                          │
+│  ┌──────────────────┐           │             │                          │
+│  │  rt_scan_loop.sh  │───────────┘ SCP        │                          │
+│  │  (market hours)   │           │  (step 3)  │                          │
 │  │  4 strategies     │           │             │                          │
-│  │  every 15 min     │           │ SCP         │                          │
+│  │  every 15 min     │           │             │                          │
 │  └────────┬─────────┘           │             │                          │
 │           │                      │             │                          │
 │           ▼                      │             │                          │
@@ -142,26 +145,28 @@ pip install ollama
 │                                  ▼                                        │
 │  ┌──────────────────┐    ┌──────────────────┐                            │
 │  │  infer_merge.sh   │───>│   stockformer/    │                            │
-│  │  9 models in      │    │   9 models:       │                            │
-│  │  parallel (~2min) │    │   3 horizon x     │                            │
+│  │  (triggered by    │    │   9 models:       │                            │
+│  │   EC2 via SSH)    │    │   3 horizon x     │                            │
 │  │                   │    │   3 label mode     │                            │
-│  │  Auto-detects     │    │                    │                            │
-│  │  architecture     │    │  model_reg_3d.pt   │                            │
-│  │  from checkpoint  │    │  model_bin_3d.pt   │                            │
-│  └──────────────────┘    │  model_buck_3d.pt  │                            │
-│           │               │  ... (9 total)     │                            │
-│           ▼               └──────────────────┘                            │
+│  │  9 models in      │    │                    │                            │
+│  │  parallel (~2min) │    │  model_reg_3d.pt   │                            │
+│  │  Auto-detects     │    │  model_bin_3d.pt   │                            │
+│  │  architecture     │    │  model_buck_3d.pt  │                            │
+│  └──────────────────┘    │  ... (9 total)     │                            │
+│           │               └──────────────────┘                            │
+│           ▼                                                               │
 │  ┌──────────────────┐                                                     │
-│  │merged_predictions │──── SCP ────> EC2                                  │
+│  │merged_predictions │──── SCP (step 5) ────> EC2                        │
 │  │.csv               │                                                     │
 │  └──────────────────┘                                                     │
 │                                                                           │
 │  ┌──────────────────┐                                                     │
 │  │  dgx_nightly.sh   │    ┌──────────────────┐                            │
-│  │  1. Pull JSONs    │───>│   ollama          │                            │
-│  │  2. LLM summaries │    │   llama3.1:8b     │                            │
-│  │  3. Push JSONs    │    │   AI stock reports │                            │
-│  └──────────────────┘    └──────────────────┘                            │
+│  │  (standalone)     │───>│   ollama          │                            │
+│  │  1. Pull JSONs    │    │   llama3.1:8b     │                            │
+│  │  2. LLM summaries │    │   AI stock reports │                            │
+│  │  3. Push JSONs    │    └──────────────────┘                            │
+│  └──────────────────┘                                                     │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -177,20 +182,24 @@ pip install ollama
 
 ### 3. Nightly Pipeline (Happy Path)
 
-This is the daily automated pipeline that runs after market close. Each step produces files that the next step depends on.
+This is the daily automated pipeline that runs after market close. All 6 steps are chained inside `ec2_nightly.sh` — it handles SCP transfers and SSH-triggers DGX inference automatically.
 
 ```
-Chain (sequential):
-6:00pm ET          10:00pm ET         10:05pm ET
-    │                  │                  │
-    ▼                  ▼                  ▼
-┌────────┐      ┌────────────┐    ┌──────────┐
-│ EC2    │      │ DGX        │    │ DGX→EC2  │
-│ Data   │─────>│ Inference  │───>│ SCP      │
-│ Pull   │      │ + Merge    │    │ Preds    │
-└────────┘      └────────────┘    └──────────┘
- Step 1           Step 2           Step 3
- ~4 hrs            ~2 min           ~1 min
+Full chain (ec2_nightly.sh --step all):
+6:00pm ET                             10:00pm ET  10:02pm ET  10:03pm ET  10:15pm ET
+    │                                      │          │          │          │
+    ▼                                      ▼          ▼          ▼          ▼
+┌─────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐  ┌────────┐  ┌────────┐
+│ Step 1   │  │ Step 2   │  │ Step 3   │  │ Step 4 │  │ Step 5 │  │ Step 6 │
+│ Data pull│─>│ Screener │─>│ SCP→DGX  │─>│ Infer  │─>│ SCP←DGX│─>│ Web    │
+│ EC2      │  │ PDF+Drive│  │ CSVs     │  │ SSH DGX│  │ preds  │  │ refresh│
+└─────────┘  └──────────┘  └──────────┘  └────────┘  └────────┘  └────────┘
+  ~4 hrs        ~15 min       ~2 min       ~2 min      ~1 min     ~10 min
+
+3 Groups (run independently if chain breaks):
+  --step ec2   = Steps 1,2,3  (data + screener + SCP to DGX)
+  --step dgx   = Steps 4,5    (SSH inference + SCP predictions back)
+  --step web   = Step 6       (website data refresh)
 
 Standalone (runs independently, needs only all_data_*.csv + ollama):
 7:00pm ET                         ~8:35pm ET
@@ -205,69 +214,91 @@ Standalone (runs independently, needs only all_data_*.csv + ollama):
 
 #### Pipeline Artifact Reference
 
-Scripts, artifacts, and locations in temporal execution order. Shows what runs where, what it produces, and where files move via SCP.
+Scripts, artifacts, and locations in temporal execution order. All steps 1-6 are chained inside `ec2_nightly.sh`. Steps 3-5 cross machines via SCP/SSH over Tailscale VPN.
 
-| # | Script / Action | Runs On | Input | Output Artifact | Output Location | SCP? |
-|---|----------------|---------|-------|-----------------|-----------------|------|
-| 1 | `ec2_nightly.sh --step data` | EC2 | Alpha Vantage API, MySQL | `all_data_0.csv` … `all_data_36.csv` (37 files) | EC2: `~/bar_fly_trading/` | — |
-| 2 | `ec2_nightly.sh --step pdf` | EC2 | MySQL data | `overnight_*.pdf` | EC2: Google Drive upload | — |
-| 3 | `ec2_nightly.sh --step web` | EC2 | MySQL, Alpha Vantage | `sectors.json`, `sector_*.json`, `{SYM}.json`, `{SYM}_history.json` | EC2: `/var/www/bft/data/` | — |
-| 4 | **SCP data to DGX** | EC2→DGX | `all_data_*.csv` on EC2 | `all_data_*.csv` on DGX | DGX: `~/proj/bar_fly_trading/` | **yes** |
-| 5 | `infer_merge.sh` | DGX | `all_data_*.csv`, 9 model `.pt` files | `pred_*.csv` (9), `merged_predictions.csv` | DGX: `stockformer/output/predictions/`, `~/proj/bar_fly_trading/` | — |
-| 6 | **SCP predictions to EC2** | DGX→EC2 | `merged_predictions.csv` on DGX | `merged_predictions.csv` on EC2 | EC2: `~/bar_fly_trading/` | **yes** |
-| 7a | `dgx_nightly.sh --step pull` | DGX←EC2 | `*.json` on EC2 | `*.json` on DGX | DGX: `~/proj/bar_fly_trading/webapp_data/` | **yes** |
-| 7b | `dgx_nightly.sh --step reports` | DGX | `all_data_*.csv`, ollama, Alpha Vantage | Updated `{SYM}.json` (with AI summaries + news) | DGX: `~/proj/bar_fly_trading/webapp_data/` | — |
-| 7c | `dgx_nightly.sh --step push` | DGX→EC2 | Updated `*.json` on DGX | Updated `*.json` on EC2 | EC2: `/var/www/bft/data/` | **yes** |
+| Step | `--step` flag | Runs On | Input | Output Artifact | Output Location | Est. Time |
+|------|--------------|---------|-------|-----------------|-----------------|-----------|
+| 1 | `data` | EC2 | Alpha Vantage API, MySQL | `all_data_0.csv` … `all_data_36.csv` (37 files) | EC2: `~/bar_fly_trading/` | ~4 hrs |
+| 2 | `pdf` | EC2 | `all_data_*.csv` | `overnight_YYYY-MM-DD/` (sector images) + `overnight_*.pdf` → Google Drive | EC2: `~/bar_fly_trading/` | ~15 min |
+| 3 | `scp-to` | EC2→DGX | `all_data_*.csv` on EC2 | `all_data_*.csv` on DGX | DGX: `~/proj/bar_fly_trading/` | ~2 min |
+| 4 | `infer` | DGX (SSH) | `all_data_*.csv`, 9 model `.pt` files | `pred_*.csv` (9), `merged_predictions.csv` | DGX: `stockformer/output/predictions/` | ~2 min |
+| 5 | `scp-back` | DGX→EC2 | `merged_predictions.csv` on DGX | `merged_predictions.csv` on EC2 | EC2: `~/bar_fly_trading/` | ~1 min |
+| 6 | `web` | EC2 | `all_data_*.csv`, MySQL | `sectors.json`, `sector_*.json`, `{SYM}.json`, `{SYM}_history.json` | EC2: `/var/www/bft/data/` | ~10 min |
+| — | *(standalone)* | DGX | `all_data_*.csv`, ollama | Updated `{SYM}.json` (with AI summaries + news) | EC2: `/var/www/bft/data/` (via SCP) | ~95 min |
 
 **Notes:**
-- Steps 1-3 run sequentially inside `ec2_nightly.sh` (~4 hrs total)
-- Step 4 is manual or triggered after step 1 completes
-- Steps 5-6 are sequential (infer then SCP)
-- Steps 7a-7c are standalone — can run anytime, no dependency on steps 1-6
+- Steps 1-6 run sequentially as one chain via `ec2_nightly.sh` (~4.5 hrs total)
+- Steps 3 and 5 are SCP over Tailscale VPN; step 4 is SSH remote trigger
+- DGX standalone LLM reports (section 3.5) are independent — no dependency on steps 1-6
 - Real-time scanning (`rt_scan_loop.sh`) reads `all_data_*.csv` + `merged_predictions.csv` from EC2 during market hours
 
 ---
 
-#### 3.1 Step 1: Data Pull (EC2)
+#### 3.1 ec2_nightly.sh — Full Pipeline
 
 **Script:** `scripts/ec2_nightly.sh`
-**Where:** EC2
+**Where:** EC2 (orchestrates DGX remotely via SSH/SCP over Tailscale)
 **Cron:** `0 18 * * 1-5` (6pm ET weekdays)
-**Estimated time:** ~4 hours (37 batches x ~7 min/batch for data pull, plus screener + web refresh)
+**Estimated time:** ~4.5 hours total
 
 ```bash
-# Full pipeline (data + screener PDF + website data)
+# Full chain (all 6 steps)
 bash scripts/ec2_nightly.sh
 
-# Just data pull
-bash scripts/ec2_nightly.sh --step data
+# Groups (run independently if chain breaks)
+bash scripts/ec2_nightly.sh --step ec2      # steps 1,2,3  (data + screener + SCP to DGX)
+bash scripts/ec2_nightly.sh --step dgx      # steps 4,5    (inference + SCP back)
+bash scripts/ec2_nightly.sh --step web      # step  6      (website data refresh)
 
-# Just screener PDF + Drive upload
-bash scripts/ec2_nightly.sh --step pdf
-
-# Just website data refresh (sector map, symbols, history)
-bash scripts/ec2_nightly.sh --step web
+# Individual steps
+bash scripts/ec2_nightly.sh --step data     # just pull_api_data + gold tables
+bash scripts/ec2_nightly.sh --step pdf      # just screener PDF + Drive upload
+bash scripts/ec2_nightly.sh --step scp-to   # just SCP CSVs to DGX
+bash scripts/ec2_nightly.sh --step infer    # just SSH trigger inference on DGX
+bash scripts/ec2_nightly.sh --step scp-back # just SCP predictions from DGX
+bash scripts/ec2_nightly.sh --step web      # just website data refresh
 ```
 
-**What it does:**
-1. **Data pull** — `python -m api_data.pull_api_data -w all` — pulls OHLCV, technicals, fundamentals, options, economic data for all S&P500 + watchlist (~550 symbols) into MySQL, then exports gold table to `all_data_*.csv` (37 files, ~15 symbols each)
-2. **Screener PDF** — generates overnight technical charts + uploads to Google Drive
-3. **Website data** — builds sector map, populates symbol JSONs, generates chart history for the webapp
+**What each step does:**
+
+| Step | Function | What Happens |
+|------|----------|-------------|
+| 1 — `data` | `run_data()` | `python -m api_data.pull_api_data -w all` — pulls OHLCV, technicals, fundamentals, options, economic data for ~550 symbols into MySQL, exports gold table to `all_data_*.csv` (37 files) |
+| 2 — `pdf` | `run_pdf()` | `python -m visualizations.screener_v2` — generates overnight sector analysis charts (`overnight_YYYY-MM-DD/`) + PDF → Google Drive upload |
+| 3 — `scp-to` | `run_scp_to_dgx()` | SCP `all_data_*.csv` to DGX over Tailscale |
+| 4 — `infer` | `run_inference()` | SSH to DGX → `bash scripts/infer_merge.sh` — runs 9 models (3 label x 3 horizon) in parallel, merges to `merged_predictions.csv` |
+| 5 — `scp-back` | `run_scp_from_dgx()` | SCP `merged_predictions.csv` back from DGX |
+| 6 — `web` | `run_web()` | Builds sector map, populates symbol JSONs, generates chart history for the webapp |
+
+**DGX connection (Tailscale VPN):**
+```
+DGX_HOST="$DGX_USER@$DGX_IP"
+DGX_REPO="~/proj/bar_fly_trading"
+```
 
 **Produces:**
-| File | Description |
-|------|------------|
-| `all_data_0.csv` ... `all_data_36.csv` | Gold table CSVs (37 files, ~97 columns each) |
-| `overnight_*.pdf` | Screener PDF (uploaded to Google Drive) |
-| `/var/www/bft/data/*.json` | Website symbol data |
+| File | Step | Description |
+|------|------|------------|
+| `all_data_0.csv` ... `all_data_36.csv` | 1 | Gold table CSVs (37 files, ~97 columns each) |
+| `overnight_YYYY-MM-DD/` | 2 | Sector analysis images for webapp |
+| `overnight_*.pdf` | 2 | Screener PDF (uploaded to Google Drive, then deleted locally) |
+| `merged_predictions.csv` | 5 | 9-model ML predictions (from DGX) |
+| `/var/www/bft/data/*.json` | 6 | Website symbol/sector data |
 
 **Cron setup:**
 ```bash
-# /etc/crontab or crontab -e on EC2
-0 18 * * 1-5 cd /home/sschmidt/bar_fly_trading && bash scripts/ec2_nightly.sh >> /var/log/bft/nightly.log 2>&1
+# EC2 crontab
+0 18 * * 1-5 cd ~/bar_fly_trading && bash scripts/ec2_nightly.sh >> /var/log/bft/nightly.log 2>&1
 ```
 
-**Dependencies to start:** MySQL running, `ALPHAVANTAGE_API_KEY` set, `MYSQL_PASSWORD` set
+**Dependencies:** MySQL running, `ALPHAVANTAGE_API_KEY` set, `MYSQL_PASSWORD` set, Tailscale connected
+
+**Lock file:** `/tmp/ec2_nightly.lock` — prevents concurrent runs. If a stale lock exists: `rm /tmp/ec2_nightly.lock`
+
+**Monitor:**
+```bash
+tail -f /var/log/bft/nightly.log
+```
 
 ##### Fixes / Backfill / Manual Runs
 
@@ -306,118 +337,13 @@ sudo systemctl enable mysqld
 # If tmpdir errors: check /etc/my.cnf, ensure tmpdir exists with mysql:mysql ownership
 ```
 
----
-
-**Dependencies for Step 2:** `all_data_*.csv` files on DGX (SCP from EC2 or already present from prior pull)
-
----
-
-#### 3.2 Step 2: Inference & Merge (DGX)
-
-**Script:** `scripts/infer_merge.sh`
-**Where:** DGX
-**Cron:** `0 19 * * 1-5` (7pm ET, 1 hour after EC2 nightly starts — or trigger after step 1 completes)
-**Estimated time:** ~2 minutes (9 models run in 3 parallel groups of 3 horizons)
-
-```bash
-# Encoder models (default)
-bash scripts/infer_merge.sh
-
-# Cross-attention models
-bash scripts/infer_merge.sh --cross-attention
-```
-
-**What it does:**
-1. Launches 3 parallel inference jobs (regression, binary, buckets) — each runs 3 horizons (3d, 10d, 30d)
-2. **Auto-detects model architecture from checkpoint** — d_model, num_layers, dim_feedforward, nhead, num_buckets are read from the saved weights. No manual `--d-model` needed.
-3. Waits for all 9 jobs to finish (~2 minutes on GPU)
-4. Merges all 9 prediction CSVs into `merged_predictions.csv`
-
-**Architecture auto-detection example output:**
-```
-Loading model from: stockformer/output/models/model_bin_3d.pt
-Auto-detected architecture from checkpoint: d_model: 128 -> 64, num_layers: 3 -> 2, dim_feedforward: 256 -> 128
-```
-
-**Produces:**
-| File | Description |
-|------|------------|
-| `stockformer/output/predictions/pred_reg_3d.csv` | Regression 3-day predictions |
-| `stockformer/output/predictions/pred_bin_10d.csv` | Binary 10-day predictions |
-| ... (9 total) | All horizon/label combinations |
-| `merged_predictions.csv` | Merged file with all prediction columns |
-
-**Defaults:** `DATA_PATH=./all_data_*.csv`, `INFER_START=2025-07-01`, `BATCH_SIZE=64`
-
-**Monitor:**
-```bash
-tail -f logs/infer_reg_encoder_*.log
-tail -f logs/infer_bin_encoder_*.log
-tail -f logs/infer_buck_encoder_*.log
-```
-
-##### Fixes / Single Model Runs
-
-Run inference for a single model:
-```bash
-python -m stockformer.main --data-path './all_data_*.csv' \
-    --horizon 3 --label-mode binary \
-    --model-out stockformer/output/models/model_bin_3d.pt \
-    --output-csv stockformer/output/predictions/pred_bin_3d.csv \
-    --infer-only
-```
-
-Merge predictions manually (after re-running a subset):
-```bash
-python -m stockformer.merge_predictions \
-    --input-dir stockformer/output/predictions \
-    --output merged_predictions.csv
-```
-
-Check what architecture a model was trained with:
-```bash
-python -c "
-import torch
-sd = torch.load('stockformer/output/models/model_bin_3d.pt', map_location='cpu', weights_only=True)
-print(f'd_model: {sd[\"input_proj.weight\"].shape[0]}')
-print(f'num_layers: {max(int(k.split(\".\")[2]) for k in sd if k.startswith(\"encoder.layers.\")) + 1}')
-print(f'dim_ff: {sd[\"encoder.layers.0.linear1.weight\"].shape[0]}')
-"
-```
-
----
-
-**Dependencies for Step 3:** `merged_predictions.csv` on DGX (produced by step 2)
-
----
-
-#### 3.3 Step 3: Transfer Predictions to EC2
-
-**Where:** DGX -> EC2 (SCP)
-**How:** Manual or scripted
-**Estimated time:** ~1 minute (single 39MB file over Tailscale)
-
-```bash
-scp ~/proj/bar_fly_trading/merged_predictions.csv sschmidt@100.96.238.58:~/bar_fly_trading/merged_predictions.csv
-```
-
-**Produces:** `merged_predictions.csv` on EC2 at `~/bar_fly_trading/`
-
-**Verify on EC2:**
-```bash
-ls -lh ~/bar_fly_trading/merged_predictions.csv
-head -1 ~/bar_fly_trading/merged_predictions.csv | tr ',' '\n' | head -20
-```
-
-##### Fixes
-
-If SCP fails (DNS/network):
+If SCP/SSH to DGX fails:
 ```bash
 # Test Tailscale connectivity
-ssh sschmidt@100.96.238.58 "echo OK"
+ssh -o ConnectTimeout=10 $DGX_USER@$DGX_IP "echo OK"
 
-# If DNS broken on EC2 (Tailscale MagicDNS):
-# On EC2: echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+# Check Tailscale status
+tailscale status
 ```
 
 ---
@@ -1091,16 +1017,18 @@ print(f\"  Total: {len(data.get('positions', {}))} open position(s)\")
 
 ```bash
 # ── EC2 crontab ──────────────────────────────────────────────────
-# Nightly data pull + screener + web refresh (6pm ET)
-0 18 * * 1-5 cd /home/sschmidt/bar_fly_trading && bash scripts/ec2_nightly.sh >> /var/log/bft/nightly.log 2>&1
+# Nightly pipeline: data pull + screener + SCP to DGX + inference + SCP back + web refresh (6pm ET)
+0 18 * * 1-5 cd ~/bar_fly_trading && bash scripts/ec2_nightly.sh >> /var/log/bft/nightly.log 2>&1
+
+# Market hours scan loop (9:30am ET — loop handles close)
+30 9 * * 1-5 cd ~/bar_fly_trading && bash scripts/ec2_market_hours.sh >> /var/log/bft/market_hours.log 2>&1
 
 # ── DGX crontab ──────────────────────────────────────────────────
-# Inference + merge (7pm ET — after EC2 data pull)
-0 19 * * 1-5 cd ~/proj/bar_fly_trading && bash scripts/infer_merge.sh >> logs/infer.log 2>&1
-
-# Website LLM reports (7:30pm ET — after inference)
-30 19 * * 1-5 cd ~/proj/bar_fly_trading && bash scripts/dgx_nightly.sh >> logs/dgx_nightly.log 2>&1
+# Website LLM reports — standalone, no dependency on nightly pipeline (7pm ET)
+0 19 * * 1-5 cd ~/proj/bar_fly_trading && bash scripts/dgx_nightly.sh >> logs/dgx_nightly.log 2>&1
 ```
+
+**Note:** DGX inference is no longer a separate cron job — it's triggered automatically by `ec2_nightly.sh` via SSH (steps 4-5).
 
 Real-time scan loop runs as a persistent background process (not cron):
 ```bash

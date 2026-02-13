@@ -24,7 +24,7 @@ SYMBOLS=""
 EMAIL_FLAG=""
 NEWS_ONLY=""
 EXTRA_FLAGS=""
-DATA_DIR="${DATA_DIR:-/home/stvschmdt/data}"
+DATA_DIR="${DATA_DIR:-.}"
 
 # Parse args
 while [[ $# -gt 0 ]]; do

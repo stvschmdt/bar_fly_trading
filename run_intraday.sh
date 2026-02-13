@@ -16,18 +16,18 @@
 # Can run every 15 minutes during market hours via cron:
 #
 #   # Crontab — every 15 min, 9:31 to 3:46 ET (adjust for your timezone):
-#   31,46 9 * * 1-5   /home/stvschmdt/proj/bar_fly_trading/run_intraday.sh --skip-inference >> /tmp/intraday.log 2>&1
-#   1,16,31,46 10-14 * * 1-5 /home/stvschmdt/proj/bar_fly_trading/run_intraday.sh --skip-inference >> /tmp/intraday.log 2>&1
-#   1,16,31 15 * * 1-5 /home/stvschmdt/proj/bar_fly_trading/run_intraday.sh --skip-inference >> /tmp/intraday.log 2>&1
+#   31,46 9 * * 1-5   cd ~/bar_fly_trading && bash run_intraday.sh --skip-inference >> /tmp/intraday.log 2>&1
+#   1,16,31,46 10-14 * * 1-5 cd ~/bar_fly_trading && bash run_intraday.sh --skip-inference >> /tmp/intraday.log 2>&1
+#   1,16,31 15 * * 1-5 cd ~/bar_fly_trading && bash run_intraday.sh --skip-inference >> /tmp/intraday.log 2>&1
 #
 #   # Or hourly at :31 past the hour:
-#   31 9-15 * * 1-5  /home/stvschmdt/proj/bar_fly_trading/run_intraday.sh --skip-inference >> /tmp/intraday.log 2>&1
+#   31 9-15 * * 1-5  cd ~/bar_fly_trading && bash run_intraday.sh --skip-inference >> /tmp/intraday.log 2>&1
 
 set -euo pipefail
 
-cd /home/stvschmdt/proj/bar_fly_trading
-PYTHON="${PYTHON:-/home/stvschmdt/.local/share/mamba/envs/ml/bin/python}"
-DATA_DIR="${DATA_DIR:-/home/stvschmdt/data}"
+cd "$(dirname "$0")"
+PYTHON="${PYTHON:-python}"
+DATA_DIR="${DATA_DIR:-.}"
 MODEL_DIR="stockformer/output/models"
 PRED_DIR="stockformer/output/predictions"
 

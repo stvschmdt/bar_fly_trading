@@ -18,10 +18,10 @@
 
 set -euo pipefail
 
-PYTHON="${PYTHON:-/home/stvschmdt/.local/share/mamba/envs/ml/bin/python}"
-cd /home/stvschmdt/proj/bar_fly_trading
+PYTHON="${PYTHON:-python}"
+cd "$(dirname "$0")"
 
-DATA_PATH="${DATA_PATH:-/home/stvschmdt/data/all_data_*.csv}"
+DATA_PATH="${DATA_PATH:-./all_data_*.csv}"
 OUTPUT_BASE="${OUTPUT_BASE:-stockformer/output}"
 
 # Hyperparameter defaults (override via env vars)

@@ -153,7 +153,7 @@ def build_sector_map(csv_pattern: str, output_dir: str):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description="Build sector map from CSV data")
-    parser.add_argument("--csv-pattern", default="/home/stvschmdt/data/all_data_*.csv",
+    parser.add_argument("--csv-pattern", default="./all_data_*.csv",
                         help="Glob pattern for all_data CSV files")
     parser.add_argument("--output-dir",
                         default=str(Path(__file__).parent.parent / "data"),

@@ -29,7 +29,7 @@ cd ~/proj/bar_fly_trading
 # Configuration
 # =============================================================================
 
-DATA_PATH="/home/stvschmdt/data/all_data_*.csv"
+DATA_PATH="${DATA_PATH:-./all_data_*.csv}"
 TRAIN_END="2024-12-31"
 INFER_START="2025-01-01"
 

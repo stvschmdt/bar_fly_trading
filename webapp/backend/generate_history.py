@@ -109,7 +109,7 @@ def generate_history(csv_pattern: str, symbols_filter: list = None):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     parser = argparse.ArgumentParser(description="Generate per-symbol history JSONs")
-    parser.add_argument("--csv-pattern", default="/home/stvschmdt/data/all_data_*.csv")
+    parser.add_argument("--csv-pattern", default="./all_data_*.csv")
     parser.add_argument("--symbols", help="Comma-separated symbols (default: all)")
     args = parser.parse_args()
 

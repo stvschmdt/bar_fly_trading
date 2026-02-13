@@ -3,7 +3,7 @@
 # Intended to run every 15 min during market hours via cron.
 # Does NOT call any external APIs or run LLM summaries.
 
-REPO_DIR="/home/sschmidt/bar_fly_trading"
+REPO_DIR="${HOME}/bar_fly_trading"
 DATA_DIR="/var/www/bft/data"
 CSV_PATTERN="$REPO_DIR/all_data_*.csv"
 

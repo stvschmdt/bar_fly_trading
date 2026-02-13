@@ -17,7 +17,7 @@ set -o pipefail
 
 REPO_DIR="$HOME/proj/bar_fly_trading"
 LOCAL_DATA_DIR="$REPO_DIR/webapp_data"
-EC2_HOST="sschmidt@100.96.238.58"
+EC2_HOST="${EC2_HOST:?Set EC2_HOST env var (e.g. user@ip)}"
 EC2_DATA_DIR="/var/www/bft/data"
 CSV_PATTERN="${REPO_DIR}/all_data_*.csv"
 

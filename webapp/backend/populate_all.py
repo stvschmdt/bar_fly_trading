@@ -304,7 +304,7 @@ def _update_sector_prices(latest: pd.DataFrame, quotes: dict):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     parser = argparse.ArgumentParser(description="One-time bulk populate all symbol JSONs")
-    parser.add_argument("--csv-pattern", default="/home/stvschmdt/data/all_data_*.csv")
+    parser.add_argument("--csv-pattern", default="./all_data_*.csv")
     parser.add_argument("--with-quotes", action="store_true", help="Also fetch live prices from yfinance")
     parser.add_argument("--symbols", help="Comma-separated symbols to populate (default: all)")
     args = parser.parse_args()

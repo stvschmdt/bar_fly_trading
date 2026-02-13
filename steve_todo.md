@@ -48,9 +48,9 @@ pip install fastapi 'uvicorn[standard]' aiofiles bcrypt pyjwt python-multipart
 
 ```bash
 cd ~
-git clone git@github.com:stvschmdt/bar_fly_trading.git
+git clone git@github.com:<org>/bar_fly_trading.git
 cd bar_fly_trading
-git checkout feature/website
+git checkout main
 ```
 
 ## 5. Deploy Directory Setup
@@ -197,7 +197,7 @@ For future deploys, run on the EC2 server:
 
 ```bash
 cd ~/bar_fly_trading
-git pull origin feature/website
+git pull origin main
 cd webapp/frontend && npm run build
 cp -r dist/* /var/www/bft/frontend/
 sudo systemctl restart bft-api

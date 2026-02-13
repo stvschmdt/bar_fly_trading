@@ -35,7 +35,7 @@ export MYSQL_READONLY_PASSWORD="my-secret-\!pw"
 ```
 - Open an SSH tunnel, exposing the EC2's MySQL port `3306` to port `3307` on your local machine. Your local MySQL DB is using port `3306`, so we use `3307` to avoid conflicts.
 ```
-ssh -L 3307:localhost:3306 username@54.90.246.184 -N -i <path_to_private_key>
+ssh -L 3307:localhost:3306 <username>@<ec2-ip> -N -i <path_to_private_key>
 ```
 - If running `pull_api_data.py` or `backtest.py`, set the `--db` flag to `remote`.
 - If you just want to query the remote DB from a MySQL shell:

@@ -255,7 +255,7 @@ bar_fly_trading/
 mysqldump -u root -p bar_fly_trading > bar_fly_trading_dump.sql
 
 # 2. Copy the dump file to this machine
-scp bar_fly_trading_dump.sql stvschmdt@<this-machine>:~/
+scp bar_fly_trading_dump.sql <username>@<this-machine>:~/
 
 # 3. Then on this machine, import it
 docker exec -i mysql mysql -u root -pmy-secret-pw bar_fly_trading < ~/bar_fly_trading_dump.sql

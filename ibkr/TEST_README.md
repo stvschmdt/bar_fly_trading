@@ -2,11 +2,11 @@
 
 ## Remote Access Setup
 
-The IB Gateway runs on AWS (54.90.246.184). Use SSH tunnel for remote access:
+The IB Gateway runs on AWS ($EC2_IP). Use SSH tunnel for remote access:
 
 ```bash
 # Start SSH tunnel (run once, keeps running in background)
-ssh -L 4001:127.0.0.1:4001 sschmidt@54.90.246.184 -N &
+ssh -L 4001:127.0.0.1:4001 $EC2_USER@$EC2_IP -N &
 ```
 
 ## Quick Start
@@ -21,7 +21,7 @@ python test_gateway.py --balance    # Verify connection works, shows account val
 | Command | Purpose | What to Look For |
 |---------|---------|------------------|
 | `python test_gateway.py --balance` | Check all account balances | Net Liquidation > 0, Available Funds > 0 |
-| `python test_gateway.py --balance --account U17955245` | Check specific account | Single account balance |
+| `python test_gateway.py --balance --account UXXXXXXXX` | Check specific account | Single account balance |
 | `python test_gateway.py --portfolio` | List current positions | Table of holdings with shares, cost, P&L |
 | `python test_gateway.py --all` | Run balance + portfolio | Both tests pass |
 | `python test_gateway.py --buy --symbol NKE` | Buy 1 share of NKE | Order ID assigned, status Filled or Submitted |
@@ -63,14 +63,14 @@ This is normal - market orders don't fill outside 9:30 AM - 4:00 PM ET.
 ## Multi-Account Support
 
 FA accounts show multiple managed accounts:
-- **F* accounts** (e.g., F15468824) - FA Master account
-- **U* accounts** (e.g., U17955245) - Individual client accounts
+- **F* accounts** (e.g., FXXXXXXXX) - FA Master account
+- **U* accounts** (e.g., UXXXXXXXX) - Individual client accounts
 
-By default, `--balance` shows all accounts. Use `--account U17955245` to filter to one.
+By default, `--balance` shows all accounts. Use `--account UXXXXXXXX` to filter to one.
 
 ## AWS Server Details
 
-- **Public IP:** 54.90.246.184
+- **Public IP:** $EC2_IP
 - **Gateway Port:** 4001 (live trading)
 - **Service:** `sudo systemctl status ibgateway`
 - **Logs:** `/home/ibkr/ibc/logs/`
