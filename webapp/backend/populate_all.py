@@ -64,7 +64,7 @@ def load_latest_per_symbol(csv_pattern: str) -> pd.DataFrame:
 
     # Dict of symbol -> latest row (as dict), only keeping the most recent
     best = {}  # symbol -> (date, row_dict)
-    prev_close = {}  # symbol -> previous day's adjusted_close (for change_pct)
+    prev_data = {}  # symbol -> {close, pct} from previous day
 
     for i, f in enumerate(csv_files):
         try:
@@ -76,12 +76,15 @@ def load_latest_per_symbol(csv_pattern: str) -> pd.DataFrame:
                 row_date = row["date"]
                 if symbol not in best or row_date > best[symbol][0]:
                     best[symbol] = (row_date, row.to_dict())
-                    # Track previous close for change_pct computation
+                    # Track previous day's close AND pct for fallback
                     if len(sorted_group) >= 2:
                         prev_row = sorted_group.iloc[-2]
                         pc = prev_row.get("adjusted_close")
-                        if pd.notna(pc) and pc > 0:
-                            prev_close[symbol] = float(pc)
+                        pp = prev_row.get("adjusted_close_pct")
+                        prev_data[symbol] = {
+                            "close": float(pc) if pd.notna(pc) else 0,
+                            "pct": float(pp) if pd.notna(pp) else 0,
+                        }
             del df  # free memory immediately
         except Exception as e:
             logger.warning(f"Skipping {f}: {e}")
@@ -89,13 +92,12 @@ def load_latest_per_symbol(csv_pattern: str) -> pd.DataFrame:
     if not best:
         return pd.DataFrame()
 
-    # Compute change_pct from previous close when CSV value is 0
+    # Fix change_pct: live mode copies yesterday's row so pct=0 and close is identical.
+    # Use previous day's pct when today's is 0 (the copied row has no real change).
     for symbol, (_, row_dict) in best.items():
         csv_pct = float(row_dict.get("adjusted_close_pct", 0) or 0)
-        if csv_pct == 0 and symbol in prev_close:
-            cur = float(row_dict.get("adjusted_close", 0) or 0)
-            if cur > 0 and prev_close[symbol] > 0:
-                row_dict["adjusted_close_pct"] = (cur - prev_close[symbol]) / prev_close[symbol]
+        if csv_pct == 0 and symbol in prev_data and prev_data[symbol]["pct"] != 0:
+            row_dict["adjusted_close_pct"] = prev_data[symbol]["pct"]
 
     latest = pd.DataFrame([v[1] for v in best.values()])
     logger.info(f"Loaded latest rows for {len(latest)} symbols from {len(csv_files)} CSV files")
