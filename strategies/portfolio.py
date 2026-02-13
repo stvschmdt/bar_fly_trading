@@ -70,6 +70,45 @@ def load_data(data_path: str) -> pd.DataFrame:
     return df
 
 
+def load_data_recent(data_path: str, n_rows: int = 5) -> pd.DataFrame:
+    """
+    Memory-efficient loader: reads CSV files one at a time, keeping only
+    the last n_rows per symbol. Peak memory = 1 CSV file + accumulated tails.
+
+    For live mode with --lookback-days 1, n_rows=5 gives plenty of headroom.
+    """
+    if '*' not in data_path:
+        return load_data(data_path)
+
+    files = sorted(globmod.glob(data_path))
+    if not files:
+        raise FileNotFoundError(f"No files matching: {data_path}")
+
+    chunks = []
+    for f in files:
+        chunk = pd.read_csv(f)
+        # Normalise symbol column
+        if 'ticker' in chunk.columns and 'symbol' not in chunk.columns:
+            chunk['symbol'] = chunk['ticker']
+        if 'date' in chunk.columns:
+            chunk['date'] = pd.to_datetime(chunk['date'])
+            chunk = chunk.sort_values('date')
+        # Keep only the last n_rows per symbol in this file
+        chunks.append(chunk.groupby('symbol').tail(n_rows))
+
+    df = pd.concat(chunks, ignore_index=True)
+
+    # Normalise price column
+    if 'adjusted_close' not in df.columns and 'close' in df.columns:
+        df['adjusted_close'] = df['close']
+
+    # Final dedup: keep last n_rows per symbol across all files
+    if 'date' in df.columns:
+        df = df.sort_values('date').groupby('symbol').tail(n_rows).reset_index(drop=True)
+
+    return df
+
+
 def load_watchlist(watchlist_path: str) -> list[str]:
     """
     Load watchlist from CSV and return ordered list of symbols.
