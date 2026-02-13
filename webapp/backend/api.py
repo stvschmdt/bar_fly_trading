@@ -161,53 +161,66 @@ def get_signals():
 
 OVERNIGHT_BASE = Path(os.environ.get("BFT_PROJECT_DIR", Path(__file__).parent.parent.parent))
 
+# Cache: parsed overnight data (signals from CSVs + image metadata).
+# Rebuilt on first request or when CSV mtime changes.
+_overnight_cache = {"data": None, "csv_mtime": 0}
+
 def _find_overnight_dir():
     """Find the most recent overnight_v2_* directory."""
     dirs = sorted(OVERNIGHT_BASE.glob("overnight_v2_*"), reverse=True)
     return dirs[0] if dirs else None
 
 
-@app.get("/api/overnight")
-def get_overnight():
-    """Return overnight screener metadata: signals from CSVs, available images."""
+def _get_csv_mtime():
+    """Get the latest mtime across all_data CSVs for cache invalidation."""
+    csv_files = list(OVERNIGHT_BASE.glob("all_data_*.csv"))
+    if not csv_files:
+        return 0
+    return max(f.stat().st_mtime for f in csv_files)
+
+
+def _build_overnight_data():
+    """Parse CSVs + overnight dir into response dict. Called once, then cached."""
     overnight_dir = _find_overnight_dir()
 
-    # Collect signal data from the most recent all_data CSVs
-    signals = {}
-    stocks = []
     signal_cols = [
         "macd_signal", "macd_zero_signal", "adx_signal", "atr_signal",
         "pe_ratio_signal", "bollinger_bands_signal", "rsi_signal",
         "sma_cross_signal", "cci_signal", "pcr_signal", "bull_bear_delta",
     ]
+
+    # Read only the last row per symbol from each CSV (tail optimization)
+    signals = {}
+    stocks = []
     csv_files = sorted(OVERNIGHT_BASE.glob("all_data_*.csv"))
     for csv_path in csv_files:
         try:
             with open(csv_path) as f:
                 reader = csv.DictReader(f)
-                rows = list(reader)
-            if not rows:
-                continue
-            # Get the latest date's rows
-            dates = sorted(set(r.get("date", "") for r in rows if r.get("date")))
-            if not dates:
-                continue
-            latest = dates[-1]
-            for row in rows:
-                if row.get("date") != latest:
-                    continue
-                sym = row.get("symbol", "").strip()
-                if not sym or sym in signals:
-                    continue
-                sig = {}
-                for col in signal_cols:
-                    val = row.get(col, "")
-                    try:
-                        sig[col] = int(float(val)) if val else 0
-                    except (ValueError, TypeError):
-                        sig[col] = 0
-                signals[sym] = sig
-                stocks.append(sym)
+                # Stream rows, track latest date per symbol without loading all into memory
+                latest_date = ""
+                pending = {}
+                for row in reader:
+                    d = row.get("date", "")
+                    if d > latest_date:
+                        latest_date = d
+                        pending.clear()
+                    if d == latest_date:
+                        sym = row.get("symbol", "").strip()
+                        if sym and sym not in signals:
+                            pending[sym] = row
+                for sym, row in pending.items():
+                    if sym in signals:
+                        continue
+                    sig = {}
+                    for col in signal_cols:
+                        val = row.get(col, "")
+                        try:
+                            sig[col] = int(float(val)) if val else 0
+                        except (ValueError, TypeError):
+                            sig[col] = 0
+                    signals[sym] = sig
+                    stocks.append(sym)
         except Exception:
             continue
 
@@ -228,7 +241,6 @@ def get_overnight():
             elif name.startswith("_divider_"):
                 continue
             elif "_sector_" in name:
-                # e.g. XLK_sector_Technology_analysis
                 m = re.match(r"^([A-Z]+)_sector_(.+)_analysis$", name)
                 if m:
                     sectors.append({
@@ -237,7 +249,6 @@ def get_overnight():
                         "filename": img.name,
                     })
             else:
-                # Per-stock chart: AAPL_daily_price, AAPL_technical_rsi, etc.
                 for chart_type in ["daily_price", "daily_volume", "technical_rsi",
                                    "technical_macd", "technical_cci",
                                    "technical_off_from_highs", "technical_ttm_pe_ratio"]:
@@ -257,6 +268,17 @@ def get_overnight():
         "sectors": sectors,
         "has_market_returns": has_market_returns,
     }
+
+
+@app.get("/api/overnight")
+def get_overnight():
+    """Return overnight screener data. Cached in memory, refreshed when CSVs change."""
+    csv_mtime = _get_csv_mtime()
+    if _overnight_cache["data"] is None or csv_mtime > _overnight_cache["csv_mtime"]:
+        logger.info("Building overnight cache (first request or CSV updated)...")
+        _overnight_cache["data"] = _build_overnight_data()
+        _overnight_cache["csv_mtime"] = csv_mtime
+    return _overnight_cache["data"]
 
 
 @app.get("/api/overnight/image/{filename:path}")
