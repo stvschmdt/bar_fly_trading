@@ -5,9 +5,11 @@ Reads pre-generated JSON files from a data directory.
 Auth via JWT tokens (invite-code-gated registration).
 """
 
+import csv
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Body, Request
@@ -153,6 +155,122 @@ def get_signals():
     if data is None:
         return {"signals": [], "date": None}
     return data
+
+
+# ── Overnight Screener ───────────────────────────────────────────
+
+OVERNIGHT_BASE = Path(os.environ.get("BFT_PROJECT_DIR", Path(__file__).parent.parent.parent))
+
+def _find_overnight_dir():
+    """Find the most recent overnight_v2_* directory."""
+    dirs = sorted(OVERNIGHT_BASE.glob("overnight_v2_*"), reverse=True)
+    return dirs[0] if dirs else None
+
+
+@app.get("/api/overnight")
+def get_overnight():
+    """Return overnight screener metadata: signals from CSVs, available images."""
+    overnight_dir = _find_overnight_dir()
+
+    # Collect signal data from the most recent all_data CSVs
+    signals = {}
+    stocks = []
+    signal_cols = [
+        "macd_signal", "macd_zero_signal", "adx_signal", "atr_signal",
+        "pe_ratio_signal", "bollinger_bands_signal", "rsi_signal",
+        "sma_cross_signal", "cci_signal", "pcr_signal", "bull_bear_delta",
+    ]
+    csv_files = sorted(OVERNIGHT_BASE.glob("all_data_*.csv"))
+    for csv_path in csv_files:
+        try:
+            with open(csv_path) as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+            if not rows:
+                continue
+            # Get the latest date's rows
+            dates = sorted(set(r.get("date", "") for r in rows if r.get("date")))
+            if not dates:
+                continue
+            latest = dates[-1]
+            for row in rows:
+                if row.get("date") != latest:
+                    continue
+                sym = row.get("symbol", "").strip()
+                if not sym or sym in signals:
+                    continue
+                sig = {}
+                for col in signal_cols:
+                    val = row.get(col, "")
+                    try:
+                        sig[col] = int(float(val)) if val else 0
+                    except (ValueError, TypeError):
+                        sig[col] = 0
+                signals[sym] = sig
+                stocks.append(sym)
+        except Exception:
+            continue
+
+    # Scan overnight directory for available images
+    stock_charts = {}
+    sectors = []
+    has_market_returns = False
+    screener_date = None
+
+    if overnight_dir and overnight_dir.is_dir():
+        screener_date = overnight_dir.name.replace("overnight_v2_", "")
+        for img in overnight_dir.iterdir():
+            if not img.suffix == ".jpg":
+                continue
+            name = img.stem
+            if name == "market_returns":
+                has_market_returns = True
+            elif name.startswith("_divider_"):
+                continue
+            elif "_sector_" in name:
+                # e.g. XLK_sector_Technology_analysis
+                m = re.match(r"^([A-Z]+)_sector_(.+)_analysis$", name)
+                if m:
+                    sectors.append({
+                        "id": m.group(1),
+                        "name": m.group(2),
+                        "filename": img.name,
+                    })
+            else:
+                # Per-stock chart: AAPL_daily_price, AAPL_technical_rsi, etc.
+                for chart_type in ["daily_price", "daily_volume", "technical_rsi",
+                                   "technical_macd", "technical_cci",
+                                   "technical_off_from_highs", "technical_ttm_pe_ratio"]:
+                    if name.endswith(f"_{chart_type}"):
+                        sym = name[: -(len(chart_type) + 1)]
+                        stock_charts.setdefault(sym, []).append(chart_type)
+                        break
+
+    stocks.sort()
+    sectors.sort(key=lambda s: s["id"])
+
+    return {
+        "date": screener_date,
+        "stocks": stocks,
+        "signals": signals,
+        "stock_charts": stock_charts,
+        "sectors": sectors,
+        "has_market_returns": has_market_returns,
+    }
+
+
+@app.get("/api/overnight/image/{filename:path}")
+def get_overnight_image(filename: str):
+    """Serve an image from the overnight screener directory."""
+    overnight_dir = _find_overnight_dir()
+    if not overnight_dir:
+        raise HTTPException(404, "No overnight data available")
+    # Sanitize filename
+    safe_name = Path(filename).name
+    file_path = overnight_dir / safe_name
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(404, f"Image not found: {safe_name}")
+    return FileResponse(file_path, media_type="image/jpeg")
 
 
 # ── Per-User Watchlist ────────────────────────────────────────────

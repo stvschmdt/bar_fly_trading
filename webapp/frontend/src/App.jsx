@@ -4,6 +4,7 @@ import SectorGrid from './components/SectorGrid'
 import StockGrid from './components/StockGrid'
 import StockDetail from './components/StockDetail'
 import BigBoard from './components/BigBoard'
+import OvernightPage from './components/OvernightPage'
 import HomePage from './components/HomePage'
 import AboutPage from './components/AboutPage'
 import ContactPage from './components/ContactPage'
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/" element={<SectorGrid />} />
           <Route path="/home" element={<HomePage />} />
           <Route path="/bigboard" element={<BigBoard />} />
+          <Route path="/overnight" element={<OvernightPage />} />
           <Route path="/about" element={<AboutPage />} />
           <Route path="/contact" element={<ContactPage />} />
           <Route path="/sector/:sectorId" element={<StockGrid />} />

@@ -8,6 +8,7 @@ const THEME_CYCLE = ['system', 'light', 'dark']
 const NAV_ITEMS = [
   { to: '/', label: 'Home' },
   { to: '/bigboard', label: 'The Big Board' },
+  { to: '/overnight', label: 'BFT Overnight' },
   { to: '/about', label: 'About' },
   { to: '/contact', label: 'Contact' },
 ]

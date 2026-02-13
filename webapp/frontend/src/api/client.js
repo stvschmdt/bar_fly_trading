@@ -50,6 +50,10 @@ export function getSignals() {
   return fetchJson('/signals/today')
 }
 
+export function getOvernight() {
+  return fetchJson('/overnight')
+}
+
 export function getWatchlist() {
   return fetchJson('/watchlist')
 }
