@@ -53,8 +53,10 @@ export default function SectorCard({ id, name, change_pct, stock_count, price, l
     </div>
   )
 
-  // Indices (SPY, QQQ) don't link anywhere yet
-  if (price > 0) return card
+  // Indices (SPY, QQQ) link to their stock detail page
+  if (large && stock_count === 0) {
+    return <Link to={`/sector/IDX/${id}`}>{card}</Link>
+  }
 
   return <Link to={`/sector/${id}`}>{card}</Link>
 }
