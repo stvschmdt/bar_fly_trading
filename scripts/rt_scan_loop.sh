@@ -26,7 +26,8 @@
 
 set -e
 
-cd ~/proj/bar_fly_trading
+REPO_DIR="${REPO_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+cd "$REPO_DIR"
 
 # ── Config ──────────────────────────────────────────────────────────
 INTERVAL_MIN=15
@@ -48,7 +49,7 @@ OPTIONS=""             # --options: execute as options (call for BUY, put for SE
 
 # Data sources
 PREDICTIONS="${PREDICTIONS:-merged_predictions.csv}"
-DATA_DIR="${DATA_DIR:-/home/stvschmdt/data}"
+DATA_DIR="${DATA_DIR:-$REPO_DIR}"
 DATA_PATH="$DATA_DIR/all_data_*.csv"
 
 # Default: 4 active strategies (regression_momentum disabled — missing 10d model, 0 trades)
