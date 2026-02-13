@@ -162,21 +162,16 @@ def get_signals():
 OVERNIGHT_BASE = Path(os.environ.get("BFT_PROJECT_DIR", Path(__file__).parent.parent.parent))
 
 # Cache: parsed overnight data (signals from CSVs + image metadata).
-# Rebuilt on first request or when CSV mtime changes.
-_overnight_cache = {"data": None, "csv_mtime": 0}
+# Uses time-based TTL, not mtime — RT scanner modifies CSVs every 15 min
+# but overnight signals don't change intraday.
+import time as _time
+_overnight_cache = {"data": None, "built_at": 0.0}
+_OVERNIGHT_TTL = 4 * 3600  # 4 hours
 
 def _find_overnight_dir():
     """Find the most recent overnight_v2_* directory."""
     dirs = sorted(OVERNIGHT_BASE.glob("overnight_v2_*"), reverse=True)
     return dirs[0] if dirs else None
-
-
-def _get_csv_mtime():
-    """Get the latest mtime across all_data CSVs for cache invalidation."""
-    csv_files = list(OVERNIGHT_BASE.glob("all_data_*.csv"))
-    if not csv_files:
-        return 0
-    return max(f.stat().st_mtime for f in csv_files)
 
 
 def _build_overnight_data():
@@ -272,12 +267,12 @@ def _build_overnight_data():
 
 @app.get("/api/overnight")
 def get_overnight():
-    """Return overnight screener data. Cached in memory, refreshed when CSVs change."""
-    csv_mtime = _get_csv_mtime()
-    if _overnight_cache["data"] is None or csv_mtime > _overnight_cache["csv_mtime"]:
-        logger.info("Building overnight cache (first request or CSV updated)...")
+    """Return overnight screener data. Cached in memory with 4-hour TTL."""
+    now = _time.time()
+    if _overnight_cache["data"] is None or (now - _overnight_cache["built_at"]) > _OVERNIGHT_TTL:
+        logger.info("Building overnight cache (first request or TTL expired)...")
         _overnight_cache["data"] = _build_overnight_data()
-        _overnight_cache["csv_mtime"] = csv_mtime
+        _overnight_cache["built_at"] = now
     return _overnight_cache["data"]
 
 

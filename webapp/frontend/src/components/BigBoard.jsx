@@ -1,9 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { getBigBoard } from '../api/client'
 import SECTOR_COLORS from '../constants/sectorColors'
 import { isStale } from '../utils/freshness'
 import { useWorkbench } from '../hooks/useWorkbench'
+
+const SORT_OPTIONS = [
+  { key: 'change_pct', label: '% Change', desc: true },
+  { key: 'symbol', label: 'A-Z', desc: false },
+  { key: 'sector_id', label: 'Sector', desc: false },
+]
 
 function changeBg(pct, stale) {
   if (stale) return 'rgba(156, 163, 175, 0.18)'
@@ -29,6 +35,8 @@ export default function BigBoard() {
   const [stocks, setStocks] = useState([])
   const [sectors, setSectors] = useState([])
   const [loading, setLoading] = useState(true)
+  const [sortKey, setSortKey] = useState('change_pct')
+  const [sortDesc, setSortDesc] = useState(true)
   const { has, toggle } = useWorkbench()
 
   useEffect(() => {
@@ -41,6 +49,31 @@ export default function BigBoard() {
       .finally(() => setLoading(false))
   }, [])
 
+  const sorted = useMemo(() => {
+    return [...stocks].sort((a, b) => {
+      let av = a[sortKey], bv = b[sortKey]
+      if (sortKey === 'sector_id') {
+        // Group by sector, then alphabetically within
+        const cmp = (av || '').localeCompare(bv || '')
+        if (cmp !== 0) return sortDesc ? -cmp : cmp
+        return a.symbol.localeCompare(b.symbol)
+      }
+      if (typeof av === 'string') {
+        return sortDesc ? bv.localeCompare(av) : av.localeCompare(bv)
+      }
+      return sortDesc ? (bv || 0) - (av || 0) : (av || 0) - (bv || 0)
+    })
+  }, [stocks, sortKey, sortDesc])
+
+  function handleSort(key) {
+    if (key === sortKey) {
+      setSortDesc(!sortDesc)
+    } else {
+      setSortKey(key)
+      setSortDesc(SORT_OPTIONS.find(o => o.key === key)?.desc ?? true)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 text-gray-400">
@@ -51,10 +84,30 @@ export default function BigBoard() {
 
   return (
     <div className="max-w-[1600px] mx-auto px-2 py-4">
-      <h1 className="text-2xl font-bold mb-4 px-2">The Big Board</h1>
+      <div className="flex items-center justify-between mb-4 px-2">
+        <h1 className="text-2xl font-bold">The Big Board</h1>
+        <div className="flex gap-1">
+          {SORT_OPTIONS.map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => handleSort(opt.key)}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                sortKey === opt.key
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+              }`}
+            >
+              {opt.label}
+              {sortKey === opt.key && (
+                <span className="ml-0.5">{sortDesc ? '\u2193' : '\u2191'}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="grid grid-cols-7 md:grid-cols-10 lg:grid-cols-14 gap-1">
-        {stocks.map((s) => {
+        {sorted.map((s) => {
           const sector = SECTOR_COLORS[s.sector_id] || { color: '#6b7280' }
           const stale = isStale(s.last_updated)
           const inBench = has(s.symbol)
