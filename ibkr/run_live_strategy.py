@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+from __future__ import annotations
+
 """
 Live trading runner for Regression Momentum Strategy.
 

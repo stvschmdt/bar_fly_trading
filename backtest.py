@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # This is a backtesting script that takes a strategy name, start_date, and end_date from the command line and runs
 # the strategy on historical data from the DB. The script will output the account value at the end of the backtest,
 # along with charts to show when positions were opened/closed, and the account value over time.

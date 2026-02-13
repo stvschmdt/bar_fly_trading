@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 IBKR connection management using ib_insync.
 

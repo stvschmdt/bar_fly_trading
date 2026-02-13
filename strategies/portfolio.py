@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Portfolio filtering, ranking, and selection utilities.
 

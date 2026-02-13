@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Order management for IBKR trading.
 
