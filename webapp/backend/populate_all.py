@@ -283,6 +283,19 @@ def _update_sector_prices(latest: pd.DataFrame, quotes: dict):
         with open(sf, "w") as f:
             json.dump(sd, f, indent=2)
 
+    # Update index prices (SPY, QQQ) from symbol JSONs
+    for idx in sectors_data.get("indices", []):
+        sym = idx["id"]
+        sym_file = DATA_DIR / f"{sym}.json"
+        if sym_file.exists():
+            try:
+                with open(sym_file) as f:
+                    sym_data = json.load(f)
+                idx["price"] = sym_data["quote"]["price"]
+                idx["change_pct"] = sym_data["quote"]["change_pct"]
+            except Exception:
+                pass
+
     sectors_data["last_updated"] = datetime.now().isoformat(timespec="seconds")
     with open(sectors_file, "w") as f:
         json.dump(sectors_data, f, indent=2)
