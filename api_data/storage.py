@@ -217,6 +217,39 @@ def adjust_for_stock_splits(df):
     return df
 
 
+def update_options_daily_summary(symbol: str, date: str):
+    """
+    Incrementally update the options_daily_summary pre-aggregated table for a given
+    symbol and date. This should be called after new rows are inserted into
+    historical_options so the summary table stays in sync.
+
+    The summary table stores per-symbol, per-date call_volume, put_volume, and
+    total_volume, replacing the expensive SUM/GROUP BY subquery that previously
+    ran against the full historical_options table (269M+ rows) in the gold-table
+    query.
+    """
+    query = text("""
+        INSERT INTO options_daily_summary (date, symbol, call_volume, put_volume, total_volume)
+        SELECT
+            date,
+            symbol,
+            SUM(CASE WHEN type = 'call' THEN volume ELSE 0 END),
+            SUM(CASE WHEN type = 'put'  THEN volume ELSE 0 END),
+            SUM(volume)
+        FROM historical_options
+        WHERE symbol = :symbol AND date = :date
+        GROUP BY date, symbol
+        ON DUPLICATE KEY UPDATE
+            call_volume  = VALUES(call_volume),
+            put_volume   = VALUES(put_volume),
+            total_volume = VALUES(total_volume);
+    """)
+    with get_engine().connect() as connection:
+        connection.execute(query, {'symbol': symbol, 'date': date})
+        connection.commit()
+    logger.debug(f'Updated options_daily_summary for {symbol} on {date}')
+
+
 def process_gold_table_in_batches(symbols: list[str], earliest_date: str = '2016-01-01', symbols_per_batch: int = 15):
     symbol_batches = [symbols[i:i + symbols_per_batch] for i in range(0, len(symbols), symbols_per_batch)]
     for i, symbol_batch in enumerate(symbol_batches):
@@ -291,23 +324,8 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
         LEFT JOIN technical_indicators as tech
         ON core.date = tech.date
         AND core.symbol = tech.symbol
-        LEFT JOIN
-        (
-        SELECT
-            date AS trade_date,
-            symbol,
-            SUM(CASE WHEN type = 'call' THEN volume ELSE 0 END) AS call_volume,
-            SUM(CASE WHEN type = 'put' THEN volume ELSE 0 END) AS put_volume,
-            SUM(volume) AS total_volume
-        FROM
-            historical_options
-        WHERE date > '{earliest_date}'
-        AND symbol in ({', '.join([f"'{symbol}'" for symbol in symbols])})
-        GROUP BY
-            trade_date,
-            symbol
-        ) AS options_agg
-        ON core.date = options_agg.trade_date
+        LEFT JOIN options_daily_summary AS options_agg
+        ON core.date = options_agg.date
         AND core.symbol = options_agg.symbol
         LEFT JOIN economic_indicators as econ
         ON core.date = econ.date
@@ -398,8 +416,8 @@ def gold_table_processing(symbols: list[str], batch_num: int, earliest_date: str
     df["sma_20_pct"] = ((df["adjusted_close"] - df["sma_20"]) / df["sma_20"] * 100).round(2)
     df["sma_50_pct"] = ((df["adjusted_close"] - df["sma_50"]) / df["sma_50"] * 100).round(2)
     df["sma_200_pct"] = ((df["adjusted_close"] - df["sma_200"]) / df["sma_200"] * 100).round(2)
-    df["52_week_high_pct"] = ((df["adjusted_close"] - df["52_week_high"]) / df["52_week_high"] * 100).round(2)
-    df["52_week_low_pct"] = ((df["adjusted_close"] - df["52_week_low"]) / df["52_week_low"] * 100).round(2)
+    df["52_week_high_pct"] = pd.to_numeric((df["adjusted_close"] - df["52_week_high"]) / df["52_week_high"] * 100, errors='coerce').round(2)
+    df["52_week_low_pct"] = pd.to_numeric((df["adjusted_close"] - df["52_week_low"]) / df["52_week_low"] * 100, errors='coerce').round(2)
 
     # Adjust open, high, low for stock splits
     df = adjust_for_stock_splits(df)

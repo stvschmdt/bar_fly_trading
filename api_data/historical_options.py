@@ -6,7 +6,7 @@ from pandas.tseries.offsets import CustomBusinessDay
 
 from api_data.collector import AlphaVantageClient
 from api_data.core_stock import CORE_STOCK_TABLE_NAME
-from api_data.storage import get_dates_for_symbol, select_all_by_symbol, insert_ignore_data
+from api_data.storage import get_dates_for_symbol, select_all_by_symbol, insert_ignore_data, update_options_daily_summary
 from api_data.util import graceful_df_to_numeric
 from logging_config import setup_logging
 
@@ -120,6 +120,10 @@ def update_historical_options_for_date(api_client: AlphaVantageClient, symbol: s
     df = df[df['expiration'].isin(expirations)]
 
     insert_ignore_data(df, table_name=HISTORICAL_OPTIONS_TABLE_NAME)
+
+    # Keep the pre-aggregated options_daily_summary table in sync
+    options_date = df['date'].iloc[0] if not df.empty else date
+    update_options_daily_summary(symbol, options_date)
 
 
 def get_nearby_strikes(strike_prices, stock_price, num_strikes_on_each_side):
