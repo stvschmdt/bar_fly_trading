@@ -73,14 +73,15 @@ def generate_symbol_report(symbol: str, csv_pattern: str) -> dict:
     except Exception as e:
         logger.warning(f"  Technical data failed for {symbol}: {e}")
 
-    try:
-        from api_data.rt_utils import summarize_technical_with_llm
-        if report["technical"]:
-            summary = summarize_technical_with_llm(symbol, report["technical"])
-            if summary:
-                report["technical"]["summary"] = summary
-    except Exception as e:
-        logger.debug(f"  LLM summary skipped for {symbol}: {e}")
+    if not os.environ.get("BFT_SKIP_LLM"):
+        try:
+            from api_data.rt_utils import summarize_technical_with_llm
+            if report["technical"]:
+                summary = summarize_technical_with_llm(symbol, report["technical"])
+                if summary:
+                    report["technical"]["summary"] = summary
+        except Exception as e:
+            logger.debug(f"  LLM summary skipped for {symbol}: {e}")
 
     try:
         from api_data.rt_utils import get_news_sentiment
