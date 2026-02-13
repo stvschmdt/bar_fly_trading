@@ -80,8 +80,8 @@ upload_to_drive('$pdf', '$pdf')
             log "  WARNING: Drive upload failed"
             FAILED=$((FAILED + 1))
         fi
-        # Cleanup
-        rm -f overnight_*.pdf overnight_v2_*/ screener_results_*.csv table_image.jpg 2>/dev/null
+        # Cleanup (keep overnight_v2_* dirs — webapp serves sector analysis images from them)
+        rm -f overnight_*.pdf screener_results_*.csv table_image.jpg 2>/dev/null
     else
         log "  WARNING: No PDF generated"
         FAILED=$((FAILED + 1))
