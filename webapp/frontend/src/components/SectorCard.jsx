@@ -53,14 +53,8 @@ export default function SectorCard({ id, name, change_pct, stock_count, price, l
     </div>
   )
 
-  // SPY/QQQ scroll down to sector grid
-  if (id === 'SPY' || id === 'QQQ') {
-    return (
-      <div onClick={() => document.getElementById('sectors')?.scrollIntoView({ behavior: 'smooth' })}>
-        {card}
-      </div>
-    )
-  }
+  // SPY/QQQ link to Big Board
+  if (id === 'SPY' || id === 'QQQ') return <Link to="/bigboard">{card}</Link>
 
   return <Link to={`/sector/${id}`}>{card}</Link>
 }
