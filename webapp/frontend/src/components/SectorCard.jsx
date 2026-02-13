@@ -53,9 +53,14 @@ export default function SectorCard({ id, name, change_pct, stock_count, price, l
     </div>
   )
 
-  // SPY scrolls down to the sector grid (same page); QQQ is static
-  if (id === 'SPY') return <a href="#sectors">{card}</a>
-  if (id === 'QQQ') return card
+  // SPY/QQQ scroll down to sector grid
+  if (id === 'SPY' || id === 'QQQ') {
+    return (
+      <div onClick={() => document.getElementById('sectors')?.scrollIntoView({ behavior: 'smooth' })}>
+        {card}
+      </div>
+    )
+  }
 
   return <Link to={`/sector/${id}`}>{card}</Link>
 }
