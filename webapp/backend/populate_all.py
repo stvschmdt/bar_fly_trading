@@ -271,6 +271,9 @@ def _update_sector_prices(latest: pd.DataFrame, quotes: dict):
                 if not row.empty:
                     r = row.iloc[0]
                     stock["price"] = round(float(r.get("adjusted_close", 0) or 0), 2)
+                    pct = float(r.get("adjusted_close_pct", 0) or 0)
+                    stock["change_pct"] = round(pct * 100, 2)
+                    stock["volume"] = int(r.get("volume", 0) or 0)
                     stock["last_updated"] = now
             changes.append(stock.get("change_pct", 0))
 
