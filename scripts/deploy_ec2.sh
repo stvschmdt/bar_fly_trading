@@ -143,7 +143,7 @@ fi
 # ── Data population ───────────────────────────────────────────────
 if $DO_ALL || $DO_DATA; then
     log "Building sector map..."
-    BFT_DATA_DIR="$DATA_DIR" python -m webapp.backend.build_sector_map --csv-pattern "$CSV_PATTERN"
+    BFT_DATA_DIR="$DATA_DIR" python -m webapp.backend.build_sector_map --csv-pattern "$CSV_PATTERN" --output-dir "$DATA_DIR"
 
     log "Populating symbol data from CSVs..."
     BFT_DATA_DIR="$DATA_DIR" python -m webapp.backend.populate_all --csv-pattern "$CSV_PATTERN"

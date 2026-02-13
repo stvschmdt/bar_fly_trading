@@ -24,20 +24,39 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 logger = logging.getLogger(__name__)
 
-# GICS sector → ETF mapping
+# GICS sector → ETF mapping (supports both title-case and uppercase variants)
 SECTOR_ETF_MAP = {
     "Financials": "XLF",
+    "Financial Services": "XLF",
+    "FINANCIAL SERVICES": "XLF",
+    "FINANCE": "XLF",
     "Technology": "XLK",
     "Information Technology": "XLK",
+    "TECHNOLOGY": "XLK",
     "Health Care": "XLV",
+    "Healthcare": "XLV",
+    "HEALTHCARE": "XLV",
+    "LIFE SCIENCES": "XLV",
     "Energy": "XLE",
+    "ENERGY": "XLE",
+    "ENERGY & TRANSPORTATION": "XLE",
     "Consumer Discretionary": "XLY",
+    "Consumer Cyclical": "XLY",
+    "CONSUMER CYCLICAL": "XLY",
     "Industrials": "XLI",
+    "INDUSTRIALS": "XLI",
     "Materials": "XLB",
+    "Basic Materials": "XLB",
+    "BASIC MATERIALS": "XLB",
     "Communication Services": "XLC",
+    "COMMUNICATION SERVICES": "XLC",
     "Utilities": "XLU",
+    "UTILITIES": "XLU",
     "Real Estate": "XLRE",
+    "REAL ESTATE": "XLRE",
     "Consumer Staples": "XLP",
+    "Consumer Defensive": "XLP",
+    "CONSUMER DEFENSIVE": "XLP",
 }
 
 # Display order
