@@ -56,26 +56,33 @@ COL_RENAME = {
 
 
 def load_latest_per_symbol(csv_pattern: str) -> pd.DataFrame:
-    """Load all CSVs, return the most recent row per symbol with all columns."""
+    """Load CSVs one at a time, keeping only the latest row per symbol (low memory)."""
     csv_files = sorted(glob.glob(csv_pattern))
     if not csv_files:
         logger.error(f"No CSV files found: {csv_pattern}")
         return pd.DataFrame()
 
-    frames = []
-    for f in csv_files:
+    # Dict of symbol -> latest row (as dict), only keeping the most recent
+    best = {}  # symbol -> (date, row_dict)
+
+    for i, f in enumerate(csv_files):
         try:
             df = pd.read_csv(f, parse_dates=["date"])
-            frames.append(df)
+            logger.info(f"  [{i+1}/{len(csv_files)}] Reading {Path(f).name} ({len(df)} rows)")
+            for symbol, group in df.groupby("symbol"):
+                row = group.sort_values("date").iloc[-1]
+                row_date = row["date"]
+                if symbol not in best or row_date > best[symbol][0]:
+                    best[symbol] = (row_date, row.to_dict())
+            del df  # free memory immediately
         except Exception as e:
             logger.warning(f"Skipping {f}: {e}")
 
-    if not frames:
+    if not best:
         return pd.DataFrame()
 
-    df = pd.concat(frames, ignore_index=True)
-    latest = df.sort_values("date").groupby("symbol").last().reset_index()
-    logger.info(f"Loaded {len(latest)} symbols from {len(csv_files)} CSV files")
+    latest = pd.DataFrame([v[1] for v in best.values()])
+    logger.info(f"Loaded latest rows for {len(latest)} symbols from {len(csv_files)} CSV files")
     return latest
 
 

@@ -39,8 +39,20 @@ HISTORY_COLS = {
 }
 
 
+def _row_to_record(row) -> dict:
+    """Convert a DataFrame row to a history record dict."""
+    rec = {"date": row["date"].strftime("%Y-%m-%d")}
+    for csv_col, json_key in HISTORY_COLS.items():
+        val = row.get(csv_col)
+        if pd.notna(val):
+            rec[json_key] = int(val) if json_key == "volume" else round(float(val), 2)
+        else:
+            rec[json_key] = None
+    return rec
+
+
 def generate_history(csv_pattern: str, symbols_filter: list = None):
-    """Read CSVs and write per-symbol history JSON files."""
+    """Read CSVs one at a time, write history per batch (low memory)."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     csv_files = sorted(glob.glob(csv_pattern))
@@ -48,48 +60,48 @@ def generate_history(csv_pattern: str, symbols_filter: list = None):
         logger.error(f"No CSV files found: {csv_pattern}")
         return
 
-    # Only read columns we need
     usecols = ["date", "symbol"] + list(HISTORY_COLS.keys())
 
-    frames = []
-    for f in csv_files:
-        try:
-            df = pd.read_csv(f, usecols=usecols, parse_dates=["date"])
-            frames.append(df)
-        except Exception as e:
-            logger.warning(f"Skipping {f}: {e}")
-
-    if not frames:
-        logger.error("No valid CSV files loaded")
-        return
-
-    df = pd.concat(frames, ignore_index=True)
-    df = df.sort_values(["symbol", "date"])
-
     if symbols_filter:
-        symbols_filter = [s.upper() for s in symbols_filter]
-        df = df[df["symbol"].isin(symbols_filter)]
+        symbols_filter = {s.upper() for s in symbols_filter}
 
     written = 0
-    for symbol, group in df.groupby("symbol"):
-        records = []
-        for _, row in group.iterrows():
-            rec = {"date": row["date"].strftime("%Y-%m-%d")}
-            for csv_col, json_key in HISTORY_COLS.items():
-                val = row.get(csv_col)
-                if pd.notna(val):
-                    if json_key == "volume":
-                        rec[json_key] = int(val)
-                    else:
-                        rec[json_key] = round(float(val), 2)
-                else:
-                    rec[json_key] = None
-            records.append(rec)
+    for i, f in enumerate(csv_files):
+        try:
+            df = pd.read_csv(f, usecols=usecols, parse_dates=["date"])
+            logger.info(f"  [{i+1}/{len(csv_files)}] {Path(f).name} ({len(df)} rows)")
 
-        out_path = DATA_DIR / f"{symbol}_history.json"
-        with open(out_path, "w") as f:
-            json.dump(records, f, separators=(",", ":"))
-        written += 1
+            if symbols_filter:
+                df = df[df["symbol"].isin(symbols_filter)]
+
+            df = df.sort_values(["symbol", "date"])
+
+            # Write each symbol's history from this CSV immediately
+            for symbol, group in df.groupby("symbol"):
+                records = [_row_to_record(row) for _, row in group.iterrows()]
+
+                out_path = DATA_DIR / f"{symbol}_history.json"
+
+                # If file already exists (symbol split across CSVs), merge
+                if out_path.exists():
+                    try:
+                        with open(out_path) as ef:
+                            existing = json.load(ef)
+                        existing_dates = {r["date"] for r in existing}
+                        for rec in records:
+                            if rec["date"] not in existing_dates:
+                                existing.append(rec)
+                        records = sorted(existing, key=lambda r: r["date"])
+                    except Exception:
+                        pass
+
+                with open(out_path, "w") as wf:
+                    json.dump(records, wf, separators=(",", ":"))
+                written += 1
+
+            del df
+        except Exception as e:
+            logger.warning(f"Skipping {f}: {e}")
 
     logger.info(f"Wrote {written} history files to {DATA_DIR}")
 
