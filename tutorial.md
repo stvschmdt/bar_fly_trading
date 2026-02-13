@@ -180,16 +180,51 @@ pip install ollama
 This is the daily automated pipeline that runs after market close. Each step produces files that the next step depends on.
 
 ```
-6:00pm ET          7:00pm ET          7:15pm ET          7:30pm ET
-    │                  │                  │                  │
-    ▼                  ▼                  ▼                  ▼
-┌────────┐      ┌────────────┐    ┌──────────┐      ┌────────────┐
-│ EC2    │      │ DGX        │    │ DGX→EC2  │      │ DGX        │
-│ Data   │─────>│ Inference  │───>│ SCP      │─────>│ Website    │
-│ Pull   │      │ + Merge    │    │ Preds    │      │ LLM Reports│
-└────────┘      └────────────┘    └──────────┘      └────────────┘
- Step 1           Step 2           Step 3             Step 4
+Chain (sequential):
+6:00pm ET          10:00pm ET         10:05pm ET
+    │                  │                  │
+    ▼                  ▼                  ▼
+┌────────┐      ┌────────────┐    ┌──────────┐
+│ EC2    │      │ DGX        │    │ DGX→EC2  │
+│ Data   │─────>│ Inference  │───>│ SCP      │
+│ Pull   │      │ + Merge    │    │ Preds    │
+└────────┘      └────────────┘    └──────────┘
+ Step 1           Step 2           Step 3
+ ~4 hrs            ~2 min           ~1 min
+
+Standalone (runs independently, needs only all_data_*.csv + ollama):
+7:00pm ET                         ~8:35pm ET
+    │                                  │
+    ▼                                  ▼
+┌────────────────────────────┐    ┌─────┐
+│ DGX: LLM Reports          │    │     │
+│ pull JSONs → ollama →push  │───>│ Done│
+└────────────────────────────┘    └─────┘
+ Section 3.5 (~95 min)
 ```
+
+#### Pipeline Artifact Reference
+
+Scripts, artifacts, and locations in temporal execution order. Shows what runs where, what it produces, and where files move via SCP.
+
+| # | Script / Action | Runs On | Input | Output Artifact | Output Location | SCP? |
+|---|----------------|---------|-------|-----------------|-----------------|------|
+| 1 | `ec2_nightly.sh --step data` | EC2 | Alpha Vantage API, MySQL | `all_data_0.csv` … `all_data_36.csv` (37 files) | EC2: `~/bar_fly_trading/` | — |
+| 2 | `ec2_nightly.sh --step pdf` | EC2 | MySQL data | `overnight_*.pdf` | EC2: Google Drive upload | — |
+| 3 | `ec2_nightly.sh --step web` | EC2 | MySQL, Alpha Vantage | `sectors.json`, `sector_*.json`, `{SYM}.json`, `{SYM}_history.json` | EC2: `/var/www/bft/data/` | — |
+| 4 | **SCP data to DGX** | EC2→DGX | `all_data_*.csv` on EC2 | `all_data_*.csv` on DGX | DGX: `~/proj/bar_fly_trading/` | **yes** |
+| 5 | `infer_merge.sh` | DGX | `all_data_*.csv`, 9 model `.pt` files | `pred_*.csv` (9), `merged_predictions.csv` | DGX: `stockformer/output/predictions/`, `~/proj/bar_fly_trading/` | — |
+| 6 | **SCP predictions to EC2** | DGX→EC2 | `merged_predictions.csv` on DGX | `merged_predictions.csv` on EC2 | EC2: `~/bar_fly_trading/` | **yes** |
+| 7a | `dgx_nightly.sh --step pull` | DGX←EC2 | `*.json` on EC2 | `*.json` on DGX | DGX: `~/proj/bar_fly_trading/webapp_data/` | **yes** |
+| 7b | `dgx_nightly.sh --step reports` | DGX | `all_data_*.csv`, ollama, Alpha Vantage | Updated `{SYM}.json` (with AI summaries + news) | DGX: `~/proj/bar_fly_trading/webapp_data/` | — |
+| 7c | `dgx_nightly.sh --step push` | DGX→EC2 | Updated `*.json` on DGX | Updated `*.json` on EC2 | EC2: `/var/www/bft/data/` | **yes** |
+
+**Notes:**
+- Steps 1-3 run sequentially inside `ec2_nightly.sh` (~4 hrs total)
+- Step 4 is manual or triggered after step 1 completes
+- Steps 5-6 are sequential (infer then SCP)
+- Steps 7a-7c are standalone — can run anytime, no dependency on steps 1-6
+- Real-time scanning (`rt_scan_loop.sh`) reads `all_data_*.csv` + `merged_predictions.csv` from EC2 during market hours
 
 ---
 
@@ -198,6 +233,7 @@ This is the daily automated pipeline that runs after market close. Each step pro
 **Script:** `scripts/ec2_nightly.sh`
 **Where:** EC2
 **Cron:** `0 18 * * 1-5` (6pm ET weekdays)
+**Estimated time:** ~4 hours (37 batches x ~7 min/batch for data pull, plus screener + web refresh)
 
 ```bash
 # Full pipeline (data + screener PDF + website data)
@@ -281,6 +317,7 @@ sudo systemctl enable mysqld
 **Script:** `scripts/infer_merge.sh`
 **Where:** DGX
 **Cron:** `0 19 * * 1-5` (7pm ET, 1 hour after EC2 nightly starts — or trigger after step 1 completes)
+**Estimated time:** ~2 minutes (9 models run in 3 parallel groups of 3 horizons)
 
 ```bash
 # Encoder models (default)
@@ -358,6 +395,7 @@ print(f'dim_ff: {sd[\"encoder.layers.0.linear1.weight\"].shape[0]}')
 
 **Where:** DGX -> EC2 (SCP)
 **How:** Manual or scripted
+**Estimated time:** ~1 minute (single 39MB file over Tailscale)
 
 ```bash
 scp ~/proj/bar_fly_trading/merged_predictions.csv sschmidt@100.96.238.58:~/bar_fly_trading/merged_predictions.csv
@@ -384,15 +422,16 @@ ssh sschmidt@100.96.238.58 "echo OK"
 
 ---
 
-**Dependencies for Step 4:** Symbol JSONs on EC2 (produced by step 1, step 3 web), `all_data_*.csv` on DGX
+### 3.5 Website LLM Reports (DGX) — Standalone
 
----
-
-#### 3.4 Step 4: Website LLM Reports (DGX)
+> **No dependency on Steps 1-3.** This step only needs `all_data_*.csv` on DGX + ollama running.
+> It reads technical data directly from CSVs and fetches news/sentiment via Alpha Vantage API.
+> The SCP pull/push is just deployment plumbing to get JSONs to/from EC2's web directory.
 
 **Script:** `scripts/dgx_nightly.sh`
 **Where:** DGX
-**Cron:** `0 19 * * 1-5` (7pm ET, after EC2 nightly)
+**Cron:** `0 19 * * 1-5` (7pm ET — runs independently, does not wait for EC2 nightly)
+**Estimated time:** ~95 minutes (3 min SCP pull + ~90 min LLM reports @ ~6s/symbol x 544 symbols + 3 min SCP push)
 
 ```bash
 # Full pipeline: pull JSONs from EC2, run LLM summaries, push back
@@ -405,11 +444,16 @@ bash scripts/dgx_nightly.sh --step push      # push JSONs back to EC2
 ```
 
 **What it does:**
-1. **Pull** — SCPs symbol JSONs from EC2 (`/var/www/bft/data/*.json`) to DGX
-2. **Reports** — Runs `generate_reports` with ollama (llama3.1:8b) to generate AI stock summaries for each symbol. Auto-detects GPU availability — falls back to llama3.2:1b if training is running.
+1. **Pull** — SCPs symbol JSONs from EC2 (`/var/www/bft/data/*.json`) to DGX. These are the base JSONs from `populate_all` — the pull merges LLM fields into existing data (quote, meta, earnings, history).
+2. **Reports** — Runs `generate_reports` which:
+   - Reads `all_data_*.csv` for symbol list + technical indicators
+   - Calls Alpha Vantage NEWS_SENTIMENT API for news/sentiment per symbol
+   - Calls local ollama (llama3.1:8b) to generate 3-bullet technical summaries
+   - Merges `technical`, `news`, `signal` fields into each symbol JSON
+   - Auto-detects GPU availability — falls back to llama3.2:1b if training is running
 3. **Push** — SCPs updated JSONs back to EC2
 
-**Produces:** Updated `*.json` files on EC2 with AI-generated summaries
+**Produces:** Updated `*.json` files on EC2 with AI-generated summaries + news sentiment
 
 **Cron setup:**
 ```bash
@@ -428,6 +472,11 @@ BFT_DATA_DIR=webapp_data python -m webapp.backend.generate_reports \
 Change LLM model:
 ```bash
 BFT_OLLAMA_MODEL=llama3.1:8b bash scripts/dgx_nightly.sh --step reports
+```
+
+Skip LLM summaries entirely (just news + technicals):
+```bash
+BFT_SKIP_LLM=1 bash scripts/dgx_nightly.sh --step reports
 ```
 
 If ollama is not running:
@@ -786,7 +835,8 @@ python -m stockformer.main --data-path "./all_data_*.csv" \
 ./scripts/run_parallel_training.sh --epochs 30
 ```
 
-Launches 3 parallel jobs (one per label mode), each training 3 horizons sequentially. ~12 hours total.
+Launches 3 parallel jobs (one per label mode), each training 3 horizons sequentially.
+**Estimated time:** ~12 hours on DGX (GPU). Each model trains ~80 min (15 epochs).
 
 #### 7.5 Full Train + Infer + Merge Pipeline
 
