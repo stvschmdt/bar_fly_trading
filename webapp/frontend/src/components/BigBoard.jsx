@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { getBigBoard } from '../api/client'
 import SECTOR_COLORS from '../constants/sectorColors'
 import { isStale } from '../utils/freshness'
+import { useWorkbench } from '../hooks/useWorkbench'
 
 function changeBg(pct, stale) {
   if (stale) return 'rgba(156, 163, 175, 0.18)'
@@ -28,6 +29,7 @@ export default function BigBoard() {
   const [stocks, setStocks] = useState([])
   const [sectors, setSectors] = useState([])
   const [loading, setLoading] = useState(true)
+  const { has, toggle } = useWorkbench()
 
   useEffect(() => {
     getBigBoard()
@@ -55,24 +57,36 @@ export default function BigBoard() {
         {stocks.map((s) => {
           const sector = SECTOR_COLORS[s.sector_id] || { color: '#6b7280' }
           const stale = isStale(s.last_updated)
+          const inBench = has(s.symbol)
           return (
-            <Link
-              key={s.symbol}
-              to={`/sector/${s.sector_id}/${s.symbol}`}
-              className="block rounded text-center px-1 py-2 hover:opacity-80 transition-opacity"
-              style={{
-                backgroundColor: changeBg(s.change_pct, stale),
-                border: `2px solid ${stale ? '#9ca3af' : sector.color}`,
-              }}
-            >
-              <div className={`text-[11px] font-semibold truncate ${stale ? 'text-gray-400 dark:text-gray-500' : 'dark:text-gray-100'}`}>
-                {s.symbol}
-              </div>
-              <div className={`text-[10px] font-mono ${changeText(s.change_pct, stale)}`}>
-                {s.change_pct > 0 ? '+' : ''}
-                {s.change_pct.toFixed(1)}%
-              </div>
-            </Link>
+            <div key={s.symbol} className="relative group">
+              <Link
+                to={`/sector/${s.sector_id}/${s.symbol}`}
+                className="block rounded text-center px-1 py-2 hover:opacity-80 transition-opacity"
+                style={{
+                  backgroundColor: changeBg(s.change_pct, stale),
+                  border: `2px solid ${stale ? '#9ca3af' : sector.color}`,
+                }}
+              >
+                <div className={`text-[11px] font-semibold truncate ${stale ? 'text-gray-400 dark:text-gray-500' : 'dark:text-gray-100'}`}>
+                  {s.symbol}
+                </div>
+                <div className={`text-[10px] font-mono ${changeText(s.change_pct, stale)}`}>
+                  {s.change_pct > 0 ? '+' : ''}
+                  {s.change_pct.toFixed(1)}%
+                </div>
+              </Link>
+              <button
+                onClick={() => toggle(s.symbol)}
+                className={`absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[8px] leading-none transition-all ${
+                  inBench
+                    ? 'bg-blue-500 text-white opacity-100'
+                    : 'bg-gray-300 dark:bg-gray-600 text-gray-600 dark:text-gray-300 opacity-0 group-hover:opacity-100'
+                }`}
+              >
+                {inBench ? '\u2713' : '+'}
+              </button>
+            </div>
           )
         })}
       </div>

@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { getSymbol, getSector } from '../api/client'
 import StockChart from './StockChart'
 import { isStale } from '../utils/freshness'
+import { useWorkbench } from '../hooks/useWorkbench'
 
 function changeColor(pct) {
   if (pct > 0) return 'text-green-600 dark:text-green-400'
@@ -32,6 +33,8 @@ export default function StockDetail() {
   const [stockInfo, setStockInfo] = useState(null)
   const [flipped, setFlipped] = useState(false)
   const [error, setError] = useState(null)
+  const { has, toggle } = useWorkbench()
+  const inBench = has(symbol.toUpperCase())
 
   useEffect(() => {
     getSymbol(symbol)
@@ -78,6 +81,16 @@ export default function StockDetail() {
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Data may be outdated</p>
           )}
         </div>
+        <button
+          onClick={() => toggle(symbol.toUpperCase())}
+          className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
+            inBench
+              ? 'bg-blue-500 border-blue-500 text-white'
+              : 'border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800'
+          }`}
+        >
+          {inBench ? 'In Workbench' : '+ Workbench'}
+        </button>
         <button
           onClick={() => setFlipped(!flipped)}
           className="px-3 py-1.5 text-xs rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"

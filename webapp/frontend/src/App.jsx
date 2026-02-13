@@ -9,14 +9,16 @@ import AboutPage from './components/AboutPage'
 import ContactPage from './components/ContactPage'
 import LoginPage from './components/LoginPage'
 import ProtectedRoute from './components/ProtectedRoute'
+import WorkbenchBar from './components/WorkbenchBar'
 
 function ProtectedLayout() {
   return (
     <ProtectedRoute>
       <Header />
-      <main>
+      <main className="pb-12">
         <Outlet />
       </main>
+      <WorkbenchBar />
     </ProtectedRoute>
   )
 }
