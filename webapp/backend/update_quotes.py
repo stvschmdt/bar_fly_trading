@@ -84,13 +84,19 @@ def update_quotes():
             continue
 
         # Get previous close from existing symbol JSON for change calculation
+        # Priority: quote.prev_close (stable, set on first poll of day)
+        #           -> technical.price (yesterday's EOD from nightly pipeline)
         prev_close = price  # fallback: 0% change
         sym_file = DATA_DIR / f"{sym}.json"
         if sym_file.exists():
             try:
                 with open(sym_file) as f:
                     existing = json.load(f)
-                prev = existing.get("technical", {}).get("price", 0)
+                # Use stored prev_close if available (persisted from first poll)
+                prev = existing.get("quote", {}).get("prev_close", 0)
+                if not prev or prev <= 0:
+                    # First poll of the day: use technical.price (yesterday's close)
+                    prev = existing.get("technical", {}).get("price", 0)
                 if prev and prev > 0:
                     prev_close = prev
             except Exception:
@@ -179,14 +185,18 @@ def update_quotes():
         try:
             with open(sym_file) as f:
                 report = json.load(f)
+            # Preserve prev_close: use existing quote.prev_close, or
+            # snapshot technical.price (yesterday's EOD) on first poll of day
+            prev_close = report.get("quote", {}).get("prev_close", 0)
+            if not prev_close or prev_close <= 0:
+                prev_close = report.get("technical", {}).get("price", 0)
             report["quote"] = {
                 "price": q["price"],
                 "change_pct": q["change_pct"],
+                "prev_close": round(prev_close, 2) if prev_close else 0,
                 "volume": q.get("volume", 0),
                 "last_updated": now,
             }
-            if report.get("technical"):
-                report["technical"]["price"] = q["price"]
             with open(sym_file, "w") as f:
                 json.dump(report, f, indent=2)
             patched += 1

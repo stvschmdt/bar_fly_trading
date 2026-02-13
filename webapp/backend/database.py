@@ -96,14 +96,18 @@ def validate_invite_code(code: str) -> bool:
     return row["use_count"] < row["max_uses"]
 
 
-def consume_invite_code(code: str, email: str):
+def consume_invite_code(code: str, email: str) -> bool:
+    """Atomically consume an invite code. Returns True if successful."""
     conn = get_db()
-    conn.execute(
-        "UPDATE invite_codes SET use_count = use_count + 1 WHERE code = ?",
+    cur = conn.execute(
+        "UPDATE invite_codes SET use_count = use_count + 1 "
+        "WHERE code = ? AND use_count < max_uses",
         (code,),
     )
     conn.commit()
+    consumed = cur.rowcount > 0
     conn.close()
+    return consumed
 
 
 def create_invite_code(code: str, max_uses: int = 1):

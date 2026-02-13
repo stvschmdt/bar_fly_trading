@@ -133,9 +133,13 @@ def register(req: RegisterRequest):
     if get_user_by_email(req.email):
         raise HTTPException(409, "Email already registered")
 
+    # Atomically consume the invite code (prevents race where concurrent
+    # registrations both pass validate but exceed max_uses)
+    if not consume_invite_code(req.invite_code, req.email):
+        raise HTTPException(400, "Invalid or expired invite code")
+
     pw_hash = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
     create_user(req.email, pw_hash)
-    consume_invite_code(req.invite_code, req.email)
 
     token = create_token(req.email.lower())
     logger.info(f"New user registered: {req.email}")
