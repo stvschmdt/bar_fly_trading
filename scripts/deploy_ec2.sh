@@ -33,20 +33,17 @@ DO_BACKEND=false
 DO_DATA=false
 DO_SETUP=false
 
-if [[ $# -gt 0 ]]; then
-    DO_ALL=false
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --frontend)  DO_FRONTEND=true; DO_PULL=true; shift ;;
-            --backend)   DO_BACKEND=true; DO_PULL=true; shift ;;
-            --data)      DO_DATA=true; shift ;;
-            --pull)      DO_PULL=true; shift ;;
-            --setup)     DO_SETUP=true; shift ;;
-            --csv-pattern) CSV_PATTERN="$2"; shift 2 ;;
-            *)           echo "Unknown arg: $1"; exit 1 ;;
-        esac
-    done
-fi
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --frontend)  DO_ALL=false; DO_FRONTEND=true; DO_PULL=true; shift ;;
+        --backend)   DO_ALL=false; DO_BACKEND=true; DO_PULL=true; shift ;;
+        --data)      DO_ALL=false; DO_DATA=true; shift ;;
+        --pull)      DO_ALL=false; DO_PULL=true; shift ;;
+        --setup)     DO_ALL=false; DO_SETUP=true; shift ;;
+        --csv-pattern) CSV_PATTERN="$2"; shift 2 ;;
+        *)           echo "Unknown arg: $1"; exit 1 ;;
+    esac
+done
 
 # ── Ensure directories exist ─────────────────────────────────────
 sudo mkdir -p "$DATA_DIR" "$FRONTEND_DIR" "$LOG_DIR"
