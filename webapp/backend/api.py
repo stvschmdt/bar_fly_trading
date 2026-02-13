@@ -103,8 +103,18 @@ def get_sectors():
 
 @app.get("/api/sector/{sector_id}")
 def get_sector(sector_id: str):
-    """Return stocks within a sector."""
+    """Return stocks within a sector. SPY returns all S&P 500 stocks."""
     sector_id = sector_id.upper()
+    if sector_id == "SPY":
+        bb = get_bigboard()
+        spy_data = _read_json("SPY.json")
+        spy_pct = spy_data["quote"]["change_pct"] if spy_data else 0
+        return {
+            "sector_id": "SPY",
+            "name": "S&P 500",
+            "change_pct": spy_pct,
+            "stocks": bb["stocks"],
+        }
     data = _read_json(f"sector_{sector_id}.json")
     if data is None:
         raise HTTPException(404, f"sector_{sector_id}.json not found")

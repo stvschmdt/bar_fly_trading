@@ -53,8 +53,8 @@ export default function SectorCard({ id, name, change_pct, stock_count, price, l
     </div>
   )
 
-  // SPY/QQQ link to Big Board
-  if (id === 'SPY' || id === 'QQQ') return <Link to="/bigboard">{card}</Link>
+  // QQQ links to Big Board; SPY links to its own sector page
+  if (id === 'QQQ') return <Link to="/bigboard">{card}</Link>
 
   return <Link to={`/sector/${id}`}>{card}</Link>
 }
