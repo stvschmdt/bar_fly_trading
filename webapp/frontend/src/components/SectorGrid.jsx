@@ -65,7 +65,7 @@ export default function SectorGrid() {
       </div>
 
       {/* Sector grid */}
-      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
+      <div id="sectors" className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
         {data.sectors.map(sector => (
           <SectorCard
             key={sector.id}

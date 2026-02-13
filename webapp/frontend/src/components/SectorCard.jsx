@@ -53,10 +53,9 @@ export default function SectorCard({ id, name, change_pct, stock_count, price, l
     </div>
   )
 
-  // Indices (SPY, QQQ) link to their stock detail page
-  if (large && stock_count === 0) {
-    return <Link to={`/sector/IDX/${id}`}>{card}</Link>
-  }
+  // SPY scrolls down to the sector grid (same page); QQQ is static
+  if (id === 'SPY') return <a href="#sectors">{card}</a>
+  if (id === 'QQQ') return card
 
   return <Link to={`/sector/${id}`}>{card}</Link>
 }
