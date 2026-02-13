@@ -7,6 +7,7 @@
 #   bash scripts/deploy_ec2.sh --frontend   # frontend only
 #   bash scripts/deploy_ec2.sh --backend    # backend restart only
 #   bash scripts/deploy_ec2.sh --data       # repopulate data only
+#   bash scripts/deploy_ec2.sh --data --csv-pattern "/other/path/all_data_*.csv"
 #   bash scripts/deploy_ec2.sh --setup      # first-time systemd + nginx setup
 
 set -e
@@ -15,7 +16,7 @@ REPO_DIR="$HOME/bar_fly_trading"
 DATA_DIR="/var/www/bft/data"
 FRONTEND_DIR="/var/www/bft/frontend"
 LOG_DIR="/var/log/bft"
-CSV_PATTERN="$REPO_DIR/all_data_*.csv"
+CSV_PATTERN="${BFT_CSV_PATTERN:-$REPO_DIR/all_data_*.csv}"
 BRANCH="feature/website"
 SERVICE_NAME="bft-api"
 PYTHON_BIN="${CONDA_PREFIX:-$(dirname $(which python))/..}/bin/python"
@@ -41,6 +42,7 @@ if [[ $# -gt 0 ]]; then
             --data)      DO_DATA=true; shift ;;
             --pull)      DO_PULL=true; shift ;;
             --setup)     DO_SETUP=true; shift ;;
+            --csv-pattern) CSV_PATTERN="$2"; shift 2 ;;
             *)           echo "Unknown arg: $1"; exit 1 ;;
         esac
     done
