@@ -57,18 +57,18 @@ def generate_symbol_report(symbol: str, csv_pattern: str) -> dict:
         tech = get_technical_data(symbol, csv_pattern)
         if tech:
             report["technical"] = {
-                "rsi": tech.get("rsi_14"),
-                "macd": tech.get("macd"),
-                "macd_signal": tech.get("macd_9_ema"),
-                "adx": tech.get("adx_14"),
-                "cci": tech.get("cci_14"),
-                "atr": tech.get("atr_14"),
-                "sma_20": tech.get("sma_20"),
-                "sma_50": tech.get("sma_50"),
-                "bbands_upper": tech.get("bbands_upper_20"),
-                "bbands_lower": tech.get("bbands_lower_20"),
+                "rsi": tech.get("RSI 14"),
+                "macd": tech.get("MACD"),
+                "macd_signal": tech.get("MACD Signal Line"),
+                "adx": tech.get("ADX 14"),
+                "cci": tech.get("CCI 14"),
+                "atr": tech.get("ATR 14"),
+                "sma_20": tech.get("SMA 20"),
+                "sma_50": tech.get("SMA 50"),
+                "bbands_upper": tech.get("Bollinger Upper"),
+                "bbands_lower": tech.get("Bollinger Lower"),
                 "pe_ratio": tech.get("pe_ratio"),
-                "price": tech.get("adjusted_close"),
+                "price": tech.get("Price"),
             }
     except Exception as e:
         logger.warning(f"  Technical data failed for {symbol}: {e}")
