@@ -156,7 +156,7 @@ get_runner_cmd() {
             echo "python strategies/run_oversold_bounce.py --data-path '$DATA_PATH' --watchlist api_data/watchlist.csv --watchlist-mode filter --mode live --skip-live --lookback-days 1 --summary-only $NO_NOTIFY --instrument-type option --output-signals $output"
             ;;
         oversold_reversal)
-            echo "python strategies/run_oversold_reversal.py --predictions $PREDICTIONS --watchlist api_data/watchlist.csv --watchlist-mode filter --mode live --skip-live --lookback-days 1 --summary-only $NO_NOTIFY --output-signals $output"
+            echo "python strategies/run_oversold_reversal.py --data-path '$DATA_PATH' --watchlist api_data/watchlist.csv --watchlist-mode filter --mode live --skip-live --lookback-days 1 --summary-only $NO_NOTIFY --output-signals $output"
             ;;
         low_bounce)
             echo "python strategies/run_low_bounce.py --data-path '$DATA_PATH' --watchlist api_data/watchlist.csv --watchlist-mode filter --mode live --skip-live --lookback-days 1 --summary-only $NO_NOTIFY --output-signals $output"

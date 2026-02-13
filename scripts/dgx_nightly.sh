@@ -78,8 +78,9 @@ run_reports() {
         sleep 3
     fi
 
-    log "  Running with ollama (${BFT_OLLAMA_MODEL:-llama3.2:3b})"
-    if BFT_DATA_DIR="$LOCAL_DATA_DIR" python -m webapp.backend.generate_reports \
+    export BFT_OLLAMA_MODEL="${BFT_OLLAMA_MODEL:-llama3.1:8b}"
+    log "  Running with ollama ($BFT_OLLAMA_MODEL)"
+    if BFT_DATA_DIR="$LOCAL_DATA_DIR" BFT_OLLAMA_MODEL="$BFT_OLLAMA_MODEL" python -m webapp.backend.generate_reports \
         --csv-pattern "$CSV_PATTERN" 2>&1; then
         log "  Reports generated with AI summaries"
     else
