@@ -49,7 +49,7 @@ export default function SectorGrid() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
       {/* Top row: SPY + QQQ + Custom Watchlist */}
-      <div className={`grid gap-4 max-w-2xl mx-auto ${hasWatchlist ? 'grid-cols-3' : 'grid-cols-2 max-w-md'}`}>
+      <div className="grid grid-cols-3 gap-4 max-w-2xl mx-auto">
         {data.indices.map(idx => (
           <SectorCard
             key={idx.id}

@@ -109,8 +109,21 @@ def generate_reports(csv_pattern: str, symbols: list[str] = None):
         try:
             report = generate_symbol_report(symbol, csv_pattern)
 
-            # Write symbol report
+            # Merge into existing file (preserve quote, meta, etc. from populate_all)
             report_file = DATA_DIR / f"{symbol}.json"
+            if report_file.exists():
+                try:
+                    with open(report_file) as f:
+                        existing = json.load(f)
+                    # Overlay report fields onto existing data
+                    for key in ("technical", "news", "signal"):
+                        if report.get(key) is not None:
+                            existing[key] = report[key]
+                    existing["report_date"] = report["report_date"]
+                    report = existing
+                except Exception:
+                    pass
+
             with open(report_file, "w") as f:
                 json.dump(report, f, indent=2)
 
