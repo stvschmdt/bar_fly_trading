@@ -31,5 +31,5 @@ exec bash scripts/rt_scan_loop.sh \
     --data-dir "$DATA_DIR" \
     --execute \
     --buy-only \
-    --no-notify \
+    # --no-notify \
     "$@"

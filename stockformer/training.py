@@ -375,10 +375,23 @@ def train_model(
         model.load_state_dict(best_state_dict)
         print(f"Restored best model (val_loss={best_val_loss:.4f})")
 
-    # Save model checkpoint
+    # Save model checkpoint with architecture metadata
     if model_out_path is not None:
         os.makedirs(os.path.dirname(model_out_path) or ".", exist_ok=True)
         torch.save(model.state_dict(), model_out_path)
+        # Save architecture metadata so inference can recover nhead exactly
+        meta_path = model_out_path + ".meta"
+        try:
+            import json as _json
+            meta = {}
+            if hasattr(model, 'encoder') and hasattr(model.encoder, 'layers') and len(model.encoder.layers) > 0:
+                attn = model.encoder.layers[0].self_attn
+                if hasattr(attn, 'num_heads'):
+                    meta["nhead"] = attn.num_heads
+            with open(meta_path, 'w') as mf:
+                _json.dump(meta, mf)
+        except Exception:
+            pass  # Non-fatal — inference falls back to heuristic
         print(f"Saved model to {model_out_path}")
 
     # Save training log

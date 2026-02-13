@@ -352,7 +352,7 @@ def infer(cfg):
         state_dict = torch.load(cfg["model_out"], map_location=device, weights_only=True)
 
         from .model import infer_arch_from_state_dict
-        detected = infer_arch_from_state_dict(state_dict)
+        detected = infer_arch_from_state_dict(state_dict, model_path=cfg["model_out"])
         if detected:
             overrides = []
             for key in ("d_model", "nhead", "num_layers", "dim_feedforward"):

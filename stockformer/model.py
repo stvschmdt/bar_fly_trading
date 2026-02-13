@@ -219,7 +219,7 @@ class StockTransformer(nn.Module):
 # Architecture Auto-Detection from Checkpoint
 # =============================================================================
 
-def infer_arch_from_state_dict(state_dict):
+def infer_arch_from_state_dict(state_dict, model_path=None):
     """
     Infer model architecture hyperparameters from a saved state_dict.
 
@@ -228,6 +228,7 @@ def infer_arch_from_state_dict(state_dict):
 
     Args:
         state_dict: Model state dict loaded from a .pt checkpoint
+        model_path: Optional path to the .pt file; used to find .meta sidecar
 
     Returns:
         dict with keys: d_model, num_layers, dim_feedforward, nhead, num_buckets
@@ -251,14 +252,26 @@ def infer_arch_from_state_dict(state_dict):
     if "encoder.layers.0.linear1.weight" in state_dict:
         arch["dim_feedforward"] = state_dict["encoder.layers.0.linear1.weight"].shape[0]
 
-    # nhead: from in_proj_weight which is [3*d_model, d_model] for multi-head attention
-    if "encoder.layers.0.self_attn.in_proj_weight" in state_dict and "d_model" in arch:
-        in_proj_rows = state_dict["encoder.layers.0.self_attn.in_proj_weight"].shape[0]
-        arch["nhead"] = in_proj_rows // (3 * arch["d_model"]) * arch.get("nhead", 4)
-        # in_proj_weight is [3*d_model, d_model], so in_proj_rows / d_model = 3
-        # nhead must divide d_model evenly; detect from common values
+    # nhead: read from .meta sidecar if available (exact value saved during training)
+    nhead_from_meta = None
+    if model_path:
+        meta_path = str(model_path) + ".meta"
+        try:
+            import json as _json
+            with open(meta_path) as mf:
+                meta = _json.load(mf)
+            if "nhead" in meta:
+                nhead_from_meta = meta["nhead"]
+        except (FileNotFoundError, ValueError, KeyError):
+            pass
+
+    if nhead_from_meta is not None:
+        arch["nhead"] = nhead_from_meta
+    elif "d_model" in arch:
+        # Fallback heuristic for legacy checkpoints without .meta
+        # nhead is not directly inferable from weight shapes in nn.MultiheadAttention,
+        # so we pick the largest common divisor from likely training values
         d = arch["d_model"]
-        # Default to 4, but verify it divides evenly
         for candidate in [4, 8, 2, 1]:
             if d % candidate == 0:
                 arch["nhead"] = candidate

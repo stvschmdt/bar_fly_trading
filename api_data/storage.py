@@ -38,7 +38,8 @@ TABLE_CREATES = {
     'economic_indicators': 'CREATE TABLE economic_indicators(date DATETIME, treasury_yield_2year DOUBLE, treasury_yield_10year DOUBLE, ffer DOUBLE, cpi DOUBLE, inflation DOUBLE, retail_sales DOUBLE, durables DOUBLE, unemployment DOUBLE, nonfarm_payroll DOUBLE, PRIMARY KEY (date));',
     'technical_indicators': 'CREATE TABLE technical_indicators(date DATETIME, sma_20 DOUBLE, sma_50 DOUBLE, sma_200 DOUBLE, ema_20 DOUBLE, ema_50 DOUBLE, ema_200 DOUBLE, macd DOUBLE, rsi_14 DOUBLE, adx_14 DOUBLE, atr_14 DOUBLE, cci_14 DOUBLE, bbands_upper_20 DOUBLE, bbands_middle_20 DOUBLE, bbands_lower_20 DOUBLE, symbol VARCHAR(5), PRIMARY KEY (date, symbol));',
     'stock_splits': 'CREATE TABLE stock_splits(symbol VARCHAR(5), effective_date DATETIME, split_factor DOUBLE, PRIMARY KEY (symbol, effective_date));',
-    'historical_options': 'CREATE TABLE historical_options (contract_id VARCHAR(30) NOT NULL, date DATETIME NOT NULL, symbol VARCHAR(8) NOT NULL, type ENUM(\'call\', \'put\'), expiration DATE, strike FLOAT, last FLOAT, mark FLOAT, bid FLOAT, ask FLOAT, volume INT, implied_volatility FLOAT, delta FLOAT, gamma FLOAT, theta FLOAT, vega FLOAT, rho FLOAT, PRIMARY KEY (contract_id, date, symbol)) PARTITION BY KEY (symbol) PARTITIONS 16;'
+    'historical_options': 'CREATE TABLE historical_options (contract_id VARCHAR(30) NOT NULL, date DATETIME NOT NULL, symbol VARCHAR(8) NOT NULL, type ENUM(\'call\', \'put\'), expiration DATE, strike FLOAT, last FLOAT, mark FLOAT, bid FLOAT, ask FLOAT, volume INT, implied_volatility FLOAT, delta FLOAT, gamma FLOAT, theta FLOAT, vega FLOAT, rho FLOAT, PRIMARY KEY (contract_id, date, symbol)) PARTITION BY KEY (symbol) PARTITIONS 16;',
+    'options_daily_summary': 'CREATE TABLE IF NOT EXISTS options_daily_summary (symbol VARCHAR(20) NOT NULL, date DATE NOT NULL, call_volume BIGINT DEFAULT 0, put_volume BIGINT DEFAULT 0, total_volume BIGINT DEFAULT 0, PRIMARY KEY (symbol, date), INDEX idx_date_symbol (date, symbol)) ENGINE=InnoDB;',
 }
 
 TABLE_COLS = {
@@ -217,6 +218,13 @@ def adjust_for_stock_splits(df):
     return df
 
 
+def ensure_options_daily_summary():
+    """Create options_daily_summary table if it doesn't exist."""
+    with get_engine().connect() as connection:
+        connection.execute(text(TABLE_CREATES['options_daily_summary']))
+        connection.commit()
+
+
 def update_options_daily_summary(symbol: str, date: str):
     """
     Incrementally update the options_daily_summary pre-aggregated table for a given
@@ -251,6 +259,7 @@ def update_options_daily_summary(symbol: str, date: str):
 
 
 def process_gold_table_in_batches(symbols: list[str], earliest_date: str = '2016-01-01', symbols_per_batch: int = 15):
+    ensure_options_daily_summary()
     symbol_batches = [symbols[i:i + symbols_per_batch] for i in range(0, len(symbols), symbols_per_batch)]
     for i, symbol_batch in enumerate(symbol_batches):
         logger.info(f'Processing batch {i + 1} of {len(symbol_batches)}: {symbol_batch}')

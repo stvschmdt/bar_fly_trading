@@ -49,8 +49,8 @@ app.include_router(auth_router)
 @app.on_event("startup")
 def on_startup():
     init_db()
-    if SECRET_KEY == "bft-dev-secret-change-in-prod":
-        logger.warning("Using default JWT secret — set BFT_JWT_SECRET in production")
+    if not os.environ.get("BFT_JWT_SECRET"):
+        logger.warning("BFT_JWT_SECRET not set — using ephemeral secret (tokens reset on restart)")
 
 
 # ── Auth Middleware ────────────────────────────────────────────────

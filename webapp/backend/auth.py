@@ -4,6 +4,7 @@ Auth endpoints: register (invite-gated), login, and token verification.
 
 import logging
 import os
+import secrets
 import smtplib
 import threading
 from datetime import datetime, timedelta, timezone
@@ -26,7 +27,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-SECRET_KEY = os.environ.get("BFT_JWT_SECRET", "bft-dev-secret-change-in-prod")
+# Fail closed: if BFT_JWT_SECRET is not set, generate a random ephemeral secret.
+# This means tokens won't survive server restarts, but the secret can never be guessed.
+_env_secret = os.environ.get("BFT_JWT_SECRET")
+if _env_secret:
+    SECRET_KEY = _env_secret
+else:
+    SECRET_KEY = secrets.token_hex(32)
+    logger.warning(
+        "BFT_JWT_SECRET not set — using ephemeral random secret. "
+        "Tokens will not survive server restarts. Set BFT_JWT_SECRET in production."
+    )
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 72
 
