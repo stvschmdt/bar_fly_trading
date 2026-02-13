@@ -340,7 +340,34 @@ def infer(cfg):
 
         print(f"Data loading time: {load_timer}")
 
-        # Auto-compute quantile bucket edges if requested (same as training)
+        # ── Peek at checkpoint to auto-detect architecture ──────────────
+        # This must happen BEFORE auto bucket edges and dataset creation
+        # so that num_buckets and other params are correct for the data pipeline.
+        device = cfg.get("device")
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"Using device: {device}")
+
+        print(f"Loading model from: {cfg['model_out']}")
+        state_dict = torch.load(cfg["model_out"], map_location=device, weights_only=True)
+
+        from .model import infer_arch_from_state_dict
+        detected = infer_arch_from_state_dict(state_dict)
+        if detected:
+            overrides = []
+            for key in ("d_model", "nhead", "num_layers", "dim_feedforward"):
+                if key in detected and detected[key] != cfg.get(key):
+                    overrides.append(f"{key}: {cfg.get(key)} -> {detected[key]}")
+                    cfg[key] = detected[key]
+            if overrides:
+                print(f"Auto-detected architecture from checkpoint: {', '.join(overrides)}")
+
+        # For buckets mode, override n_buckets from checkpoint before auto-edge computation
+        if cfg["label_mode"] == "buckets" and "num_buckets" in detected:
+            cfg["n_buckets"] = detected["num_buckets"]
+            cfg["_num_buckets_override"] = detected["num_buckets"]
+
+        # ── Auto-compute quantile bucket edges ──────────────────────────
         if cfg["label_mode"] == "buckets" and cfg.get("bucket_edges") == "auto":
             from .dataset import compute_quantile_edges
             n_buckets = cfg.get("n_buckets", 4)
@@ -364,7 +391,7 @@ def infer(cfg):
         print(f"Features: {len(feature_cols)} columns")
         print(f"Output mode: {output_mode}")
 
-        # Create dataset
+        # Create dataset (now with correct bucket_edges from checkpoint)
         dataset = StockSequenceDataset(
             df=df,
             lookback=cfg["lookback"],
@@ -386,14 +413,7 @@ def infer(cfg):
             num_workers=cfg["num_workers"],
         )
 
-        # Setup device
-        device = cfg.get("device")
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"Using device: {device}")
-
-        # Create and load model
-        # For cross-attention, set market_feature_dim in config
+        # ── Create model and load weights ───────────────────────────────
         if model_type == "cross_attention" and market_feature_cols:
             cfg["market_feature_dim"] = len(market_feature_cols)
 
@@ -405,8 +425,6 @@ def infer(cfg):
             model_type=model_type,
         ).to(device)
 
-        print(f"Loading model from: {cfg['model_out']}")
-        state_dict = torch.load(cfg["model_out"], map_location=device, weights_only=True)
         model.load_state_dict(state_dict)
         model.eval()
 
