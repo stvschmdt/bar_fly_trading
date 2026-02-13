@@ -27,9 +27,9 @@ mkdir -p "$LOG_DIR" logs signals/executed
 
 # Forward all args to rt_scan_loop.sh
 # EC2 defaults: execute trades, buy-only, paper mode, gateway
+# Add --no-notify below to suppress email notifications
 exec bash scripts/rt_scan_loop.sh \
     --data-dir "$DATA_DIR" \
     --execute \
     --buy-only \
-    # --no-notify \
     "$@"
