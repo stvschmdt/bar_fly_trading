@@ -179,8 +179,10 @@ _overnight_cache = {"data": None, "built_at": 0.0}
 _OVERNIGHT_TTL = 4 * 3600  # 4 hours
 
 def _find_overnight_dir():
-    """Find the most recent overnight_v2_* directory."""
-    dirs = sorted(OVERNIGHT_BASE.glob("overnight_v2_*"), reverse=True)
+    """Find the most recent overnight_* directory."""
+    dirs = sorted(OVERNIGHT_BASE.glob("overnight_*"), reverse=True)
+    # Filter to only directories (skip overnight_*.pdf etc.)
+    dirs = [d for d in dirs if d.is_dir()]
     return dirs[0] if dirs else None
 
 
@@ -236,7 +238,7 @@ def _build_overnight_data():
     screener_date = None
 
     if overnight_dir and overnight_dir.is_dir():
-        screener_date = overnight_dir.name.replace("overnight_v2_", "")
+        screener_date = overnight_dir.name.replace("overnight_", "")
         for img in overnight_dir.iterdir():
             if not img.suffix == ".jpg":
                 continue
