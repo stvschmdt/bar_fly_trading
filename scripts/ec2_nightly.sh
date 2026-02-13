@@ -1,14 +1,25 @@
 #!/bin/bash
 # EC2 Nightly Pipeline
 #
-# Runs after market close. Pulls fresh data, builds gold tables,
-# generates screener PDF, uploads to Drive, refreshes website data.
+# Full chain (cron default):
+#   1. Data pull  — Alpha Vantage → MySQL → all_data_*.csv  (~4 hrs)
+#   2. Screener   — overnight charts + PDF → Drive upload    (~15 min)
+#   3. SCP → DGX  — send all_data_*.csv to DGX              (~2 min)
+#   4. Inference  — SSH DGX: 9 models → merged_predictions   (~2 min)
+#   5. SCP ← DGX  — pull merged_predictions.csv back        (~1 min)
+#   6. Web refresh — sector map, symbols, history JSONs      (~10 min)
 #
-# Usage:
-#   bash scripts/ec2_nightly.sh              # full pipeline
-#   bash scripts/ec2_nightly.sh --step data  # just pull_api_data + gold tables
-#   bash scripts/ec2_nightly.sh --step pdf   # just screener PDF + upload
-#   bash scripts/ec2_nightly.sh --step web   # just website data refresh
+# Groups (run independently if chain breaks):
+#   bash scripts/ec2_nightly.sh --step ec2      # steps 1,2,3  (data + screener + SCP to DGX)
+#   bash scripts/ec2_nightly.sh --step dgx      # steps 4,5    (inference + SCP back)
+#   bash scripts/ec2_nightly.sh --step web      # step  6      (website data refresh)
+#
+# Individual steps:
+#   bash scripts/ec2_nightly.sh --step data     # just pull_api_data + gold tables
+#   bash scripts/ec2_nightly.sh --step pdf      # just screener PDF + upload
+#   bash scripts/ec2_nightly.sh --step scp-to   # just SCP CSVs to DGX
+#   bash scripts/ec2_nightly.sh --step infer    # just SSH trigger inference on DGX
+#   bash scripts/ec2_nightly.sh --step scp-back # just SCP predictions from DGX
 #
 # Cron (6pm ET weekdays):
 #   0 18 * * 1-5 cd /home/sschmidt/bar_fly_trading && bash scripts/ec2_nightly.sh >> /var/log/bft/nightly.log 2>&1
@@ -20,6 +31,11 @@ DATA_DIR="/var/www/bft/data"
 CSV_PATTERN="${REPO_DIR}/all_data_*.csv"
 LOG_DIR="/var/log/bft"
 LOCK_FILE="/tmp/ec2_nightly.lock"
+
+# DGX connection (Tailscale)
+DGX_HOST="stvschmdt@100.115.147.21"
+DGX_REPO="~/proj/bar_fly_trading"
+DGX_SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=30"
 
 cd "$REPO_DIR" || exit 1
 mkdir -p "$LOG_DIR" logs
@@ -46,7 +62,11 @@ done
 
 FAILED=0
 
-# ── STEP 1: Pull API data + gold tables ─────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# GROUP 1: EC2 local (data + screener + SCP to DGX)
+# ══════════════════════════════════════════════════════════════════════
+
+# ── Step 1: Pull API data + gold tables ──────────────────────────────
 run_data() {
     log "=== STEP 1: Pull API data + gold tables ==="
     if python -m api_data.pull_api_data -w all 2>&1; then
@@ -57,13 +77,13 @@ run_data() {
     fi
 }
 
-# ── STEP 2: Screener PDF + upload to Drive ──────────────────────────
+# ── Step 2: Screener PDF + upload to Drive ───────────────────────────
 run_pdf() {
     log "=== STEP 2: Screener PDF + Drive upload ==="
     if python -m visualizations.screener_v2 --n_days 60 --data "$REPO_DIR" 2>&1; then
-        log "  Screener PDF generated"
+        log "  Screener charts generated"
     else
-        log "  ERROR: Screener PDF failed"
+        log "  ERROR: Screener failed"
         FAILED=$((FAILED + 1))
         return
     fi
@@ -80,7 +100,7 @@ upload_to_drive('$pdf', '$pdf')
             log "  WARNING: Drive upload failed"
             FAILED=$((FAILED + 1))
         fi
-        # Cleanup (keep overnight_v2_* dirs — webapp serves sector analysis images from them)
+        # Cleanup PDFs only — keep overnight_* dirs for webapp sector images
         rm -f overnight_*.pdf screener_results_*.csv table_image.jpg 2>/dev/null
     else
         log "  WARNING: No PDF generated"
@@ -88,9 +108,51 @@ upload_to_drive('$pdf', '$pdf')
     fi
 }
 
-# ── STEP 3: Refresh website data (sector map, symbols, history) ─────
+# ── Step 3: SCP CSVs to DGX ─────────────────────────────────────────
+run_scp_to_dgx() {
+    log "=== STEP 3: SCP all_data_*.csv → DGX ==="
+    if scp $DGX_SSH_OPTS "$REPO_DIR"/all_data_*.csv "${DGX_HOST}:${DGX_REPO}/" 2>&1; then
+        log "  Sent $(ls "$REPO_DIR"/all_data_*.csv | wc -l) CSV files to DGX"
+    else
+        log "  ERROR: SCP to DGX failed"
+        FAILED=$((FAILED + 1))
+    fi
+}
+
+# ══════════════════════════════════════════════════════════════════════
+# GROUP 2: DGX inference (trigger remotely via SSH)
+# ══════════════════════════════════════════════════════════════════════
+
+# ── Step 4: Run inference on DGX ─────────────────────────────────────
+run_inference() {
+    log "=== STEP 4: Inference on DGX (9 models) ==="
+    if ssh $DGX_SSH_OPTS "$DGX_HOST" "cd ${DGX_REPO} && bash scripts/infer_merge.sh" 2>&1; then
+        log "  Inference complete"
+    else
+        log "  ERROR: DGX inference failed"
+        FAILED=$((FAILED + 1))
+    fi
+}
+
+# ── Step 5: SCP predictions back from DGX ────────────────────────────
+run_scp_from_dgx() {
+    log "=== STEP 5: SCP merged_predictions.csv ← DGX ==="
+    if scp $DGX_SSH_OPTS "${DGX_HOST}:${DGX_REPO}/merged_predictions.csv" "$REPO_DIR/" 2>&1; then
+        local size=$(ls -lh "$REPO_DIR/merged_predictions.csv" | awk '{print $5}')
+        log "  Received merged_predictions.csv ($size)"
+    else
+        log "  ERROR: SCP from DGX failed"
+        FAILED=$((FAILED + 1))
+    fi
+}
+
+# ══════════════════════════════════════════════════════════════════════
+# GROUP 3: Web refresh (standalone)
+# ══════════════════════════════════════════════════════════════════════
+
+# ── Step 6: Refresh website data ─────────────────────────────────────
 run_web() {
-    log "=== STEP 3: Website data refresh ==="
+    log "=== STEP 6: Website data refresh ==="
 
     log "  Building sector map..."
     if BFT_DATA_DIR="$DATA_DIR" python -m webapp.backend.build_sector_map \
@@ -126,11 +188,16 @@ log "EC2 NIGHTLY PIPELINE (step=$STEP)"
 log "============================================"
 
 case "$STEP" in
-    all)  run_data; run_pdf; run_web ;;
-    data) run_data ;;
-    pdf)  run_pdf ;;
-    web)  run_web ;;
-    *)    log "Unknown step: $STEP (use: data, pdf, web, or all)"; exit 1 ;;
+    all)      run_data; run_pdf; run_scp_to_dgx; run_inference; run_scp_from_dgx; run_web ;;
+    ec2)      run_data; run_pdf; run_scp_to_dgx ;;
+    dgx)      run_inference; run_scp_from_dgx ;;
+    data)     run_data ;;
+    pdf)      run_pdf ;;
+    scp-to)   run_scp_to_dgx ;;
+    infer)    run_inference ;;
+    scp-back) run_scp_from_dgx ;;
+    web)      run_web ;;
+    *)        log "Unknown step: $STEP"; log "  Groups: all, ec2, dgx, web"; log "  Steps:  data, pdf, scp-to, infer, scp-back"; exit 1 ;;
 esac
 
 if [ $FAILED -gt 0 ]; then
