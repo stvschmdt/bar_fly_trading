@@ -4,6 +4,9 @@ Transformer model for stock price prediction.
 Classes:
     - PositionalEncoding: Sinusoidal positional encoding for temporal awareness
     - StockTransformer: Transformer encoder for time-series classification/regression
+    - GatedCrossAttention: Gated cross-attention layer (stock queries market context)
+    - MarketEncoder: Lightweight transformer encoder for market features
+    - CrossAttentionStockTransformer: Stock encoder with cross-attention to market context
 """
 
 import copy
@@ -216,6 +219,263 @@ class StockTransformer(nn.Module):
 
 
 # =============================================================================
+# Gated Cross-Attention (stock ← market context)
+# =============================================================================
+
+class GatedCrossAttention(nn.Module):
+    """
+    Gated cross-attention: stock sequence queries market context.
+
+    The sigmoid gate learns WHEN to use market context:
+    - In calm markets, stock-specific signal dominates (gate ≈ 0)
+    - In crashes/rallies, market context dominates (gate ≈ 1)
+
+    Architecture:
+        attn_out = MultiheadAttention(Q=stock, K=market, V=market)
+        gate = sigmoid(W · [stock; attn_out])
+        output = LayerNorm(stock + gate * attn_out)
+
+    Reference: MASTER (AAAI 2024), MSGCA pattern
+    """
+
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.1):
+        super().__init__()
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=d_model, num_heads=nhead,
+            dropout=dropout, batch_first=True,
+        )
+        self.gate = nn.Sequential(
+            nn.Linear(2 * d_model, d_model),
+            nn.Sigmoid(),
+        )
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, stock_seq: torch.Tensor, market_seq: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            stock_seq:  [batch, seq_len, d_model] — stock encoder hidden states
+            market_seq: [batch, market_len, d_model] — market encoder output
+
+        Returns:
+            [batch, seq_len, d_model] — stock states enriched with market context
+        """
+        attn_out, _ = self.cross_attn(
+            query=stock_seq, key=market_seq, value=market_seq,
+        )
+        attn_out = self.dropout(attn_out)
+
+        # Gating: learn how much market context to inject
+        g = self.gate(torch.cat([stock_seq, attn_out], dim=-1))
+        return self.norm(stock_seq + g * attn_out)
+
+
+# =============================================================================
+# Market Encoder (lightweight transformer for market features)
+# =============================================================================
+
+class MarketEncoder(nn.Module):
+    """
+    Lightweight transformer encoder for market context features.
+
+    Processes market-level features (VIX, SPY returns, sector ETFs, yields)
+    into a context sequence that the stock encoder attends to via cross-attention.
+
+    Smaller than the stock encoder (2 layers vs 4) since market context is
+    lower-dimensional and shared across all stocks.
+    """
+
+    def __init__(
+        self,
+        market_dim: int,
+        d_model: int = 128,
+        nhead: int = 8,
+        num_layers: int = 2,
+        dim_feedforward: int = 512,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.input_proj = nn.Linear(market_dim, d_model)
+        self.pos_encoder = PositionalEncoding(d_model, dropout=dropout)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout, batch_first=True, norm_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+    def forward(self, market_x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            market_x: [batch, seq_len, market_dim]
+
+        Returns:
+            [batch, seq_len, d_model] — encoded market context
+        """
+        x = self.input_proj(market_x)
+        x = self.pos_encoder(x)
+        return self.encoder(x)
+
+
+# =============================================================================
+# Cross-Attention Stock Transformer
+# =============================================================================
+
+class CrossAttentionStockTransformer(nn.Module):
+    """
+    Stock transformer with gated cross-attention to market context.
+
+    Architecture:
+        1. Market features → MarketEncoder → market context sequence
+        2. Stock features → Linear → positional encoding
+        3. For each layer:
+           a. Self-attention (stock ← stock)
+           b. Gated cross-attention (stock ← market)
+        4. Attention pooling → output heads
+
+    The gated cross-attention lets the model condition stock predictions
+    on the current market regime (bull/bear/sideways).
+
+    Args:
+        feature_dim: Number of stock input features per timestep
+        market_dim: Number of market context features per timestep
+        d_model: Transformer model dimension
+        nhead: Number of attention heads
+        num_layers: Number of stock encoder layers (each gets cross-attention)
+        market_layers: Number of market encoder layers
+        dim_feedforward: FFN hidden dimension
+        dropout: Dropout probability
+        output_mode: "regression", "binary", or "buckets"
+        num_buckets: Number of classes for bucket mode
+        layer_drop: Stochastic depth probability
+        use_coral: Use CORAL head for ordinal classification
+    """
+
+    def __init__(
+        self,
+        feature_dim: int,
+        market_dim: int,
+        d_model: int = 128,
+        nhead: int = 8,
+        num_layers: int = 4,
+        market_layers: int = 2,
+        dim_feedforward: int = 512,
+        dropout: float = 0.1,
+        output_mode: str = "binary",
+        num_buckets: int = 5,
+        layer_drop: float = 0.0,
+        use_coral: bool = False,
+    ):
+        super().__init__()
+
+        self.feature_dim = feature_dim
+        self.market_dim = market_dim
+        self.d_model = d_model
+        self.output_mode = output_mode
+        self.num_buckets = num_buckets
+        self.use_coral = use_coral
+
+        # Market encoder (lightweight)
+        self.market_encoder = MarketEncoder(
+            market_dim=market_dim,
+            d_model=d_model,
+            nhead=nhead,
+            num_layers=market_layers,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+        )
+
+        # Stock input projection + positional encoding
+        self.input_proj = nn.Linear(feature_dim, d_model)
+        self.pos_encoder = PositionalEncoding(d_model, dropout=dropout)
+
+        # Stock self-attention layers + cross-attention after each
+        self.stock_layers = nn.ModuleList()
+        self.cross_attn_layers = nn.ModuleList()
+        for _ in range(num_layers):
+            self.stock_layers.append(
+                nn.TransformerEncoderLayer(
+                    d_model=d_model, nhead=nhead,
+                    dim_feedforward=dim_feedforward,
+                    dropout=dropout, batch_first=True, norm_first=True,
+                )
+            )
+            self.cross_attn_layers.append(
+                GatedCrossAttention(d_model=d_model, nhead=nhead, dropout=dropout)
+            )
+
+        self.layer_drop = layer_drop
+        self.final_norm = nn.LayerNorm(d_model)
+
+        # Attention pooling (same as StockTransformer)
+        self.attn_pool = nn.Linear(d_model, 1)
+
+        # Output heads (same architecture as StockTransformer)
+        self.reg_head = nn.Sequential(
+            nn.Linear(d_model, d_model // 2), nn.GELU(),
+            nn.Dropout(dropout), nn.Linear(d_model // 2, 1),
+        )
+        self.cls_head = nn.Sequential(
+            nn.Linear(d_model, d_model // 2), nn.GELU(),
+            nn.Dropout(dropout), nn.Linear(d_model // 2, 2),
+        )
+        self.bucket_head = nn.Sequential(
+            nn.Linear(d_model, d_model // 2), nn.GELU(),
+            nn.Dropout(dropout), nn.Linear(d_model // 2, num_buckets),
+        )
+        if use_coral and num_buckets > 1:
+            self.coral_head = nn.Sequential(
+                nn.Linear(d_model, d_model // 2), nn.GELU(),
+                nn.Dropout(dropout), nn.Linear(d_model // 2, num_buckets - 1),
+            )
+
+    def forward(self, x: torch.Tensor, market_x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass with cross-attention to market context.
+
+        Args:
+            x: Stock features [batch, seq_len, feature_dim]
+            market_x: Market features [batch, seq_len, market_dim]
+
+        Returns:
+            Predictions, shape depends on output_mode
+        """
+        # Encode market context
+        market_ctx = self.market_encoder(market_x)  # [batch, seq_len, d_model]
+
+        # Project stock features
+        stock = self.input_proj(x)  # [batch, seq_len, d_model]
+        stock = self.pos_encoder(stock)
+
+        # Alternating self-attention + cross-attention
+        for self_attn_layer, cross_attn_layer in zip(self.stock_layers, self.cross_attn_layers):
+            # Stochastic depth: skip entire block during training
+            if self.training and self.layer_drop > 0 and random.random() < self.layer_drop:
+                continue
+            stock = self_attn_layer(stock)
+            stock = cross_attn_layer(stock, market_ctx)
+
+        stock = self.final_norm(stock)
+
+        # Attention pooling
+        attn_weights = torch.softmax(self.attn_pool(stock).squeeze(-1), dim=1)
+        pooled = (stock * attn_weights.unsqueeze(-1)).sum(dim=1)
+
+        # Output head
+        if self.output_mode == "regression":
+            return self.reg_head(pooled).squeeze(-1)
+        elif self.output_mode == "binary":
+            return self.cls_head(pooled)
+        elif self.output_mode == "buckets":
+            if self.use_coral:
+                return self.coral_head(pooled)
+            return self.bucket_head(pooled)
+        else:
+            raise ValueError(f"Unknown output_mode: {self.output_mode}")
+
+
+# =============================================================================
 # Architecture Auto-Detection from Checkpoint
 # =============================================================================
 
@@ -231,26 +491,62 @@ def infer_arch_from_state_dict(state_dict, model_path=None):
         model_path: Optional path to the .pt file; used to find .meta sidecar
 
     Returns:
-        dict with keys: d_model, num_layers, dim_feedforward, nhead, num_buckets
+        dict with keys: d_model, num_layers, dim_feedforward, nhead, num_buckets,
+        and optionally model_type, market_dim, market_layers for cross-attention
     """
     arch = {}
 
-    # d_model: from input_proj (Linear(feature_dim, d_model) -> weight is [d_model, feature_dim])
+    # Detect model type: cross-attention models have market_encoder.* keys
+    has_market_encoder = any(k.startswith("market_encoder.") for k in state_dict)
+    has_cross_attn = any(k.startswith("cross_attn_layers.") for k in state_dict)
+
+    if has_market_encoder and has_cross_attn:
+        arch["model_type"] = "cross_attention"
+
+        # market_dim: from market_encoder.input_proj
+        if "market_encoder.input_proj.weight" in state_dict:
+            arch["market_dim"] = state_dict["market_encoder.input_proj.weight"].shape[1]
+
+        # market_layers: count unique market_encoder.encoder.layers.N
+        market_layer_indices = set()
+        for key in state_dict:
+            if key.startswith("market_encoder.encoder.layers."):
+                idx = int(key.split(".")[3])
+                market_layer_indices.add(idx)
+        if market_layer_indices:
+            arch["market_layers"] = max(market_layer_indices) + 1
+
+        # num_layers (stock): count unique stock_layers.N
+        stock_layer_indices = set()
+        for key in state_dict:
+            if key.startswith("stock_layers."):
+                idx = int(key.split(".")[1])
+                stock_layer_indices.add(idx)
+        if stock_layer_indices:
+            arch["num_layers"] = max(stock_layer_indices) + 1
+
+        # dim_feedforward: from stock_layers.0.linear1
+        if "stock_layers.0.linear1.weight" in state_dict:
+            arch["dim_feedforward"] = state_dict["stock_layers.0.linear1.weight"].shape[0]
+    else:
+        arch["model_type"] = "encoder"
+
+        # num_layers: count unique encoder.layers.N prefixes
+        layer_indices = set()
+        for key in state_dict:
+            if key.startswith("encoder.layers."):
+                idx = int(key.split(".")[2])
+                layer_indices.add(idx)
+        if layer_indices:
+            arch["num_layers"] = max(layer_indices) + 1
+
+        # dim_feedforward: from encoder.layers.0.linear1
+        if "encoder.layers.0.linear1.weight" in state_dict:
+            arch["dim_feedforward"] = state_dict["encoder.layers.0.linear1.weight"].shape[0]
+
+    # d_model: from input_proj (shared by both model types)
     if "input_proj.weight" in state_dict:
         arch["d_model"] = state_dict["input_proj.weight"].shape[0]
-
-    # num_layers: count unique encoder.layers.N prefixes
-    layer_indices = set()
-    for key in state_dict:
-        if key.startswith("encoder.layers."):
-            idx = int(key.split(".")[2])
-            layer_indices.add(idx)
-    if layer_indices:
-        arch["num_layers"] = max(layer_indices) + 1
-
-    # dim_feedforward: from encoder.layers.0.linear1 (Linear(d_model, dim_ff) -> weight is [dim_ff, d_model])
-    if "encoder.layers.0.linear1.weight" in state_dict:
-        arch["dim_feedforward"] = state_dict["encoder.layers.0.linear1.weight"].shape[0]
 
     # nhead: read from .meta sidecar if available (exact value saved during training)
     nhead_from_meta = None
@@ -268,11 +564,8 @@ def infer_arch_from_state_dict(state_dict, model_path=None):
     if nhead_from_meta is not None:
         arch["nhead"] = nhead_from_meta
     elif "d_model" in arch:
-        # Fallback heuristic for legacy checkpoints without .meta
-        # nhead is not directly inferable from weight shapes in nn.MultiheadAttention,
-        # so we pick the largest common divisor from likely training values
         d = arch["d_model"]
-        for candidate in [4, 8, 2, 1]:
+        for candidate in [8, 4, 2, 1]:
             if d % candidate == 0:
                 arch["nhead"] = candidate
                 break
@@ -297,10 +590,10 @@ def create_model(feature_dim, label_mode, bucket_edges, cfg, model_type="encoder
         label_mode: "regression", "binary", or "buckets"
         bucket_edges: List of bucket edges (only used for "buckets" mode)
         cfg: Config dict with model hyperparameters
-        model_type: Model architecture type ("encoder", "cross_attention", etc.)
+        model_type: Model architecture type ("encoder" or "cross_attention")
 
     Returns:
-        StockTransformer model
+        StockTransformer or CrossAttentionStockTransformer model
     """
     # Determine output mode and number of buckets
     if label_mode == "regression":
@@ -313,7 +606,6 @@ def create_model(feature_dim, label_mode, bucket_edges, cfg, model_type="encoder
         if not bucket_edges:
             raise ValueError("bucket_edges must be provided for 'buckets' label_mode.")
         output_mode = "buckets"
-        # Use checkpoint-detected bucket count if available (inference auto-detection)
         num_buckets = cfg.get("_num_buckets_override", len(bucket_edges) + 1)
     else:
         raise ValueError(f"Unknown label_mode: {label_mode}")
@@ -321,17 +613,37 @@ def create_model(feature_dim, label_mode, bucket_edges, cfg, model_type="encoder
     # Check if CORAL loss is requested (requires special head)
     use_coral = (cfg.get("loss_name") == "coral" and label_mode == "buckets")
 
-    model = StockTransformer(
-        feature_dim=feature_dim,
-        d_model=cfg["d_model"],
-        nhead=cfg["nhead"],
-        num_layers=cfg["num_layers"],
-        dim_feedforward=cfg["dim_feedforward"],
-        dropout=cfg["dropout"],
-        output_mode=output_mode,
-        num_buckets=num_buckets,
-        layer_drop=cfg.get("layer_drop", 0.0),
-        use_coral=use_coral,
-    )
+    if model_type == "cross_attention":
+        market_dim = cfg.get("market_feature_dim")
+        if not market_dim:
+            raise ValueError("market_feature_dim must be set in cfg for cross_attention model")
+
+        model = CrossAttentionStockTransformer(
+            feature_dim=feature_dim,
+            market_dim=market_dim,
+            d_model=cfg["d_model"],
+            nhead=cfg["nhead"],
+            num_layers=cfg["num_layers"],
+            market_layers=cfg.get("market_layers", 2),
+            dim_feedforward=cfg["dim_feedforward"],
+            dropout=cfg["dropout"],
+            output_mode=output_mode,
+            num_buckets=num_buckets,
+            layer_drop=cfg.get("layer_drop", 0.0),
+            use_coral=use_coral,
+        )
+    else:
+        model = StockTransformer(
+            feature_dim=feature_dim,
+            d_model=cfg["d_model"],
+            nhead=cfg["nhead"],
+            num_layers=cfg["num_layers"],
+            dim_feedforward=cfg["dim_feedforward"],
+            dropout=cfg["dropout"],
+            output_mode=output_mode,
+            num_buckets=num_buckets,
+            layer_drop=cfg.get("layer_drop", 0.0),
+            use_coral=use_coral,
+        )
 
     return model

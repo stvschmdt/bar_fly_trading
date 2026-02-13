@@ -187,6 +187,58 @@ BASE_FEATURE_COLUMNS = [
 ]
 
 
+# Market context features for cross-attention models.
+# These are passed as a separate tensor (K/V in cross-attention)
+# so the model can condition stock predictions on market regime.
+MARKET_FEATURE_COLUMNS = [
+    "spy_ret_1d",
+    "spy_ret_5d",
+    "spy_vol_5d",
+    "sector_etf_ret_1d",
+    "sector_etf_ret_5d",
+    "sector_etf_vol_5d",
+    "sector_rel_ret_1d",
+    "treasury_yield_10year",
+    "treasury_yield_2year",
+    "unemployment",
+    "nonfarm_payroll",
+]
+
+
+# Research configuration — cross-attention + anti-collapse
+RESEARCH_CONFIG = {
+    # Architecture
+    "d_model": 128,
+    "nhead": 8,
+    "num_layers": 4,
+    "market_layers": 2,
+    "dim_feedforward": 512,
+    "dropout": 0.15,
+    "layer_drop": 0.1,
+
+    # Training
+    "lr": 3e-4,
+    "weight_decay": 0.02,
+    "batch_size": 256,
+    "patience": 15,
+    "num_epochs": 80,
+    "warmup_epochs": 8,
+    "optimizer": "adamw",
+
+    # Anti-collapse / loss
+    "entropy_reg_weight": 0.3,
+    "binary_threshold": 0.02,
+    "min_return_threshold": 0.0025,
+    "direction_weight": 3.0,
+    "focal_gamma": 1.5,
+    "label_smoothing": 0.05,
+
+    # Collapse recovery
+    "collapse_lr_reduction": 0.1,
+    "collapse_entropy_boost": 2.0,
+}
+
+
 # =============================================================================
 # Helper Functions
 # =============================================================================

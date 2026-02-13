@@ -32,7 +32,7 @@ try:
 except ImportError:
     HAS_SKLEARN = False
 
-from .config import get_feature_columns, get_target_column, OUTPUT_COLUMN_GROUPS, BASE_FEATURE_COLUMNS
+from .config import get_feature_columns, get_target_column, OUTPUT_COLUMN_GROUPS, BASE_FEATURE_COLUMNS, MARKET_FEATURE_COLUMNS
 from .data_utils import (
     load_panel_csvs,
     add_future_returns,
@@ -355,10 +355,16 @@ def infer(cfg):
         detected = infer_arch_from_state_dict(state_dict, model_path=cfg["model_out"])
         if detected:
             overrides = []
-            for key in ("d_model", "nhead", "num_layers", "dim_feedforward"):
+            for key in ("d_model", "nhead", "num_layers", "dim_feedforward", "market_layers"):
                 if key in detected and detected[key] != cfg.get(key):
                     overrides.append(f"{key}: {cfg.get(key)} -> {detected[key]}")
                     cfg[key] = detected[key]
+            # Auto-detect model_type from checkpoint
+            if "model_type" in detected:
+                cfg["model_type"] = detected["model_type"]
+                overrides.append(f"model_type: {detected['model_type']}")
+            if "market_dim" in detected:
+                cfg["market_feature_dim"] = detected["market_dim"]
             if overrides:
                 print(f"Auto-detected architecture from checkpoint: {', '.join(overrides)}")
 
@@ -379,11 +385,12 @@ def infer(cfg):
         output_mode = cfg.get("output_mode", "all")
 
         if model_type == "cross_attention":
-            # For cross-attention: stock features are base features only
-            stock_feature_cols = BASE_FEATURE_COLUMNS.copy()
-            market_feature_cols = [col for col in df.columns if col.startswith("m_") or col.startswith("s_")]
-            feature_cols = stock_feature_cols
-            print(f"Cross-attention mode: {len(stock_feature_cols)} stock features, {len(market_feature_cols)} market features")
+            # Cross-attention: stock features exclude market cols, market passed separately
+            feature_cols = get_feature_columns(df, cfg["mode"])
+            market_feature_cols = [c for c in MARKET_FEATURE_COLUMNS if c in df.columns]
+            feature_cols = [c for c in feature_cols if c not in market_feature_cols]
+            cfg["market_feature_dim"] = len(market_feature_cols)
+            print(f"Cross-attention mode: {len(feature_cols)} stock features, {len(market_feature_cols)} market features")
         else:
             feature_cols = get_feature_columns(df, cfg["mode"])
             market_feature_cols = None
@@ -428,6 +435,9 @@ def infer(cfg):
         model.load_state_dict(state_dict)
         model.eval()
 
+        # Detect if model uses CORAL (K-1 logits for ordinal)
+        use_coral = (cfg.get("loss_name") == "coral" and cfg["label_mode"] == "buckets")
+
         # Run inference
         print("\nRunning inference...")
         all_probs = []
@@ -436,29 +446,40 @@ def infer(cfg):
         with torch.no_grad():
             for batch in loader:
                 # Handle different batch formats based on model type
-                if model_type == "cross_attention":
-                    batch_x, batch_market, batch_y = batch
+                if model_type == "cross_attention" and len(batch) == 3:
+                    batch_x, batch_y, batch_market = batch
                     batch_x = batch_x.to(device)
                     batch_market = batch_market.to(device)
                 else:
-                    batch_x, batch_y = batch
+                    batch_x, batch_y = batch[0], batch[1]
                     batch_x = batch_x.to(device)
+                    batch_market = None
 
                 if cfg["label_mode"] == "regression":
                     batch_y = batch_y.float()
                 else:
                     batch_y = batch_y.long()
 
-                if model_type == "cross_attention":
+                if batch_market is not None:
                     outputs = model(batch_x, batch_market)
                 else:
                     outputs = model(batch_x)
 
                 if cfg["label_mode"] == "regression":
-                    # Regression: output is the prediction
                     all_probs.append(outputs.cpu().numpy())
+                elif use_coral:
+                    # CORAL: convert K-1 cumulative logits to K class probabilities
+                    cum_probs = torch.sigmoid(outputs)  # [batch, K-1]
+                    # P(class=0) = 1 - cum_probs[:, 0]
+                    # P(class=k) = cum_probs[:, k-1] - cum_probs[:, k]  for 0 < k < K-1
+                    # P(class=K-1) = cum_probs[:, K-2]
+                    ones = torch.ones(cum_probs.size(0), 1, device=cum_probs.device)
+                    zeros = torch.zeros(cum_probs.size(0), 1, device=cum_probs.device)
+                    extended = torch.cat([ones, cum_probs, zeros], dim=1)  # [batch, K+1]
+                    class_probs = extended[:, :-1] - extended[:, 1:]  # [batch, K]
+                    class_probs = class_probs.clamp(min=0)  # numerical safety
+                    all_probs.append(class_probs.cpu().numpy())
                 else:
-                    # Classification: get softmax probabilities
                     probs = F.softmax(outputs, dim=-1)
                     all_probs.append(probs.cpu().numpy())
 

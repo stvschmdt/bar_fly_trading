@@ -112,7 +112,8 @@ class CurriculumSampler:
 # =============================================================================
 
 def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode,
-                  is_training=True, max_grad_norm=1.0, entropy_reg_weight=0.0):
+                  is_training=True, max_grad_norm=1.0, entropy_reg_weight=0.0,
+                  model_type="encoder"):
     """
     Run one epoch of training or validation.
 
@@ -127,6 +128,7 @@ def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode,
         max_grad_norm: Max gradient norm for clipping (default: 1.0)
         entropy_reg_weight: Weight for entropy regularization (default: 0.0 = disabled).
             Encourages diverse predictions by penalizing low-entropy output distributions.
+        model_type: "encoder" or "cross_attention" — controls batch unpacking
 
     Returns:
         Dict with "loss", "accuracy", and "pred_entropy" keys
@@ -142,8 +144,15 @@ def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode,
     total_entropy = 0.0
     class_counts = None
 
-    for batch_x, batch_y in loader:
-        # Move data to device
+    for batch in loader:
+        # Unpack batch: 2-tuple (encoder) or 3-tuple (cross_attention)
+        if model_type == "cross_attention" and len(batch) == 3:
+            batch_x, batch_y, batch_market = batch
+            batch_market = batch_market.to(device)
+        else:
+            batch_x, batch_y = batch[0], batch[1]
+            batch_market = None
+
         batch_x = batch_x.to(device)
 
         if label_mode == "regression":
@@ -154,7 +163,10 @@ def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode,
         # Forward pass
         if is_training:
             optimizer.zero_grad()
-            outputs = model(batch_x)
+            if batch_market is not None:
+                outputs = model(batch_x, batch_market)
+            else:
+                outputs = model(batch_x)
             loss = loss_fn(outputs, batch_y)
 
             # Entropy regularization: penalize collapsed (low-entropy) predictions
@@ -168,7 +180,10 @@ def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode,
             optimizer.step()
         else:
             with torch.no_grad():
-                outputs = model(batch_x)
+                if batch_market is not None:
+                    outputs = model(batch_x, batch_market)
+                else:
+                    outputs = model(batch_x)
                 loss = loss_fn(outputs, batch_y)
 
         # Track metrics
@@ -228,10 +243,13 @@ def train_model(
     warmup_epochs=3,
     max_grad_norm=1.0,
     entropy_reg_weight=0.0,
+    model_type="encoder",
+    collapse_lr_reduction=0.0,
+    collapse_entropy_boost=0.0,
 ):
     """
     Full training loop with cosine LR scheduler, warmup, gradient clipping,
-    early stopping, and best-model checkpointing.
+    early stopping, collapse recovery, and best-model checkpointing.
 
     Args:
         model: PyTorch model
@@ -248,6 +266,9 @@ def train_model(
         warmup_epochs: Number of linear warmup epochs (default: 3)
         max_grad_norm: Max gradient norm for clipping (default: 1.0)
         entropy_reg_weight: Entropy regularization weight (default: 0.0 = disabled)
+        model_type: "encoder" or "cross_attention"
+        collapse_lr_reduction: Factor to reduce LR on collapse (0 = halt instead)
+        collapse_entropy_boost: Factor to multiply entropy_reg on collapse (0 = no boost)
 
     Returns:
         Dict with training history (epoch, train_loss, val_loss, train_acc, val_acc, lr)
@@ -269,12 +290,14 @@ def train_model(
     best_val_loss = float("inf")
     best_state_dict = None
     no_improve = 0
-    consecutive_collapse = 0  # Track epochs where dominant class > 90%
+    consecutive_collapse = 0
+    collapse_recovered = False  # Only attempt recovery once
     COLLAPSE_THRESHOLD = 0.90
     COLLAPSE_PATIENCE = 3
+    current_entropy_weight = entropy_reg_weight
 
-    if entropy_reg_weight > 0 and label_mode != "regression":
-        print(f"Entropy regularization enabled: weight={entropy_reg_weight}")
+    if current_entropy_weight > 0 and label_mode != "regression":
+        print(f"Entropy regularization enabled: weight={current_entropy_weight}")
 
     for epoch in range(1, num_epochs + 1):
         # Linear warmup
@@ -295,7 +318,8 @@ def train_model(
             label_mode=label_mode,
             is_training=True,
             max_grad_norm=max_grad_norm,
-            entropy_reg_weight=entropy_reg_weight,
+            entropy_reg_weight=current_entropy_weight,
+            model_type=model_type,
         )
 
         # Validation epoch
@@ -307,6 +331,7 @@ def train_model(
             device=device,
             label_mode=label_mode,
             is_training=False,
+            model_type=model_type,
         )
 
         # Step scheduler after warmup
@@ -335,7 +360,7 @@ def train_model(
             flush=True,
         )
 
-        # Collapse detection: warn and halt if sustained
+        # Collapse detection with recovery
         dominant_pct = val_metrics.get("dominant_class_pct", 0)
         if dominant_pct > 0.85 and label_mode != "regression":
             dist = val_metrics.get("class_distribution", [])
@@ -345,12 +370,27 @@ def train_model(
         if dominant_pct > COLLAPSE_THRESHOLD and label_mode != "regression":
             consecutive_collapse += 1
             if consecutive_collapse >= COLLAPSE_PATIENCE:
-                print(
-                    f"  HALT: Model collapsed — dominant class > {COLLAPSE_THRESHOLD:.0%} "
-                    f"for {COLLAPSE_PATIENCE} consecutive epochs. "
-                    f"Stopping training to prevent wasted compute."
-                )
-                break
+                # Try recovery first (reduce LR + boost entropy reg)
+                if not collapse_recovered and collapse_lr_reduction > 0:
+                    new_lr = current_lr * collapse_lr_reduction
+                    for pg in optimizer.param_groups:
+                        pg["lr"] = new_lr
+                    if collapse_entropy_boost > 0:
+                        current_entropy_weight = entropy_reg_weight * collapse_entropy_boost
+                    collapse_recovered = True
+                    consecutive_collapse = 0
+                    print(
+                        f"  COLLAPSE RECOVERY: LR reduced to {new_lr:.2e}, "
+                        f"entropy_reg boosted to {current_entropy_weight:.2f}. "
+                        f"Continuing training..."
+                    )
+                else:
+                    print(
+                        f"  HALT: Model collapsed — dominant class > {COLLAPSE_THRESHOLD:.0%} "
+                        f"for {COLLAPSE_PATIENCE} consecutive epochs. "
+                        f"Stopping training to prevent wasted compute."
+                    )
+                    break
         else:
             consecutive_collapse = 0
 
@@ -379,12 +419,16 @@ def train_model(
     if model_out_path is not None:
         os.makedirs(os.path.dirname(model_out_path) or ".", exist_ok=True)
         torch.save(model.state_dict(), model_out_path)
-        # Save architecture metadata so inference can recover nhead exactly
         meta_path = model_out_path + ".meta"
         try:
             import json as _json
-            meta = {}
-            if hasattr(model, 'encoder') and hasattr(model.encoder, 'layers') and len(model.encoder.layers) > 0:
+            meta = {"model_type": model_type}
+            # Save nhead from the appropriate layer structure
+            if model_type == "cross_attention" and hasattr(model, 'stock_layers') and len(model.stock_layers) > 0:
+                attn = model.stock_layers[0].self_attn
+                if hasattr(attn, 'num_heads'):
+                    meta["nhead"] = attn.num_heads
+            elif hasattr(model, 'encoder') and hasattr(model.encoder, 'layers') and len(model.encoder.layers) > 0:
                 attn = model.encoder.layers[0].self_attn
                 if hasattr(attn, 'num_heads'):
                     meta["nhead"] = attn.num_heads

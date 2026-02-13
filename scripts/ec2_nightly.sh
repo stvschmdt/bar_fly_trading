@@ -32,13 +32,42 @@ CSV_PATTERN="${REPO_DIR}/all_data_*.csv"
 LOG_DIR="/var/log/bft"
 LOCK_FILE="/tmp/ec2_nightly.lock"
 
-# DGX connection (Tailscale) — set DGX_HOST env var or edit here
-DGX_HOST="${DGX_HOST:?Set DGX_HOST env var (e.g. user@ip)}"
+# DGX connection (Tailscale) — checked lazily so non-DGX steps work without it
+DGX_HOST="${DGX_HOST:-}"
 DGX_REPO="~/proj/bar_fly_trading"
 DGX_SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=30"
 
+require_dgx() {
+    if [ -z "$DGX_HOST" ]; then
+        log "ERROR: DGX_HOST env var not set (e.g. user@ip)"
+        FAILED=$((FAILED + 1))
+        return 1
+    fi
+}
+
 cd "$REPO_DIR" || exit 1
 mkdir -p "$LOG_DIR" logs
+
+# ── Activate Python environment (cron doesn't source .bashrc) ─────
+CONDA_ENV="${CONDA_ENV:-bft}"
+for conda_sh in \
+    "${HOME}/miniforge3/etc/profile.d/conda.sh" \
+    "${HOME}/mambaforge/etc/profile.d/conda.sh" \
+    "${HOME}/miniconda3/etc/profile.d/conda.sh" \
+    "${HOME}/anaconda3/etc/profile.d/conda.sh"; do
+    if [ -f "$conda_sh" ]; then
+        source "$conda_sh"
+        conda activate "$CONDA_ENV" 2>/dev/null
+        break
+    fi
+done
+
+if ! command -v python &>/dev/null; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: python not found after activating $CONDA_ENV"
+    echo "  Set CONDA_ENV env var or ensure python is on PATH"
+    rm -f "$LOCK_FILE"
+    exit 1
+fi
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
@@ -111,6 +140,7 @@ upload_to_drive('$pdf', '$pdf')
 # ── Step 3: SCP CSVs to DGX ─────────────────────────────────────────
 run_scp_to_dgx() {
     log "=== STEP 3: SCP all_data_*.csv → DGX ==="
+    require_dgx || return
     if scp $DGX_SSH_OPTS "$REPO_DIR"/all_data_*.csv "${DGX_HOST}:${DGX_REPO}/" 2>&1; then
         log "  Sent $(ls "$REPO_DIR"/all_data_*.csv | wc -l) CSV files to DGX"
     else
@@ -126,6 +156,7 @@ run_scp_to_dgx() {
 # ── Step 4: Run inference on DGX ─────────────────────────────────────
 run_inference() {
     log "=== STEP 4: Inference on DGX (9 models) ==="
+    require_dgx || return
     if ssh $DGX_SSH_OPTS "$DGX_HOST" "cd ${DGX_REPO} && bash scripts/infer_merge.sh" 2>&1; then
         log "  Inference complete"
     else
@@ -137,6 +168,7 @@ run_inference() {
 # ── Step 5: SCP predictions back from DGX ────────────────────────────
 run_scp_from_dgx() {
     log "=== STEP 5: SCP merged_predictions.csv ← DGX ==="
+    require_dgx || return
     if scp $DGX_SSH_OPTS "${DGX_HOST}:${DGX_REPO}/merged_predictions.csv" "$REPO_DIR/" 2>&1; then
         local size=$(ls -lh "$REPO_DIR/merged_predictions.csv" | awk '{print $5}')
         log "  Received merged_predictions.csv ($size)"

@@ -64,10 +64,13 @@ def get_loss_function(label_mode, loss_name=None, class_weights=None, **kwargs):
         return nn.CrossEntropyLoss(weight=class_weights)
 
     elif key == "label_smoothing":
-        return nn.CrossEntropyLoss(label_smoothing=0.1, weight=class_weights)
+        smoothing = kwargs.get("label_smoothing", 0.1)
+        return nn.CrossEntropyLoss(label_smoothing=smoothing, weight=class_weights)
 
     elif key == "focal":
-        return FocalLoss(gamma=2.0, alpha=class_weights)
+        gamma = kwargs.get("focal_gamma", 2.0)
+        smoothing = kwargs.get("label_smoothing", 0.0)
+        return FocalLoss(gamma=gamma, alpha=class_weights, label_smoothing=smoothing)
 
     elif key == "ordinal_focal":
         return OrdinalFocalLoss(gamma=2.0, emd_weight=1.0, alpha=class_weights)
@@ -115,16 +118,18 @@ class FocalLoss(nn.Module):
         gamma: Focusing parameter (default: 2.0). Higher values focus more on hard examples.
         alpha: Class weighting (default: None). Can be a float or tensor of weights.
         reduction: How to reduce the loss ("mean", "sum", or "none")
+        label_smoothing: Smoothing factor (default: 0.0). Prevents overconfident predictions.
 
     Reference:
         Lin et al., "Focal Loss for Dense Object Detection", ICCV 2017
     """
 
-    def __init__(self, gamma=2.0, alpha=None, reduction="mean"):
+    def __init__(self, gamma=2.0, alpha=None, reduction="mean", label_smoothing=0.0):
         super().__init__()
         self.gamma = gamma
         self.alpha = alpha
         self.reduction = reduction
+        self.label_smoothing = label_smoothing
 
     def forward(self, inputs, targets):
         """
@@ -135,7 +140,9 @@ class FocalLoss(nn.Module):
         Returns:
             Focal loss value
         """
-        ce_loss = F.cross_entropy(inputs, targets, reduction="none")
+        ce_loss = F.cross_entropy(
+            inputs, targets, reduction="none", label_smoothing=self.label_smoothing,
+        )
         pt = torch.exp(-ce_loss)  # probability of correct class
         focal_loss = ((1 - pt) ** self.gamma) * ce_loss
 

@@ -13,6 +13,7 @@ import argparse
 import os
 from glob import glob
 
+import numpy as np
 import pandas as pd
 
 
@@ -101,11 +102,87 @@ def merge_predictions(input_dir: str = "output", output_path: str = "merged_pred
     for prefix, count in sorted(pred_col_counts.items()):
         print(f"    {prefix}*: {count}")
 
+    # Add ensemble consensus scoring
+    merged = add_ensemble_scores(merged)
+
     # Save merged file
     merged.to_csv(output_path, index=False)
     print(f"\nSaved to: {output_path}")
 
     return merged
+
+
+def add_ensemble_scores(df):
+    """
+    Add consensus scoring across 9 models (3 horizons x 3 label modes).
+
+    For each (date, ticker) computes:
+    - expected_return_{3,10,30}d: expected return from each horizon's models
+    - consensus_direction: BUY/SELL/NEUTRAL based on majority of horizons
+    - consensus_confidence: 0-1 average confidence across models
+    - horizon_agreement: 1-3 count of horizons agreeing on direction
+    """
+    horizons = ["3d", "10d", "30d"]
+
+    for h in horizons:
+        signals = []
+
+        # Regression: direct predicted return
+        reg_col = f"pred_return_reg_{h}"
+        if reg_col in df.columns:
+            signals.append(df[reg_col])
+
+        # Binary: expected return from P(up) - P(down)
+        p1_col = f"prob_1_bin_{h}"
+        if p1_col in df.columns:
+            # Map P(up) to directional signal: P(up)*0.01 - P(down)*0.01
+            signals.append((df[p1_col] * 2 - 1) * 0.01)
+
+        # Buckets: expected return from class probs × midpoints (if available)
+        er_col = f"pred_expected_return_buck_{h}"
+        if er_col in df.columns:
+            signals.append(df[er_col])
+
+        # Average available signals for this horizon
+        if signals:
+            stacked = np.column_stack([s.values for s in signals])
+            df[f"expected_return_{h}"] = np.nanmean(stacked, axis=1)
+        else:
+            df[f"expected_return_{h}"] = np.nan
+
+    # Consensus across horizons
+    er_cols = [f"expected_return_{h}" for h in horizons if f"expected_return_{h}" in df.columns]
+    if er_cols:
+        er_matrix = df[er_cols].values
+
+        # Direction per horizon: +1 = up, -1 = down, 0 = near zero
+        directions = np.sign(er_matrix)
+
+        # Horizon agreement: how many horizons agree on direction
+        pos_count = (directions > 0).sum(axis=1)
+        neg_count = (directions < 0).sum(axis=1)
+        df["horizon_agreement"] = np.maximum(pos_count, neg_count).astype(int)
+
+        # Consensus direction
+        net_direction = directions.sum(axis=1)
+        df["consensus_direction"] = np.where(
+            net_direction > 0, "BUY",
+            np.where(net_direction < 0, "SELL", "NEUTRAL")
+        )
+
+        # Confidence: average |expected_return| across horizons, scaled
+        avg_magnitude = np.nanmean(np.abs(er_matrix), axis=1)
+        # Normalize to 0-1 using sigmoid-like scaling (0.05 return → ~0.7 confidence)
+        df["consensus_confidence"] = 1.0 - 1.0 / (1.0 + avg_magnitude * 50)
+
+        print(f"\n  Ensemble scoring:")
+        direction_counts = df["consensus_direction"].value_counts()
+        for d, c in direction_counts.items():
+            print(f"    {d}: {c:,} ({c/len(df):.1%})")
+        print(f"    Avg confidence: {df['consensus_confidence'].mean():.3f}")
+        print(f"    Avg horizon agreement: {df['horizon_agreement'].mean():.1f}/3")
+
+    return df
 
 
 def main():
