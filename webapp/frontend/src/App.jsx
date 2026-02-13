@@ -19,6 +19,11 @@ function ProtectedLayout() {
       <main className="pb-12">
         <Outlet />
       </main>
+      <footer className="py-3 px-4 text-center">
+        <p className="text-[10px] text-gray-400 dark:text-gray-600 leading-relaxed">
+          Disclaimer: This is not financial advice. For research and educational purposes only. Data reflects daily closing values and is not suitable for intraday trading decisions. Past performance does not guarantee future results.
+        </p>
+      </footer>
       <WorkbenchBar />
     </ProtectedRoute>
   )
