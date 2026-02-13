@@ -106,6 +106,22 @@ export default function BigBoard() {
         </div>
       </div>
 
+      {/* Sector legend */}
+      <div className="mb-3 px-2 flex flex-wrap gap-3 text-xs text-gray-600 dark:text-gray-400">
+        {sectors.map((sec) => {
+          const c = SECTOR_COLORS[sec.id] || { color: '#6b7280' }
+          return (
+            <div key={sec.id} className="flex items-center gap-1.5">
+              <span
+                className="inline-block w-3 h-3 rounded-sm"
+                style={{ backgroundColor: c.color }}
+              />
+              <span>{c.name || sec.name}</span>
+            </div>
+          )
+        })}
+      </div>
+
       <div className="grid grid-cols-7 md:grid-cols-10 lg:grid-cols-14 gap-1">
         {sorted.map((s) => {
           const sector = SECTOR_COLORS[s.sector_id] || { color: '#6b7280' }
@@ -144,21 +160,6 @@ export default function BigBoard() {
         })}
       </div>
 
-      {/* Sector legend */}
-      <div className="mt-6 px-2 flex flex-wrap gap-3 text-xs text-gray-600 dark:text-gray-400">
-        {sectors.map((sec) => {
-          const c = SECTOR_COLORS[sec.id] || { color: '#6b7280' }
-          return (
-            <div key={sec.id} className="flex items-center gap-1.5">
-              <span
-                className="inline-block w-3 h-3 rounded-sm"
-                style={{ backgroundColor: c.color }}
-              />
-              <span>{c.name || sec.name}</span>
-            </div>
-          )
-        })}
-      </div>
     </div>
   )
 }
