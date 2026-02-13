@@ -17,7 +17,7 @@ DATA_DIR="/var/www/bft/data"
 FRONTEND_DIR="/var/www/bft/frontend"
 LOG_DIR="/var/log/bft"
 CSV_PATTERN="${BFT_CSV_PATTERN:-$REPO_DIR/all_data_*.csv}"
-BRANCH="feature/ec2-scripts"
+BRANCH="main"
 SERVICE_NAME="bft-api"
 PYTHON_BIN="${CONDA_PREFIX:-$(dirname $(which python))/..}/bin/python"
 
