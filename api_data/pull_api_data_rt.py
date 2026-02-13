@@ -602,12 +602,14 @@ def run_bulk_rt_update(data_dir, predictions_path=None, symbols_filter=None,
 
     # Also collect from predictions if provided
     if predictions_path and os.path.exists(predictions_path):
-        pred_headers = pd.read_csv(predictions_path, index_col=0, nrows=0)
-        ticker_col = 'ticker' if 'ticker' in pred_headers.columns else 'symbol'
-        # Read only the symbol/ticker column
-        col_idx = list(pred_headers.columns).index(ticker_col) + 1  # +1 for index col
-        pred_df = pd.read_csv(predictions_path, index_col=0, usecols=[0, col_idx])
-        all_symbols.update(pred_df[ticker_col].unique())
+        try:
+            pred_df = pd.read_csv(predictions_path)
+            if not pred_df.empty:
+                ticker_col = 'ticker' if 'ticker' in pred_df.columns else 'symbol'
+                if ticker_col in pred_df.columns:
+                    all_symbols.update(pred_df[ticker_col].unique())
+        except Exception:
+            pass  # predictions file missing or malformed — skip
 
     if symbols_filter:
         all_symbols = all_symbols & set(symbols_filter)
