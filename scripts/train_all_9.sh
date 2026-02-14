@@ -44,7 +44,7 @@ mkdir -p "$MODEL_DIR" "$LOG_DIR" "$PRED_DIR" logs
 ARCH="--model-type cross_attention --d-model 128 --nhead 8 --num-layers 4 --market-layers 2 --dim-feedforward 512"
 
 # Shared training params
-TRAIN="--lr 3e-4 --weight-decay 0.02 --patience 15 --epochs 80 --warmup-epochs 8 --dropout 0.15 --layer-drop 0.1"
+TRAIN="--lr 3e-4 --weight-decay 0.02 --patience 15 --epochs 80 --warmup-epochs 1 --dropout 0.15 --layer-drop 0.1"
 
 # Collapse recovery: reduce LR by 10x + double entropy reg instead of halting
 COLLAPSE="--collapse-lr-reduction 0.1 --collapse-entropy-boost 2.0"

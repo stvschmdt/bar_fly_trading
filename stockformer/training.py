@@ -319,6 +319,9 @@ def train_model(
     collapse_recovered = False  # Only attempt recovery once
     COLLAPSE_THRESHOLD = 0.90
     COLLAPSE_PATIENCE = 3
+    # Grace period: don't count collapse until model has had time to learn.
+    # At least 5 epochs or warmup+2, whichever is larger.
+    COLLAPSE_GRACE = max(5, warmup_epochs + 2)
     current_entropy_weight = entropy_reg_weight
 
     if current_entropy_weight > 0 and label_mode != "regression":
@@ -386,17 +389,17 @@ def train_model(
         )
 
         # Collapse detection with recovery
-        # Skip during warmup — the model hasn't learned yet, collapse is expected
+        # Skip during grace period — model needs time to learn before we judge
         dominant_pct = val_metrics.get("dominant_class_pct", 0)
         if dominant_pct > 0.85 and label_mode != "regression":
             dist = val_metrics.get("class_distribution", [])
-            if epoch <= warmup_epochs:
-                print(f"  NOTE: {dominant_pct:.1%} in one class (warmup — not counting)")
+            if epoch <= COLLAPSE_GRACE:
+                print(f"  NOTE: {dominant_pct:.1%} in one class (grace period — not counting)")
             else:
                 print(f"  WARNING: Possible collapse — {dominant_pct:.1%} predictions "
                       f"in one class. Distribution: {[f'{p:.2f}' for p in dist]}")
 
-        if dominant_pct > COLLAPSE_THRESHOLD and label_mode != "regression" and epoch > warmup_epochs:
+        if dominant_pct > COLLAPSE_THRESHOLD and label_mode != "regression" and epoch > COLLAPSE_GRACE:
             consecutive_collapse += 1
             if consecutive_collapse >= COLLAPSE_PATIENCE:
                 # Try recovery first (reduce LR + boost entropy reg)
@@ -416,12 +419,12 @@ def train_model(
                 else:
                     print(
                         f"  HALT: Model collapsed — dominant class > {COLLAPSE_THRESHOLD:.0%} "
-                        f"for {COLLAPSE_PATIENCE} consecutive epochs post-warmup. "
+                        f"for {COLLAPSE_PATIENCE} consecutive epochs past grace period. "
                         f"Saving model and stopping."
                     )
                     break
         else:
-            if epoch > warmup_epochs:
+            if epoch > COLLAPSE_GRACE:
                 consecutive_collapse = 0
 
         # Best model checkpointing + early stopping
