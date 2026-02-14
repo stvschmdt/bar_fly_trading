@@ -58,13 +58,29 @@ class PnLStepReward(RewardFunction):
 
 
 class PnLPctStepReward(RewardFunction):
-    """Percent portfolio change per step."""
+    """Percent portfolio change per step with win rate bonus."""
+
+    def __init__(self, params):
+        super().__init__(params)
+        self._wins = 0
+        self._total = 0
 
     def compute(self, env_state):
         if env_state["was_illegal"]:
             return self.params.get("illegal_action_penalty", -1.0)
 
         reward = env_state["step_return"]
+
+        # Win/loss bonus on trade close
+        if env_state.get("trade_just_closed", False):
+            win_bonus = self.params.get("win_bonus", 0.5)
+            loss_penalty = self.params.get("loss_penalty", 0.3)
+            if env_state["trade_return_pct"] > 0:
+                reward += win_bonus
+                self._wins += 1
+            else:
+                reward -= loss_penalty
+            self._total += 1
 
         # Optional holding cost
         if env_state["days_in_position"] > 0:
@@ -77,7 +93,8 @@ class PnLPctStepReward(RewardFunction):
         return reward
 
     def reset(self):
-        pass
+        self._wins = 0
+        self._total = 0
 
 
 class SharpeStepReward(RewardFunction):
@@ -106,6 +123,15 @@ class SharpeStepReward(RewardFunction):
             reward = mean_r / std_r
         else:
             reward = step_return
+
+        # Win/loss bonus on trade close
+        if env_state.get("trade_just_closed", False):
+            win_bonus = self.params.get("win_bonus", 0.5)
+            loss_penalty = self.params.get("loss_penalty", 0.3)
+            if env_state["trade_return_pct"] > 0:
+                reward += win_bonus
+            else:
+                reward -= loss_penalty
 
         # Optional penalties
         if env_state["days_in_position"] > 0:

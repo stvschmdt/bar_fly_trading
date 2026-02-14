@@ -44,7 +44,7 @@ mkdir -p "$MODEL_DIR" "$LOG_DIR" "$PRED_DIR" logs
 ARCH="--model-type cross_attention --d-model 128 --nhead 8 --num-layers 4 --market-layers 2 --dim-feedforward 512"
 
 # Shared training params
-TRAIN="--lr 3e-4 --weight-decay 0.02 --patience 15 --epochs 80 --warmup-epochs 1 --dropout 0.15 --layer-drop 0.1"
+TRAIN="--lr 3e-4 --weight-decay 0.02 --patience 15 --epochs 25 --warmup-epochs 1 --dropout 0.15 --layer-drop 0.1"
 
 # Collapse recovery: reduce LR by 10x + double entropy reg instead of halting
 COLLAPSE="--collapse-lr-reduction 0.1 --collapse-entropy-boost 2.0"
@@ -117,34 +117,46 @@ BUCKET_FLAGS="--bucket-edges auto --n-buckets 3 --entropy-reg-weight 0.3"
 REG_FLAGS="--direction-weight 3.0"
 
 # =============================================================================
-# Launch all 9 models sequentially (one GPU — no parallel contention)
+# Launch 3 groups in parallel (regression | binary | buckets)
+# Each group trains its 3 horizons sequentially
 # =============================================================================
 
-echo "Training 9 models sequentially (one at a time on GPU)..."
+echo "Training 9 models in 3 parallel groups..."
 echo "  Regression: 3d -> 10d -> 30d  [cross-attn, combined_regression]"
 echo "  Binary:     3d -> 10d -> 30d  [cross-attn, focal gamma=1.5]"
 echo "  Buckets:    3d -> 10d -> 30d  [cross-attn, CORAL ordinal]"
 echo ""
 
-FAILURES=0
 LOG="logs/train_all_${LOGDATE}.log"
 
-{
-    # Regression (3 horizons)
-    run_one regression 3  combined_regression "$REG_FLAGS"           || FAILURES=$((FAILURES + 1))
-    run_one regression 10 combined_regression "$REG_FLAGS"           || FAILURES=$((FAILURES + 1))
-    run_one regression 30 combined_regression "$REG_FLAGS $REG_30D"  || FAILURES=$((FAILURES + 1))
+# Group 1: Regression (3 horizons sequentially)
+(
+    run_one regression 3  combined_regression "$REG_FLAGS"
+    run_one regression 10 combined_regression "$REG_FLAGS"
+    run_one regression 30 combined_regression "$REG_FLAGS $REG_30D"
+) 2>&1 | tee "logs/train_regression_${LOGDATE}.log" &
+PID_REG=$!
 
-    # Binary (3 horizons)
-    run_one binary 3  focal "$BINARY_FLAGS"           || FAILURES=$((FAILURES + 1))
-    run_one binary 10 focal "$BINARY_FLAGS"           || FAILURES=$((FAILURES + 1))
-    run_one binary 30 focal "$BINARY_FLAGS $REG_30D"  || FAILURES=$((FAILURES + 1))
+# Group 2: Binary (3 horizons sequentially)
+(
+    run_one binary 3  focal "$BINARY_FLAGS"
+    run_one binary 10 focal "$BINARY_FLAGS"
+    run_one binary 30 focal "$BINARY_FLAGS $REG_30D"
+) 2>&1 | tee "logs/train_binary_${LOGDATE}.log" &
+PID_BIN=$!
 
-    # Buckets with CORAL (3 horizons)
-    run_one buckets 3  coral "$BUCKET_FLAGS"           || FAILURES=$((FAILURES + 1))
-    run_one buckets 10 coral "$BUCKET_FLAGS"           || FAILURES=$((FAILURES + 1))
-    run_one buckets 30 coral "$BUCKET_FLAGS $REG_30D"  || FAILURES=$((FAILURES + 1))
-} 2>&1 | tee "$LOG"
+# Group 3: Buckets (3 horizons sequentially)
+(
+    run_one buckets 3  coral "$BUCKET_FLAGS"
+    run_one buckets 10 coral "$BUCKET_FLAGS"
+    run_one buckets 30 coral "$BUCKET_FLAGS $REG_30D"
+) 2>&1 | tee "logs/train_buckets_${LOGDATE}.log" &
+PID_BUCK=$!
+
+echo "Launched 3 parallel groups: regression=$PID_REG, binary=$PID_BIN, buckets=$PID_BUCK"
+echo "Waiting for all groups to finish..."
+wait $PID_REG $PID_BIN $PID_BUCK
+FAILURES=0
 
 echo ""
 echo "============================================================"

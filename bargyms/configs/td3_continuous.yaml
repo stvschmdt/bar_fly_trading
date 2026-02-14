@@ -27,7 +27,7 @@ environment:
   position_size: 0.10
   max_positions: 1
   allow_short: false
-  transaction_cost_bps: 10
+  transaction_cost_bps: 0
   exit_safety:
     enabled: true
     stop_loss_pct: -0.08
@@ -40,8 +40,10 @@ reward:
   function: "pnl_pct_step"
   params:
     illegal_action_penalty: -1.0
-    holding_cost: 0.0
-    no_trade_penalty: -0.001
+    holding_cost: 0.002
+    win_bonus: 0.5
+    loss_penalty: 0.3
+    no_trade_penalty: 0.005
 
 algorithm:
   name: "TD3"
