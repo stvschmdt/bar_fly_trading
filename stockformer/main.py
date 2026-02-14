@@ -23,7 +23,7 @@ import os
 import torch
 from torch.utils.data import DataLoader
 
-from .config import DEFAULT_CONFIG, get_feature_columns, get_target_column
+from .config import DEFAULT_CONFIG, MARKET_FEATURE_COLUMNS, get_feature_columns, get_target_column
 from .data_utils import (
     load_panel_csvs,
     add_future_returns,
@@ -116,9 +116,21 @@ def train(cfg):
 
         print(f"Data loading time: {load_timer}")
 
-        # Get feature columns
-        feature_cols = get_feature_columns(df, cfg["mode"])
+        # Get feature columns based on model type
+        model_type = cfg.get("model_type", "encoder")
         target_col = get_target_column(cfg["horizon"])
+
+        if model_type == "cross_attention":
+            # Cross-attention: stock features exclude market cols, market passed separately
+            feature_cols = get_feature_columns(df, cfg["mode"])
+            market_feature_cols = [c for c in MARKET_FEATURE_COLUMNS if c in df.columns]
+            # Remove market features from stock features to avoid duplication
+            feature_cols = [c for c in feature_cols if c not in market_feature_cols]
+            cfg["market_feature_dim"] = len(market_feature_cols)
+            print(f"\nCross-attention: {len(feature_cols)} stock features, {len(market_feature_cols)} market features")
+        else:
+            feature_cols = get_feature_columns(df, cfg["mode"])
+            market_feature_cols = None
 
         # Log data summary
         data_summary = log_data_summary(df, feature_cols, target_col)
@@ -141,6 +153,7 @@ def train(cfg):
             feature_cols=feature_cols,
             label_mode=cfg["label_mode"],
             bucket_edges=cfg["bucket_edges"],
+            market_feature_cols=market_feature_cols,
             binary_threshold=cfg.get("binary_threshold", 0.0),
             min_return_threshold=cfg.get("min_return_threshold", 0.0),
         )
@@ -179,6 +192,7 @@ def train(cfg):
             label_mode=cfg["label_mode"],
             bucket_edges=cfg["bucket_edges"],
             cfg=cfg,
+            model_type=model_type,
         ).to(device)
 
         # Log model summary
@@ -196,6 +210,8 @@ def train(cfg):
         loss_fn = get_loss_function(
             cfg["label_mode"], loss_name=effective_loss_name,
             direction_weight=cfg.get("direction_weight", 3.0),
+            focal_gamma=cfg.get("focal_gamma", 2.0),
+            label_smoothing=cfg.get("label_smoothing", 0.0),
         )
         optimizer = get_optimizer(model, cfg["optimizer"], cfg["lr"],
                                   weight_decay=cfg.get("weight_decay", 0.01))
@@ -226,6 +242,9 @@ def train(cfg):
                 patience=cfg.get("patience", 10),
                 warmup_epochs=cfg.get("warmup_epochs", 5),
                 entropy_reg_weight=cfg.get("entropy_reg_weight", 0.0),
+                model_type=model_type,
+                collapse_lr_reduction=cfg.get("collapse_lr_reduction", 0.0),
+                collapse_entropy_boost=cfg.get("collapse_entropy_boost", 0.0),
             )
 
     # Get GPU memory usage
@@ -527,6 +546,49 @@ def parse_args():
         help="Stochastic depth drop probability (0 = disabled, default: 0.1)",
     )
 
+    # Cross-attention model
+    parser.add_argument(
+        "--model-type",
+        type=str,
+        default="encoder",
+        choices=["encoder", "cross_attention"],
+        help="Model architecture: encoder (stock-only) or cross_attention (stock + market context)",
+    )
+    parser.add_argument(
+        "--market-layers",
+        type=int,
+        default=2,
+        help="Number of transformer layers in market encoder (cross_attention only, default: 2)",
+    )
+
+    # Research loss tuning
+    parser.add_argument(
+        "--focal-gamma",
+        type=float,
+        default=2.0,
+        help="Focal loss gamma parameter (default: 2.0, research: 1.5)",
+    )
+    parser.add_argument(
+        "--label-smoothing",
+        type=float,
+        default=0.0,
+        help="Label smoothing factor for focal/CE loss (default: 0, research: 0.05)",
+    )
+
+    # Collapse recovery
+    parser.add_argument(
+        "--collapse-lr-reduction",
+        type=float,
+        default=0.0,
+        help="On collapse, multiply LR by this factor (0 = halt, research: 0.1)",
+    )
+    parser.add_argument(
+        "--collapse-entropy-boost",
+        type=float,
+        default=0.0,
+        help="On collapse, multiply entropy_reg by this factor (0 = no boost, research: 2.0)",
+    )
+
     # System
     parser.add_argument(
         "--num-workers",
@@ -652,6 +714,12 @@ def args_to_config(args):
     cfg["dim_feedforward"] = args.dim_feedforward
     cfg["dropout"] = args.dropout
     cfg["layer_drop"] = args.layer_drop
+    cfg["model_type"] = args.model_type
+    cfg["market_layers"] = args.market_layers
+    cfg["focal_gamma"] = args.focal_gamma
+    cfg["label_smoothing"] = args.label_smoothing
+    cfg["collapse_lr_reduction"] = args.collapse_lr_reduction
+    cfg["collapse_entropy_boost"] = args.collapse_entropy_boost
     cfg["num_workers"] = args.num_workers
     cfg["device"] = args.device
     cfg["model_out"] = args.model_out

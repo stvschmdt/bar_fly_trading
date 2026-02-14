@@ -3,25 +3,21 @@
 # Train all 9 StockFormer models (3 horizons x 3 label modes)
 # =============================================================================
 #
-# v4: Aggressive anti-collapse measures after v3 models still collapsed.
+# v5: Cross-attention + CORAL + collapse recovery
 #
-# Key changes from v3:
-#   - Binary: focal loss (was label_smoothing) — down-weights easy examples
-#   - Binary: entropy_reg=0.5 (was 0.3) — stronger diversity pressure
-#   - Binary: threshold=0.015 / 1.5% (was 0.0) — cleaner label separation
-#   - Regression: combined_regression loss (was directional_mse) — logcosh + DMSE
-#   - Training auto-halts if dominant class > 90% for 3 consecutive epochs
-#   - Inference prints full eval report (confusion matrix, F1, ROC-AUC)
-#
-# Unchanged from v3:
-#   - Classification models: d_model=64, 2 layers (smaller to prevent memorization)
-#   - Buckets: soft_ordinal loss + auto quantile edges
-#   - 30d models: extra regularization (dropout=0.3, weight_decay=0.03)
+# Key changes from v4:
+#   - Cross-attention architecture: stock encoder + gated market context
+#   - d_model=128, nhead=8, 4 stock layers, 2 market layers, dim_ff=512
+#   - Binary: focal gamma=1.5 + label_smoothing=0.05 (was gamma=2.0)
+#   - Buckets: CORAL ordinal loss (was soft_ordinal — collapsed 100%)
+#   - Collapse recovery: LR/10 + entropy boost instead of halt
+#   - patience=15 (was 10), max_epochs=80 (was 50)
+#   - All models: same architecture (no more small classification models)
 #
 # Usage:
 #   ./scripts/train_all_9.sh
 #
-# Timeline: ~3-5 hours (3 parallel groups, classification models are smaller)
+# Timeline: ~5-8 hours (3 parallel groups on DGX GPU)
 
 cd ~/proj/bar_fly_trading
 
@@ -30,7 +26,7 @@ cd ~/proj/bar_fly_trading
 # =============================================================================
 
 DATA_PATH="${DATA_PATH:-./all_data_*.csv}"
-TRAIN_END="2024-12-31"
+TRAIN_END="2025-12-31"
 INFER_START="2025-01-01"
 
 # Output paths (inside stockformer/output/)
@@ -41,15 +37,31 @@ PRED_DIR="stockformer/output/predictions"
 mkdir -p "$MODEL_DIR" "$LOG_DIR" "$PRED_DIR" logs
 
 # =============================================================================
+# Research hyperparameters (from RESEARCH_CONFIG)
+# =============================================================================
+
+# Shared architecture: cross-attention with market context
+ARCH="--model-type cross_attention --d-model 128 --nhead 8 --num-layers 4 --market-layers 2 --dim-feedforward 512"
+
+# Shared training params
+TRAIN="--lr 3e-4 --weight-decay 0.02 --patience 15 --epochs 80 --warmup-epochs 8 --dropout 0.15 --layer-drop 0.1"
+
+# Collapse recovery: reduce LR by 10x + double entropy reg instead of halting
+COLLAPSE="--collapse-lr-reduction 0.1 --collapse-entropy-boost 2.0"
+
+# 30d extra regularization (longer horizon = noisier target)
+REG_30D="--dropout 0.2 --weight-decay 0.03"
+
+# =============================================================================
 # Header
 # =============================================================================
 
 echo "============================================================"
-echo "  StockFormer — Training all 9 models (v4)"
-echo "  Regression:      d_model=128, layers=3, combined_regression"
-echo "  Classification:  d_model=64,  layers=2, dim_ff=128"
-echo "  Binary:          focal + entropy_reg=0.5, threshold=1.5%"
-echo "  Buckets:         soft_ordinal + auto quantile edges"
+echo "  StockFormer v5 — Cross-Attention + Anti-Collapse"
+echo "  Architecture: d=128, h=8, layers=4+2, ff=512"
+echo "  Regression:   combined_regression (directional_weight=3.0)"
+echo "  Binary:       focal gamma=1.5, label_smoothing=0.05"
+echo "  Buckets:      CORAL ordinal (anti-collapse)"
 echo "  Temporal split: train <= $TRAIN_END, infer >= $INFER_START"
 echo "  Started: $(date)"
 echo "============================================================"
@@ -63,7 +75,6 @@ run_one() {
     local horizon="$2"
     local loss_name="$3"
     local extra_flags="$4"
-    local tag="${label_mode}_${horizon}d"
 
     # Map label_mode to short tag for file names
     case "$label_mode" in
@@ -84,64 +95,60 @@ run_one() {
         --model-out "$MODEL_DIR/model_${suffix}.pt" \
         --log-path "$LOG_DIR/training_log_${suffix}.csv" \
         --output-csv "$PRED_DIR/pred_${suffix}.csv" \
+        $ARCH $TRAIN $COLLAPSE \
         $extra_flags
 
     echo "[$(date +%H:%M:%S)] Finished $suffix"
 }
 export -f run_one
-export DATA_PATH TRAIN_END INFER_START MODEL_DIR LOG_DIR PRED_DIR
+export DATA_PATH TRAIN_END INFER_START MODEL_DIR LOG_DIR PRED_DIR ARCH TRAIN COLLAPSE
 
 # =============================================================================
-# Per-model hyperparameters
+# Per-mode loss settings
 # =============================================================================
 
-# Smaller model for classification (prevents memorization -> collapse)
-SMALL_MODEL="--d-model 64 --num-layers 2 --dim-feedforward 128"
+# Binary: focal gamma=1.5 + label smoothing + 2% threshold
+BINARY_FLAGS="--entropy-reg-weight 0.3 --binary-threshold 0.02 --focal-gamma 1.5 --label-smoothing 0.05"
 
-# 30d extra regularization (longer horizon = noisier target)
-REG_30D="--dropout 0.3 --weight-decay 0.03"
+# Buckets: CORAL ordinal loss (anti-collapse by construction) + auto quantile edges
+BUCKET_FLAGS="--bucket-edges auto --n-buckets 3 --entropy-reg-weight 0.3"
 
-# Binary classification: focal loss + strong entropy reg + 1.5% threshold for clean separation
-BINARY_BASE="--entropy-reg-weight 0.5 --binary-threshold 0.015 --min-return-threshold 0.0 $SMALL_MODEL"
-
-# Bucket classification: auto quantile edges (3 balanced classes) + strong entropy reg
-BUCKET_BASE="--bucket-edges auto --n-buckets 3 --entropy-reg-weight 0.5 --min-return-threshold 0.0 $SMALL_MODEL"
+# Regression: combined_regression (logcosh + directional_mse)
+REG_FLAGS="--direction-weight 3.0"
 
 # =============================================================================
 # Launch 3 parallel groups
 # =============================================================================
 
 echo "Launching 3 parallel training groups..."
-echo "  Group 1: regression (3d -> 10d -> 30d)  [128d, 3 layers, combined_regression]"
-echo "  Group 2: binary    (3d -> 10d -> 30d)  [64d, 2 layers, focal]"
-echo "  Group 3: buckets   (3d -> 10d -> 30d)  [64d, 2 layers, soft_ordinal]"
+echo "  Group 1: regression (3d -> 10d -> 30d)  [cross-attn, combined_regression]"
+echo "  Group 2: binary    (3d -> 10d -> 30d)  [cross-attn, focal gamma=1.5]"
+echo "  Group 3: buckets   (3d -> 10d -> 30d)  [cross-attn, CORAL ordinal]"
 echo ""
 
-# Group 1: Regression — combined_regression (logcosh + directional_mse, direction_weight=3.0)
-# 3d and 10d: default model size (working well)
-# 30d: smaller model + extra regularization (was overfitting)
+# Group 1: Regression
 (
-    run_one regression 3  combined_regression ""
-    run_one regression 10 combined_regression ""
-    run_one regression 30 combined_regression "$SMALL_MODEL $REG_30D"
+    run_one regression 3  combined_regression "$REG_FLAGS"
+    run_one regression 10 combined_regression "$REG_FLAGS"
+    run_one regression 30 combined_regression "$REG_FLAGS $REG_30D"
 ) > "logs/train_regression_${LOGDATE}.log" 2>&1 &
 REG_PID=$!
 echo "  regression PID: $REG_PID"
 
-# Group 2: Binary — focal loss (down-weights easy examples, prevents class collapse)
+# Group 2: Binary
 (
-    run_one binary 3  focal "$BINARY_BASE"
-    run_one binary 10 focal "$BINARY_BASE"
-    run_one binary 30 focal "$BINARY_BASE $REG_30D"
+    run_one binary 3  focal "$BINARY_FLAGS"
+    run_one binary 10 focal "$BINARY_FLAGS"
+    run_one binary 30 focal "$BINARY_FLAGS $REG_30D"
 ) > "logs/train_binary_${LOGDATE}.log" 2>&1 &
 BIN_PID=$!
 echo "  binary PID: $BIN_PID"
 
-# Group 3: 3-class buckets — soft_ordinal loss, auto quantile edges
+# Group 3: Buckets with CORAL
 (
-    run_one buckets 3  soft_ordinal "$BUCKET_BASE"
-    run_one buckets 10 soft_ordinal "$BUCKET_BASE"
-    run_one buckets 30 soft_ordinal "$BUCKET_BASE $REG_30D"
+    run_one buckets 3  coral "$BUCKET_FLAGS"
+    run_one buckets 10 coral "$BUCKET_FLAGS"
+    run_one buckets 30 coral "$BUCKET_FLAGS $REG_30D"
 ) > "logs/train_buckets_${LOGDATE}.log" 2>&1 &
 BUCK_PID=$!
 echo "  buckets PID: $BUCK_PID"
