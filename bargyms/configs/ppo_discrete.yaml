@@ -43,6 +43,8 @@ reward:
     win_bonus: 0.5
     loss_penalty: 0.3
     no_trade_penalty: 0.005
+    large_loss_threshold: -0.03
+    large_loss_multiplier: 3.0
 
 algorithm:
   name: "PPO"
@@ -62,7 +64,7 @@ algorithm:
     ent_coef: 0.01
 
 training:
-  total_timesteps: 500000
+  total_timesteps: 10000000
   eval_freq: 10000
   n_eval_episodes: 20
   log_interval: 10

@@ -75,11 +75,18 @@ class PnLPctStepReward(RewardFunction):
         if env_state.get("trade_just_closed", False):
             win_bonus = self.params.get("win_bonus", 0.5)
             loss_penalty = self.params.get("loss_penalty", 0.3)
-            if env_state["trade_return_pct"] > 0:
+            trade_ret = env_state["trade_return_pct"]
+            if trade_ret > 0:
                 reward += win_bonus
                 self._wins += 1
             else:
                 reward -= loss_penalty
+                # Asymmetric large-loss penalty: extra hurt for big losers
+                large_loss_threshold = self.params.get("large_loss_threshold", -0.03)
+                large_loss_mult = self.params.get("large_loss_multiplier", 3.0)
+                if trade_ret < large_loss_threshold:
+                    excess = abs(trade_ret - large_loss_threshold)
+                    reward -= excess * large_loss_mult
             self._total += 1
 
         # Optional holding cost
@@ -128,10 +135,17 @@ class SharpeStepReward(RewardFunction):
         if env_state.get("trade_just_closed", False):
             win_bonus = self.params.get("win_bonus", 0.5)
             loss_penalty = self.params.get("loss_penalty", 0.3)
-            if env_state["trade_return_pct"] > 0:
+            trade_ret = env_state["trade_return_pct"]
+            if trade_ret > 0:
                 reward += win_bonus
             else:
                 reward -= loss_penalty
+                # Asymmetric large-loss penalty
+                large_loss_threshold = self.params.get("large_loss_threshold", -0.03)
+                large_loss_mult = self.params.get("large_loss_multiplier", 3.0)
+                if trade_ret < large_loss_threshold:
+                    excess = abs(trade_ret - large_loss_threshold)
+                    reward -= excess * large_loss_mult
 
         # Optional penalties
         if env_state["days_in_position"] > 0:
