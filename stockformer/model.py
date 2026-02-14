@@ -565,14 +565,27 @@ def infer_arch_from_state_dict(state_dict, model_path=None):
         arch["nhead"] = nhead_from_meta
     elif "d_model" in arch:
         d = arch["d_model"]
-        for candidate in [8, 4, 2, 1]:
+        # Prefer 4 first for legacy checkpoint compatibility (older models used nhead=4)
+        for candidate in [4, 8, 2, 1]:
             if d % candidate == 0:
                 arch["nhead"] = candidate
                 break
 
-    # num_buckets: from bucket_head final linear layer
-    if "bucket_head.3.weight" in state_dict:
-        arch["num_buckets"] = state_dict["bucket_head.3.weight"].shape[0]
+    # Detect CORAL vs regular bucket head from checkpoint keys
+    has_coral_head = any(k.startswith("coral_head.") for k in state_dict)
+    has_bucket_head = any(k.startswith("bucket_head.") for k in state_dict)
+
+    if has_coral_head:
+        arch["use_coral"] = True
+        # num_buckets = K-1 output logits + 1
+        if "coral_head.3.weight" in state_dict:
+            arch["num_buckets"] = state_dict["coral_head.3.weight"].shape[0] + 1
+        elif "coral_head.2.weight" in state_dict:
+            arch["num_buckets"] = state_dict["coral_head.2.weight"].shape[0] + 1
+    elif has_bucket_head:
+        arch["use_coral"] = False
+        if "bucket_head.3.weight" in state_dict:
+            arch["num_buckets"] = state_dict["bucket_head.3.weight"].shape[0]
 
     return arch
 

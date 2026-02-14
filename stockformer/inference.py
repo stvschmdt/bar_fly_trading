@@ -368,10 +368,18 @@ def infer(cfg):
             if overrides:
                 print(f"Auto-detected architecture from checkpoint: {', '.join(overrides)}")
 
-        # For buckets mode, override n_buckets from checkpoint before auto-edge computation
+        # For buckets mode, override n_buckets and CORAL detection from checkpoint
         if cfg["label_mode"] == "buckets" and "num_buckets" in detected:
             cfg["n_buckets"] = detected["num_buckets"]
             cfg["_num_buckets_override"] = detected["num_buckets"]
+        if "use_coral" in detected:
+            if detected["use_coral"]:
+                cfg["loss_name"] = "coral"
+                print(f"Auto-detected CORAL head from checkpoint")
+            else:
+                # Ensure we don't use CORAL if checkpoint has regular bucket head
+                if cfg.get("loss_name") == "coral":
+                    cfg["loss_name"] = None
 
         # ── Auto-compute quantile bucket edges ──────────────────────────
         if cfg["label_mode"] == "buckets" and cfg.get("bucket_edges") == "auto":
