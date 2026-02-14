@@ -269,6 +269,7 @@ def train_model(
     model_type="encoder",
     collapse_lr_reduction=0.0,
     collapse_entropy_boost=0.0,
+    checkpoint_every=5,
 ):
     """
     Full training loop with cosine LR scheduler, warmup, gradient clipping,
@@ -292,6 +293,7 @@ def train_model(
         model_type: "encoder" or "cross_attention"
         collapse_lr_reduction: Factor to reduce LR on collapse (0 = halt instead)
         collapse_entropy_boost: Factor to multiply entropy_reg on collapse (0 = no boost)
+        checkpoint_every: Save checkpoint every K epochs (default: 5, 0 = disabled)
 
     Returns:
         Dict with training history (epoch, train_loss, val_loss, train_acc, val_acc, lr)
@@ -432,6 +434,13 @@ def train_model(
                     f"Best val_loss: {best_val_loss:.4f}"
                 )
                 break
+
+        # Periodic checkpoint (crash recovery)
+        if checkpoint_every > 0 and model_out_path and epoch % checkpoint_every == 0:
+            ckpt_path = model_out_path.replace(".pt", f"_epoch{epoch}.pt")
+            os.makedirs(os.path.dirname(ckpt_path) or ".", exist_ok=True)
+            torch.save(model.state_dict(), ckpt_path)
+            print(f"  Checkpoint saved: {ckpt_path}")
 
     # Restore best model weights
     if best_state_dict is not None:

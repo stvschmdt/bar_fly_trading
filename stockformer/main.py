@@ -245,6 +245,7 @@ def train(cfg):
                 model_type=model_type,
                 collapse_lr_reduction=cfg.get("collapse_lr_reduction", 0.0),
                 collapse_entropy_boost=cfg.get("collapse_entropy_boost", 0.0),
+                checkpoint_every=cfg.get("checkpoint_every", 5),
             )
 
     # Get GPU memory usage
