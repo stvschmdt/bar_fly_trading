@@ -30,6 +30,11 @@ def register_env():
             "entry_point": "bargyms.envs.goldtradegym:GoldTradeEnv",
             "max_episode_steps": 1000,
         },
+        {
+            "id": "TradingEnv-v0",
+            "entry_point": "bargyms.envs.trading_env:TradingEnv",
+            "max_episode_steps": 1000,
+        },
     ]
 
     # Dynamically register each environment

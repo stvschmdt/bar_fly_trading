@@ -1,0 +1,71 @@
+# SAC with continuous Box(-1,1) action space
+# Usage: python bargyms/train.py --config bargyms/configs/sac_continuous.yaml
+
+data:
+  path: "all_data_*.csv"
+  symbols: null
+  symbols_file: null
+  date_range:
+    start: "2020-01-01"
+    end: "2025-12-31"
+  val_split: 0.2
+
+features:
+  preset: "standard"
+  custom_columns: []
+  exclude_columns: []
+  market_context: true
+  normalize: "zscore"
+
+environment:
+  lookback_window: 20
+  episode_length: 40
+  symbols_per_episode: 1
+  action_space: "continuous"
+  dead_zone: 0.1
+  initial_cash: 100000
+  position_size: 0.10
+  max_positions: 1
+  allow_short: false
+  transaction_cost_bps: 10
+  exit_safety:
+    enabled: true
+    stop_loss_pct: -0.08
+    take_profit_pct: 0.15
+    trailing_stop_pct: -0.05
+    trailing_activation_pct: 0.03
+    max_hold_days: 20
+
+reward:
+  function: "sharpe_step"
+  params:
+    sharpe_window: 20
+    illegal_action_penalty: -1.0
+    holding_cost: 0.0
+    no_trade_penalty: -0.001
+
+algorithm:
+  name: "SAC"
+  policy: "MlpPolicy"
+  policy_kwargs:
+    net_arch:
+      pi: [256, 256]
+      qf: [256, 256]
+  hyperparameters:
+    learning_rate: 0.0003
+    gamma: 0.99
+    batch_size: 256
+    buffer_size: 100000
+    tau: 0.005
+    ent_coef: "auto"
+    learning_starts: 10000
+
+training:
+  total_timesteps: 500000
+  eval_freq: 10000
+  n_eval_episodes: 20
+  log_interval: 100
+  save_freq: 50000
+  tensorboard_dir: "./rl_logs"
+  model_save_path: "./rl_models"
+  seed: 42

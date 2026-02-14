@@ -1,127 +1,351 @@
-import numpy as np
-import gymnasium as gym
-from gymnasium.wrappers import RecordEpisodeStatistics
-import os
-import yaml
-import torch
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from stable_baselines3.common.callbacks import EvalCallback
-from register import register_env
+"""
+Config-driven RL training script.
 
-from stable_baselines3.common.callbacks import BaseCallback
+Supports PPO, SAC, TD3 via YAML config files.
+Logs trading metrics and policy introspection to TensorBoard.
+
+Usage:
+    python bargyms/train.py --config bargyms/configs/ppo_discrete.yaml
+    python bargyms/train.py --config bargyms/configs/sac_continuous.yaml
+    python bargyms/train.py --config bargyms/configs/td3_continuous.yaml --symbols NVDA AAPL
+"""
+
+import argparse
+import os
+import sys
+import yaml
+
+import numpy as np
+
+# Add project root to path
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+from stable_baselines3 import PPO, SAC, TD3
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.callbacks import EvalCallback, BaseCallback, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 from torch.utils.tensorboard import SummaryWriter
 
+from bargyms.envs.trading_env import TradingEnv, RLDataLoader
+
+ALGO_MAP = {
+    "PPO": PPO,
+    "SAC": SAC,
+    "TD3": TD3,
+}
 
 
-class InfoDictTensorboardCallback(BaseCallback):
+def load_config(path):
+    """Load and validate YAML config."""
+    with open(path, "r") as f:
+        config = yaml.safe_load(f)
+
+    # Validate algo + action space compatibility
+    algo = config["algorithm"]["name"].upper()
+    action_space = config["environment"]["action_space"]
+    if algo in ("SAC", "TD3") and action_space != "continuous":
+        raise ValueError(f"{algo} requires action_space='continuous', got '{action_space}'")
+
+    return config
+
+
+class TradingMetricsCallback(BaseCallback):
     """
-    Custom callback to log scalar fields in the `info` dictionary to TensorBoard.
+    Logs trading-specific metrics to TensorBoard:
+    - Episode return, win rate, avg trade return, number of trades
+    - Per-step portfolio value
     """
+
     def __init__(self, writer, verbose=0):
-        super(InfoDictTensorboardCallback, self).__init__(verbose)
+        super().__init__(verbose)
         self.writer = writer
+        self._episode_count = 0
 
     def _on_step(self) -> bool:
-        # Extract the `info` dictionary for the current step
-        info_dict = self.locals["infos"][0]
+        infos = self.locals.get("infos", [])
 
-        # Log each item in `info_dict` to TensorBoard if it's a scalar and not in the ignored keys
-        for key, value in info_dict.items():
-            # Skip specific keys with known non-scalar structures
-            if key in {"TimeLimit.truncated", "episode", "terminal_observation"}:
-                continue
-            # Log only scalar values (int, float, numpy scalar)
-            if isinstance(value, (int, float, np.number)):
-                self.writer.add_scalar(f"Info/{key}", value, self.num_timesteps)
-            else:
-                # Print the key and value type to diagnose other potential issues
-                print(f"Skipping non-scalar info key '{key}' with value: {value} (type: {type(value)})")
-        # Access the observations from the environment
-        obs = self.locals["rollout_buffer"].observations
-        obs_tensor = torch.tensor(obs, dtype=torch.float32)
+        for info in infos:
+            # Log per-step scalars
+            if "portfolio_value" in info:
+                self.writer.add_scalar(
+                    "trading/portfolio_value", info["portfolio_value"], self.num_timesteps
+                )
+            if "step_return" in info:
+                self.writer.add_scalar(
+                    "trading/step_return", info["step_return"], self.num_timesteps
+                )
 
-        # Get the policy network
-        policy = self.model.policy
-
-        # Forward pass to get the logits
-        with torch.no_grad():
-            distribution = policy.get_distribution(obs_tensor)
-            logits = distribution.distribution.logits  # Logits from the Categorical distribution
-
-        # Check for NaN or Inf in the logits
-        if torch.isnan(logits).any() or torch.isinf(logits).any():
-            raise ValueError("Logits contain NaN or Inf values during training")
+            # Log episode-end metrics
+            if "episode_return_pct" in info:
+                self._episode_count += 1
+                self.writer.add_scalar(
+                    "trading/episode_return_pct", info["episode_return_pct"],
+                    self._episode_count,
+                )
+                self.writer.add_scalar(
+                    "trading/final_value", info.get("final_value", 0),
+                    self._episode_count,
+                )
+                self.writer.add_scalar(
+                    "trading/n_trades", info.get("n_trades", 0),
+                    self._episode_count,
+                )
+                if "win_rate" in info:
+                    self.writer.add_scalar(
+                        "trading/win_rate", info["win_rate"],
+                        self._episode_count,
+                    )
+                if "avg_trade_return_pct" in info:
+                    self.writer.add_scalar(
+                        "trading/avg_trade_return_pct", info["avg_trade_return_pct"],
+                        self._episode_count,
+                    )
 
         return True
 
-def load_config(config_file):
-    """Loads the YAML configuration file."""
-    with open(config_file, 'r') as file:
-        config = yaml.safe_load(file)
-    return config
+
+class PolicyIntrospectionCallback(BaseCallback):
+    """
+    Periodic policy introspection using gradient-based saliency.
+
+    Every `introspect_freq` steps:
+    - Logs value function estimates
+    - Logs action probabilities (PPO) or mean action (SAC/TD3)
+    - Logs feature saliency (input gradient magnitude)
+    """
+
+    def __init__(self, writer, introspect_freq=50000, verbose=0):
+        super().__init__(verbose)
+        self.writer = writer
+        self.introspect_freq = introspect_freq
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps % self.introspect_freq != 0 or self.num_timesteps == 0:
+            return True
+
+        try:
+            import torch
+
+            # Get a sample observation
+            obs = self.locals.get("new_obs")
+            if obs is None:
+                return True
+            if isinstance(obs, np.ndarray):
+                obs_tensor = torch.tensor(obs[:1], dtype=torch.float32)
+            else:
+                obs_tensor = obs[:1].float()
+
+            policy = self.model.policy
+            policy.eval()
+
+            with torch.no_grad():
+                # Value estimate
+                if hasattr(policy, "predict_values"):
+                    values = policy.predict_values(obs_tensor)
+                    self.writer.add_scalar(
+                        "introspection/value_estimate",
+                        values.mean().item(),
+                        self.num_timesteps,
+                    )
+
+                # Action distribution (PPO) or mean action (SAC/TD3)
+                if hasattr(policy, "get_distribution"):
+                    dist = policy.get_distribution(obs_tensor)
+                    if hasattr(dist.distribution, "probs"):
+                        probs = dist.distribution.probs[0]
+                        for i, p in enumerate(probs):
+                            label = ["hold", "buy", "sell"][i] if i < 3 else f"a{i}"
+                            self.writer.add_scalar(
+                                f"introspection/action_prob_{label}",
+                                p.item(),
+                                self.num_timesteps,
+                            )
+                    elif hasattr(dist.distribution, "mean"):
+                        self.writer.add_scalar(
+                            "introspection/action_mean",
+                            dist.distribution.mean[0].item(),
+                            self.num_timesteps,
+                        )
+
+            # Feature saliency via input gradient
+            obs_grad = obs_tensor.clone().requires_grad_(True)
+            if hasattr(policy, "predict_values"):
+                value = policy.predict_values(obs_grad)
+                value.sum().backward()
+                if obs_grad.grad is not None:
+                    # Average saliency across time dimension
+                    saliency = obs_grad.grad.abs().mean(dim=(0, 1))
+                    self.writer.add_histogram(
+                        "introspection/feature_saliency",
+                        saliency.cpu().numpy(),
+                        self.num_timesteps,
+                    )
+
+            policy.train()
+
+        except Exception as e:
+            if self.verbose:
+                print(f"PolicyIntrospection error: {e}")
+
+        return True
+
+
+def make_env(data_loader, config, mode="train"):
+    """Factory for creating monitored trading environments."""
+    def _init():
+        env = TradingEnv(data_loader, config, mode=mode)
+        env = Monitor(env)
+        return env
+    return _init
+
+
+def build_algo_kwargs(config):
+    """Build SB3 algorithm constructor kwargs from config."""
+    algo_cfg = config["algorithm"]
+    hyperparams = algo_cfg.get("hyperparameters", {})
+    policy_kwargs = algo_cfg.get("policy_kwargs", {})
+
+    # Convert activation function name to torch class
+    if "activation_fn" in policy_kwargs:
+        import torch.nn as nn
+        act_map = {"ReLU": nn.ReLU, "Tanh": nn.Tanh, "GELU": nn.GELU}
+        policy_kwargs["activation_fn"] = act_map.get(
+            policy_kwargs["activation_fn"], nn.ReLU
+        )
+
+    kwargs = {
+        "policy": algo_cfg.get("policy", "MlpPolicy"),
+    }
+    if policy_kwargs:
+        kwargs["policy_kwargs"] = policy_kwargs
+
+    # Add hyperparameters (filter by algo type)
+    algo_name = algo_cfg["name"].upper()
+    for key, value in hyperparams.items():
+        # Skip PPO-only params for off-policy algos
+        if algo_name in ("SAC", "TD3") and key in ("n_steps", "n_epochs", "clip_range", "gae_lambda"):
+            continue
+        # Skip off-policy params for PPO
+        if algo_name == "PPO" and key in ("buffer_size", "tau", "learning_starts"):
+            continue
+        kwargs[key] = value
+
+    return kwargs
+
 
 def main():
+    parser = argparse.ArgumentParser(description="Train RL trading agent")
+    parser.add_argument("--config", required=True, help="Path to YAML config")
+    parser.add_argument("--symbols", nargs="+", help="Override symbols list")
+    args = parser.parse_args()
 
+    config = load_config(args.config)
+    if args.symbols:
+        config["data"]["symbols"] = args.symbols
 
-    #( Load the configuration file
-    config = load_config("configs/ppo_agent.yaml")
+    train_cfg = config.get("training", {})
+    algo_name = config["algorithm"]["name"].upper()
 
-    # Register the custom environment if needed
-    register_env()
+    # Set up directories
+    tb_dir = train_cfg.get("tensorboard_dir", "./rl_logs")
+    model_dir = train_cfg.get("model_save_path", "./rl_models")
+    os.makedirs(tb_dir, exist_ok=True)
+    os.makedirs(model_dir, exist_ok=True)
 
-    # Create the environment (no need for render_mode since there's no visual output)
-    #env = gym.make("AnalystGym-v0")
-    #env = gym.make("StockTradingEnv-v0")
-    env = Monitor(gym.make("GoldTradeEnv-v0"))
+    # Load data
+    print(f"Loading data for {algo_name} training...")
+    data_loader = RLDataLoader(config)
+    data_loader.load()
 
-    # Set up a directory for monitoring results
-    monitor_dir = './monitor_results'
-    if not os.path.exists(monitor_dir):
-        os.makedirs(monitor_dir)
+    if not data_loader.get_symbols():
+        raise ValueError("No symbols loaded. Check data path and date range.")
 
-    # Set up the directory for TensorBoard logs from config
-    tensorboard_log_dir = config['tensorboard']['log_dir']
-    if not os.path.exists(tensorboard_log_dir):
-        os.makedirs(tensorboard_log_dir)
+    # Create vectorized environments
+    print("Creating environments...")
+    train_env = DummyVecEnv([make_env(data_loader, config, mode="train")])
+    train_env = VecNormalize(train_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
 
-    # Initialize TensorBoard writer
-    writer = SummaryWriter(tensorboard_log_dir + "/runs")
-    # Use InfoDictTensorboardCallback to log selected info fields
-    info_callback = InfoDictTensorboardCallback(writer=writer)
+    eval_env = DummyVecEnv([make_env(data_loader, config, mode="eval")])
+    eval_env = VecNormalize(eval_env, norm_obs=True, norm_reward=False, clip_obs=10.0)
 
+    # Create algorithm
+    print(f"Creating {algo_name} agent...")
+    algo_cls = ALGO_MAP.get(algo_name)
+    if algo_cls is None:
+        raise ValueError(f"Unknown algorithm '{algo_name}'. Available: {list(ALGO_MAP.keys())}")
 
-    # Extract PPO agent parameters from config
-    ppo_params = config['ppo']
+    algo_kwargs = build_algo_kwargs(config)
+    seed = train_cfg.get("seed", 42)
 
-    # Ensure the tensorboard_log argument is added dynamically from config
-    ppo_params['tensorboard_log'] = tensorboard_log_dir
-
-    # Initialize PPO agent with parameters from the config file
-    model = PPO(env=env, **ppo_params)  # Dynamically pass all PPO params
-
-    # Set up a callback for model evaluation (optional)
-    eval_callback = EvalCallback(
-        env,
-        best_model_save_path=monitor_dir,
-        log_path=monitor_dir,
-        eval_freq=5000,  # Evaluate every 5000 steps
-        deterministic=True,
-        render=False
+    model = algo_cls(
+        env=train_env,
+        tensorboard_log=tb_dir,
+        seed=seed,
+        verbose=1,
+        **algo_kwargs,
     )
 
-    # Train the agent and log progress to TensorBoard with the interval from config
-    model.learn(total_timesteps=config['training']['total_timesteps'],
-                log_interval=config['training']['log_interval'],
-                callback=[eval_callback, info_callback])
+    print(f"Policy network: {model.policy}")
 
-    # Save the trained model
-    model.save("ppo_analystgym")
+    # Set up callbacks
+    run_name = f"{algo_name}_{config['environment']['action_space']}"
+    writer = SummaryWriter(os.path.join(tb_dir, run_name))
 
-    # Close the environment when done
-    env.close()
+    callbacks = [
+        TradingMetricsCallback(writer=writer),
+        PolicyIntrospectionCallback(writer=writer, introspect_freq=50000),
+        EvalCallback(
+            eval_env,
+            best_model_save_path=os.path.join(model_dir, "best"),
+            log_path=os.path.join(model_dir, "eval_logs"),
+            eval_freq=train_cfg.get("eval_freq", 10000),
+            n_eval_episodes=train_cfg.get("n_eval_episodes", 20),
+            deterministic=True,
+        ),
+        CheckpointCallback(
+            save_freq=train_cfg.get("save_freq", 50000),
+            save_path=os.path.join(model_dir, "checkpoints"),
+            name_prefix=run_name,
+        ),
+    ]
+
+    # Train
+    total_timesteps = train_cfg.get("total_timesteps", 500000)
+    print(f"\nStarting {algo_name} training for {total_timesteps:,} timesteps...")
+    print(f"  Action space: {config['environment']['action_space']}")
+    print(f"  Features: {config.get('features', {}).get('preset', 'standard')}")
+    print(f"  Reward: {config.get('reward', {}).get('function', 'pnl_pct_step')}")
+    print(f"  Symbols: {len(data_loader.get_symbols())}")
+    print(f"  TensorBoard: tensorboard --logdir {tb_dir}")
+    print()
+
+    model.learn(
+        total_timesteps=total_timesteps,
+        callback=callbacks,
+        log_interval=train_cfg.get("log_interval", 10),
+    )
+
+    # Save final model + normalization stats
+    final_path = os.path.join(model_dir, f"{run_name}_final")
+    model.save(final_path)
+    train_env.save(os.path.join(model_dir, f"{run_name}_vecnormalize.pkl"))
+
+    # Save config alongside model for reproducibility
+    config_save_path = os.path.join(model_dir, f"{run_name}_config.yaml")
+    with open(config_save_path, "w") as f:
+        yaml.dump(config, f, default_flow_style=False)
+
+    writer.close()
+    train_env.close()
+    eval_env.close()
+
+    print(f"\nTraining complete!")
+    print(f"  Model saved: {final_path}.zip")
+    print(f"  Config saved: {config_save_path}")
+    print(f"  Best model: {model_dir}/best/best_model.zip")
+
 
 if __name__ == "__main__":
     main()
-
