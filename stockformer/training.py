@@ -144,6 +144,10 @@ def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode,
     total_entropy = 0.0
     class_counts = None
 
+    # Detect CORAL loss once (affects prediction decoding + entropy tracking)
+    from .losses import CoralLoss
+    is_coral = isinstance(loss_fn, CoralLoss)
+
     for batch in loader:
         # Unpack batch: 2-tuple (encoder) or 3-tuple (cross_attention)
         if model_type == "cross_attention" and len(batch) == 3:
@@ -190,21 +194,40 @@ def run_one_epoch(model, loader, optimizer, loss_fn, device, label_mode,
         total_loss += loss.item() * batch_x.size(0)
 
         if label_mode != "regression":
-            preds = outputs.argmax(dim=-1)
+            # CORAL outputs K-1 cumulative logits; decode as sum of P>0.5
+            if is_coral:
+                preds = (torch.sigmoid(outputs) > 0.5).sum(dim=-1).long()
+                num_classes_for_tracking = outputs.size(-1) + 1  # K = K-1 logits + 1
+            else:
+                preds = outputs.argmax(dim=-1)
+                num_classes_for_tracking = outputs.size(-1)
+
             correct += (preds == batch_y).sum().item()
             total += batch_y.numel()
 
             # Track prediction entropy and class distribution for collapse detection
             with torch.no_grad():
-                probs = F.softmax(outputs, dim=-1)
+                if is_coral:
+                    # CORAL: compute per-class probs from cumulative sigmoid
+                    cum_probs = torch.sigmoid(outputs)  # [B, K-1]
+                    # P(class=0) = 1 - cum_probs[:,0]
+                    # P(class=k) = cum_probs[:,k-1] - cum_probs[:,k]
+                    # P(class=K-1) = cum_probs[:,-1]
+                    ones = torch.ones(cum_probs.size(0), 1, device=device)
+                    zeros = torch.zeros(cum_probs.size(0), 1, device=device)
+                    extended = torch.cat([ones, cum_probs, zeros], dim=1)  # [B, K+1]
+                    probs = extended[:, :-1] - extended[:, 1:]  # [B, K]
+                    probs = probs.clamp(min=1e-8)
+                else:
+                    probs = F.softmax(outputs, dim=-1)
+
                 batch_entropy = -(probs * torch.log(probs + 1e-8)).sum(dim=-1).mean()
                 total_entropy += batch_entropy.item() * batch_x.size(0)
 
                 # Count predicted classes
-                num_classes = outputs.size(-1)
                 if class_counts is None:
-                    class_counts = torch.zeros(num_classes, dtype=torch.long)
-                for c in range(num_classes):
+                    class_counts = torch.zeros(num_classes_for_tracking, dtype=torch.long)
+                for c in range(num_classes_for_tracking):
                     class_counts[c] += (preds == c).sum().item()
 
     # Compute averages
