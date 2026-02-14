@@ -291,9 +291,18 @@ def infer(cfg):
 
     with Timer("Total inference") as total_timer:
 
-        # Check model exists
-        if not os.path.exists(cfg["model_out"]):
-            raise FileNotFoundError(f"Model not found: {cfg['model_out']}")
+        # Check model exists — fall back to _latest.pt if primary model missing
+        model_path = cfg["model_out"]
+        if not os.path.exists(model_path):
+            latest_path = model_path.replace(".pt", "_latest.pt")
+            if os.path.exists(latest_path):
+                print(f"WARNING: Primary model not found: {model_path}")
+                print(f"  Falling back to latest checkpoint: {latest_path}")
+                model_path = latest_path
+            else:
+                raise FileNotFoundError(
+                    f"Model not found: {model_path} (also checked {latest_path})"
+                )
 
         # Load data
         print("\nLoading data for inference...")
@@ -348,11 +357,11 @@ def infer(cfg):
             device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Using device: {device}")
 
-        print(f"Loading model from: {cfg['model_out']}")
-        state_dict = torch.load(cfg["model_out"], map_location=device, weights_only=True)
+        print(f"Loading model from: {model_path}")
+        state_dict = torch.load(model_path, map_location=device, weights_only=True)
 
         from .model import infer_arch_from_state_dict
-        detected = infer_arch_from_state_dict(state_dict, model_path=cfg["model_out"])
+        detected = infer_arch_from_state_dict(state_dict, model_path=model_path)
         if detected:
             overrides = []
             for key in ("d_model", "nhead", "num_layers", "dim_feedforward", "market_layers"):

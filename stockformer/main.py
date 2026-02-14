@@ -345,8 +345,12 @@ def run_all_horizons(cfg):
                 else f"predictions_{suffix}.csv"
             )
 
-            # Train and infer
-            train(run_cfg)
+            # Train and infer — always run inference even if training fails
+            try:
+                train(run_cfg)
+            except Exception as e:
+                print(f"ERROR during training: {e}")
+                print("Attempting inference with whatever model was saved...")
             infer(run_cfg)
 
 
@@ -773,8 +777,14 @@ if __name__ == "__main__":
         if args.horizon is None or args.label_mode is None:
             raise ValueError("--infer-only requires both --horizon and --label-mode")
         if not os.path.exists(cfg["model_out"]):
-            raise FileNotFoundError(f"Model not found: {cfg['model_out']}. "
-                                    "Use --model-out to specify a trained model.")
+            latest_path = cfg["model_out"].replace(".pt", "_latest.pt")
+            if os.path.exists(latest_path):
+                print(f"WARNING: Primary model not found: {cfg['model_out']}")
+                print(f"  Using latest checkpoint: {latest_path}")
+                cfg["model_out"] = latest_path
+            else:
+                raise FileNotFoundError(f"Model not found: {cfg['model_out']}. "
+                                        "Use --model-out to specify a trained model.")
         print(f"Running inference only: horizon={args.horizon}, label_mode={args.label_mode}")
         print(f"Model: {cfg['model_out']}")
         print(f"Output mode: {cfg['output_mode']}")
@@ -783,7 +793,13 @@ if __name__ == "__main__":
     # Single config: train + infer
     elif args.horizon is not None and args.label_mode is not None:
         print(f"Running single config: horizon={args.horizon}, label_mode={args.label_mode}")
-        train(cfg)
+        try:
+            train(cfg)
+        except Exception as e:
+            print(f"ERROR during training: {e}")
+            print("Attempting inference with whatever model was saved...")
+        # Always run inference — even a collapsed model produces predictions
+        # that downstream merge needs
         infer(cfg)
 
     # All 9 combinations

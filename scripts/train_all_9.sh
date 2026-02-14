@@ -117,60 +117,34 @@ BUCKET_FLAGS="--bucket-edges auto --n-buckets 3 --entropy-reg-weight 0.3"
 REG_FLAGS="--direction-weight 3.0"
 
 # =============================================================================
-# Launch 3 parallel groups
+# Launch all 9 models sequentially (one GPU — no parallel contention)
 # =============================================================================
 
-echo "Launching 3 parallel training groups..."
-echo "  Group 1: regression (3d -> 10d -> 30d)  [cross-attn, combined_regression]"
-echo "  Group 2: binary    (3d -> 10d -> 30d)  [cross-attn, focal gamma=1.5]"
-echo "  Group 3: buckets   (3d -> 10d -> 30d)  [cross-attn, CORAL ordinal]"
+echo "Training 9 models sequentially (one at a time on GPU)..."
+echo "  Regression: 3d -> 10d -> 30d  [cross-attn, combined_regression]"
+echo "  Binary:     3d -> 10d -> 30d  [cross-attn, focal gamma=1.5]"
+echo "  Buckets:    3d -> 10d -> 30d  [cross-attn, CORAL ordinal]"
 echo ""
 
-# Group 1: Regression
-(
-    run_one regression 3  combined_regression "$REG_FLAGS"
-    run_one regression 10 combined_regression "$REG_FLAGS"
-    run_one regression 30 combined_regression "$REG_FLAGS $REG_30D"
-) > "logs/train_regression_${LOGDATE}.log" 2>&1 &
-REG_PID=$!
-echo "  regression PID: $REG_PID"
-
-# Group 2: Binary
-(
-    run_one binary 3  focal "$BINARY_FLAGS"
-    run_one binary 10 focal "$BINARY_FLAGS"
-    run_one binary 30 focal "$BINARY_FLAGS $REG_30D"
-) > "logs/train_binary_${LOGDATE}.log" 2>&1 &
-BIN_PID=$!
-echo "  binary PID: $BIN_PID"
-
-# Group 3: Buckets with CORAL
-(
-    run_one buckets 3  coral "$BUCKET_FLAGS"
-    run_one buckets 10 coral "$BUCKET_FLAGS"
-    run_one buckets 30 coral "$BUCKET_FLAGS $REG_30D"
-) > "logs/train_buckets_${LOGDATE}.log" 2>&1 &
-BUCK_PID=$!
-echo "  buckets PID: $BUCK_PID"
-
-echo ""
-echo "Monitor progress:"
-echo "  tail -f logs/train_*_${LOGDATE}.log"
-echo ""
-echo "Waiting for all groups to finish..."
-
-# Wait for each group
 FAILURES=0
-for PID_NAME in "regression:$REG_PID" "binary:$BIN_PID" "buckets:$BUCK_PID"; do
-    NAME="${PID_NAME%%:*}"
-    PID="${PID_NAME##*:}"
-    if wait $PID; then
-        echo "[$(date +%H:%M:%S)] $NAME group done"
-    else
-        echo "[$(date +%H:%M:%S)] $NAME group FAILED (exit code: $?)"
-        FAILURES=$((FAILURES + 1))
-    fi
-done
+LOG="logs/train_all_${LOGDATE}.log"
+
+{
+    # Regression (3 horizons)
+    run_one regression 3  combined_regression "$REG_FLAGS"           || FAILURES=$((FAILURES + 1))
+    run_one regression 10 combined_regression "$REG_FLAGS"           || FAILURES=$((FAILURES + 1))
+    run_one regression 30 combined_regression "$REG_FLAGS $REG_30D"  || FAILURES=$((FAILURES + 1))
+
+    # Binary (3 horizons)
+    run_one binary 3  focal "$BINARY_FLAGS"           || FAILURES=$((FAILURES + 1))
+    run_one binary 10 focal "$BINARY_FLAGS"           || FAILURES=$((FAILURES + 1))
+    run_one binary 30 focal "$BINARY_FLAGS $REG_30D"  || FAILURES=$((FAILURES + 1))
+
+    # Buckets with CORAL (3 horizons)
+    run_one buckets 3  coral "$BUCKET_FLAGS"           || FAILURES=$((FAILURES + 1))
+    run_one buckets 10 coral "$BUCKET_FLAGS"           || FAILURES=$((FAILURES + 1))
+    run_one buckets 30 coral "$BUCKET_FLAGS $REG_30D"  || FAILURES=$((FAILURES + 1))
+} 2>&1 | tee "$LOG"
 
 echo ""
 echo "============================================================"

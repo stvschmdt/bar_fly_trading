@@ -386,13 +386,17 @@ def train_model(
         )
 
         # Collapse detection with recovery
+        # Skip during warmup — the model hasn't learned yet, collapse is expected
         dominant_pct = val_metrics.get("dominant_class_pct", 0)
         if dominant_pct > 0.85 and label_mode != "regression":
             dist = val_metrics.get("class_distribution", [])
-            print(f"  WARNING: Possible collapse — {dominant_pct:.1%} predictions "
-                  f"in one class. Distribution: {[f'{p:.2f}' for p in dist]}")
+            if epoch <= warmup_epochs:
+                print(f"  NOTE: {dominant_pct:.1%} in one class (warmup — not counting)")
+            else:
+                print(f"  WARNING: Possible collapse — {dominant_pct:.1%} predictions "
+                      f"in one class. Distribution: {[f'{p:.2f}' for p in dist]}")
 
-        if dominant_pct > COLLAPSE_THRESHOLD and label_mode != "regression":
+        if dominant_pct > COLLAPSE_THRESHOLD and label_mode != "regression" and epoch > warmup_epochs:
             consecutive_collapse += 1
             if consecutive_collapse >= COLLAPSE_PATIENCE:
                 # Try recovery first (reduce LR + boost entropy reg)
@@ -412,12 +416,13 @@ def train_model(
                 else:
                     print(
                         f"  HALT: Model collapsed — dominant class > {COLLAPSE_THRESHOLD:.0%} "
-                        f"for {COLLAPSE_PATIENCE} consecutive epochs. "
-                        f"Stopping training to prevent wasted compute."
+                        f"for {COLLAPSE_PATIENCE} consecutive epochs post-warmup. "
+                        f"Saving model and stopping."
                     )
                     break
         else:
-            consecutive_collapse = 0
+            if epoch > warmup_epochs:
+                consecutive_collapse = 0
 
         # Best model checkpointing + early stopping
         if val_metrics["loss"] < best_val_loss:
@@ -435,17 +440,24 @@ def train_model(
                 )
                 break
 
-        # Periodic checkpoint (crash recovery)
+        # Save latest model every epoch (crash recovery — always have an artifact)
+        if model_out_path:
+            latest_path = model_out_path.replace(".pt", "_latest.pt")
+            os.makedirs(os.path.dirname(latest_path) or ".", exist_ok=True)
+            torch.save(model.state_dict(), latest_path)
+
+        # Periodic named checkpoint
         if checkpoint_every > 0 and model_out_path and epoch % checkpoint_every == 0:
             ckpt_path = model_out_path.replace(".pt", f"_epoch{epoch}.pt")
-            os.makedirs(os.path.dirname(ckpt_path) or ".", exist_ok=True)
             torch.save(model.state_dict(), ckpt_path)
             print(f"  Checkpoint saved: {ckpt_path}")
 
-    # Restore best model weights
+    # Restore best model weights (if we have one)
     if best_state_dict is not None:
         model.load_state_dict(best_state_dict)
         print(f"Restored best model (val_loss={best_val_loss:.4f})")
+    else:
+        print("WARNING: No best model found — saving current weights as-is")
 
     # Save model checkpoint with architecture metadata
     if model_out_path is not None:
