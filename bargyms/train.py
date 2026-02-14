@@ -17,13 +17,10 @@ import yaml
 
 import numpy as np
 
-# Add project root and bargyms package to path
+# Add project root to path (append so script dir stays first for bargyms.envs)
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-_BARGYMS_DIR = os.path.abspath(os.path.dirname(__file__))
 if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
-if _BARGYMS_DIR not in sys.path:
-    sys.path.insert(0, _BARGYMS_DIR)
+    sys.path.append(_PROJECT_ROOT)
 
 from stable_baselines3 import PPO, SAC, TD3
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize

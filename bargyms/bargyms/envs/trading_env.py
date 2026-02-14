@@ -211,16 +211,18 @@ class TradingEnv(gym.Env):
             self._start_idx = options.get("start_idx", self.lookback_window)
         elif self.mode == "train":
             self._symbol = self.np_random.choice(self._symbols)
-            max_start = self._train_end_idx - self.episode_length - 1
+            symbol_len = len(self.data_loader.get_prices(self._symbol))
+            effective_end = min(self._train_end_idx, symbol_len)
+            max_start = effective_end - self.episode_length - 1
             min_start = self.lookback_window
             if max_start <= min_start:
                 max_start = min_start + 1
             self._start_idx = self.np_random.integers(min_start, max_start)
         else:  # eval
             self._symbol = self.np_random.choice(self._symbols)
-            min_start = max(self._train_end_idx, self.lookback_window)
-            data_len = len(self.data_loader.get_prices(self._symbol))
-            max_start = data_len - self.episode_length - 1
+            symbol_len = len(self.data_loader.get_prices(self._symbol))
+            min_start = max(min(self._train_end_idx, symbol_len - self.episode_length - 1), self.lookback_window)
+            max_start = symbol_len - self.episode_length - 1
             if max_start <= min_start:
                 max_start = min_start + 1
             self._start_idx = self.np_random.integers(min_start, max(min_start + 1, max_start))
