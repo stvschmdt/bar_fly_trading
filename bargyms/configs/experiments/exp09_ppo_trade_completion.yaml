@@ -1,0 +1,70 @@
+data:
+  path: all_data_*.csv
+  symbols: null
+  date_range:
+    start: '2020-01-01'
+    end: '2025-12-31'
+  val_split: 0.2
+features:
+  preset: standard
+  custom_columns: []
+  exclude_columns: []
+  market_context: true
+  normalize: zscore
+environment:
+  lookback_window: 20
+  episode_length: 40
+  action_space: discrete
+  initial_cash: 100000
+  position_size: 0.1
+  max_positions: 1
+  allow_short: false
+  transaction_cost_bps: 0
+  exit_safety:
+    enabled: true
+    stop_loss_pct: -0.08
+    take_profit_pct: 0.15
+    trailing_stop_pct: null
+    trailing_activation_pct: 0.0
+    max_hold_days: 20
+reward:
+  function: trade_completion
+  params:
+    illegal_action_penalty: -1.0
+    holding_cost: 0.002
+    win_bonus: 0.5
+    loss_penalty: 0.3
+    no_trade_penalty: 0.005
+    large_loss_threshold: -0.03
+    large_loss_multiplier: 3.0
+    trade_reward_multiplier: 10.0
+algorithm:
+  name: PPO
+  policy: MlpPolicy
+  policy_kwargs:
+    net_arch:
+      pi:
+      - 256
+      - 256
+      vf:
+      - 256
+      - 256
+  hyperparameters:
+    learning_rate: 0.0003
+    gamma: 0.99
+    n_steps: 2048
+    batch_size: 256
+    n_epochs: 10
+    clip_range: 0.2
+    gae_lambda: 0.95
+    ent_coef: 0.01
+training:
+  total_timesteps: 2000000
+  eval_freq: 20000
+  n_eval_episodes: 20
+  log_interval: 10
+  save_freq: 100000
+  tensorboard_dir: ./rl_logs
+  model_save_path: ./rl_models
+  seed: 42
+  run_name: exp09_ppo_trade_completion

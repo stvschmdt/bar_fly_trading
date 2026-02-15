@@ -290,7 +290,7 @@ def main():
     print(f"Policy network: {model.policy}")
 
     # Set up callbacks
-    run_name = f"{algo_name}_{config['environment']['action_space']}"
+    run_name = train_cfg.get("run_name", f"{algo_name}_{config['environment']['action_space']}")
     writer = SummaryWriter(os.path.join(tb_dir, run_name))
 
     callbacks = [
@@ -298,8 +298,8 @@ def main():
         PolicyIntrospectionCallback(writer=writer, introspect_freq=50000),
         EvalCallback(
             eval_env,
-            best_model_save_path=os.path.join(model_dir, "best"),
-            log_path=os.path.join(model_dir, "eval_logs"),
+            best_model_save_path=os.path.join(model_dir, run_name, "best"),
+            log_path=os.path.join(model_dir, run_name, "eval_logs"),
             eval_freq=train_cfg.get("eval_freq", 10000),
             n_eval_episodes=train_cfg.get("n_eval_episodes", 20),
             deterministic=True,
